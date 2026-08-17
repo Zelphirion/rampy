@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>Little City Drive</title>
+    <link rel="icon" type="image/png" href="/city/favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/city/favicon/favicon.svg" />
+    <link rel="shortcut icon" href="/city/favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/city/favicon/apple-touch-icon.png" />
+    <link rel="manifest" href="/city/favicon/site.webmanifest" />
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05070d;
+        font-family: Arial, sans-serif;
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+      }
+
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+
+      .hud {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        color: #eef2ff;
+        background: rgba(5, 10, 18, 0.68);
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.15);
+        line-height: 1.35;
+        font-size: 14px;
+        pointer-events: none;
+        max-width: 280px;
+      }
+
+      .hud strong {
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      /* ===== Touch joystick (bottom-left) ===== */
+      #joystick {
+        position: fixed;
+        left: 24px;
+        bottom: 24px;
+        width: 128px;
+        height: 128px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.07);
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4), inset 0 0 30px rgba(0, 0, 0, 0.25);
+        box-sizing: border-box;
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      #joystick::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 2px;
+        height: 84px;
+        margin: -42px 0 0 -1px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      #joystick::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 84px;
+        height: 2px;
+        margin: -1px 0 0 -42px;
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      #joy-knob {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 56px;
+        height: 56px;
+        margin: -28px 0 0 -28px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.6), rgba(255,255,255,0.16) 60%, rgba(255,255,255,0.04));
+        border: 1px solid rgba(255,255,255,0.5);
+        box-shadow: 0 2px 10px rgba(0,0,0,0.45);
+        pointer-events: none;
+        will-change: transform;
+      }
+
+      #joystick-hit {
+        position: fixed;
+        left: 4px;
+        bottom: 4px;
+        width: 168px;
+        height: 168px;
+        border-radius: 50%;
+        touch-action: none;
+        z-index: 9;
+      }
+
+      @media (max-width: 700px) {
+        .hud {
+          font-size: 12px;
+          padding: 8px 10px;
+          top: 10px;
+          left: 10px;
+          max-width: 72vw;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="minimap" width="160" height="160"
+      style="position:fixed;right:16px;bottom:16px;pointer-events:none;
+             background:rgba(5,10,18,0.68);border:1px solid rgba(255,255,255,0.15);border-radius:12px;"></canvas>
+
+    <!-- Touch joystick: drag the knob to drive -->
+    <div id="joystick"><div id="joy-knob"></div></div>
+    <div id="joystick-hit"></div>
+
+    <!-- Inline error capture for debugging: records runtime errors before modules run -->
+    <script>
+      window._errs = window._errs || [];
+      window.addEventListener('error', (e) => {
+        try {
+          window._errs.push({ type: 'error', message: String(e.message || e.error || e), filename: e.filename, lineno: e.lineno, colno: e.colno, stack: e.error && e.error.stack ? e.error.stack : null });
+        } catch (err) {}
+      });
+      window.addEventListener('unhandledrejection', (e) => {
+        try {
+          window._errs.push({ type: 'unhandledrejection', message: String(e.reason && e.reason.message ? e.reason.message : e.reason), reason: e.reason });
+        } catch (err) {}
+      });
+    </script>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>
