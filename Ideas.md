@@ -4,6 +4,14 @@
 
 
 
+-One of the traffic cars should be a 57 chevy with round headlignts and tailfins.  it should be a taxi painted yellow with a checkerboard strip on the side.  a classic checkerd cab
+
+
+-One of the traffic cars should be a 1968 VW Bug with a round top and round headlights.
+
+
+
+
 -The ramp and the portal that go to rampworld should not be in the center of town, it should be somewhere on the edge of town in an otherswise not too croweded location.
 -
 

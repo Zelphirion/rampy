@@ -202,6 +202,149 @@ function makeBuilding(scene, x, z, w, d, h, color) {
   return group;
 }
 
+// ===== Open building with hovering rings =====
+// Creates a building with one side open (facing the edge of the map) and
+// glowing hovering rings inside that float upward.
+const hoveringRings = []; // stored for animation
+
+function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
+  const group = new THREE.Group();
+  const wallThickness = 0.4;
+
+  // Create 3 walls — the open side is always built as +X, then we rotate
+  const wallMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+
+  // West wall (perpendicular to X axis, at -X edge)
+  const westWall = new THREE.Mesh(
+    new THREE.BoxGeometry(wallThickness, h, d),
+    wallMaterial
+  );
+  westWall.position.set(-w / 2 + wallThickness / 2, h / 2, 0);
+  westWall.castShadow = true;
+  westWall.receiveShadow = true;
+  group.add(westWall);
+
+  // North wall (perpendicular to Z axis, at +Z edge)
+  const northWall = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, wallThickness),
+    wallMaterial
+  );
+  northWall.position.set(0, h / 2, d / 2 - wallThickness / 2);
+  northWall.castShadow = true;
+  northWall.receiveShadow = true;
+  group.add(northWall);
+
+  // South wall (perpendicular to Z axis, at -Z edge)
+  const southWall = new THREE.Mesh(
+    new THREE.BoxGeometry(w, h, wallThickness),
+    wallMaterial
+  );
+  southWall.position.set(0, h / 2, -d / 2 + wallThickness / 2);
+  southWall.castShadow = true;
+  southWall.receiveShadow = true;
+  group.add(southWall);
+
+  // Floor (raised slightly so it doesn't z-fight with the ground)
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 0.3, d),
+    new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 })
+  );
+  floor.position.y = 0.3;
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  // Ceiling
+  const ceiling = new THREE.Mesh(
+    new THREE.BoxGeometry(w, 0.3, d),
+    new THREE.MeshStandardMaterial({ color: 0x2d2d2d, roughness: 0.9 })
+  );
+  ceiling.position.y = h;
+  ceiling.castShadow = true;
+  ceiling.receiveShadow = true;
+  group.add(ceiling);
+
+  // Roof
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.25, 0.35, d + 0.25),
+    new THREE.MeshStandardMaterial({ color: 0x2d2d2d, roughness: 0.9 })
+  );
+  roof.position.y = h + 0.08;
+  roof.castShadow = true;
+  roof.receiveShadow = true;
+  group.add(roof);
+
+  // Add windows on the west wall (back wall, opposite the open east side)
+  const windowGeometry = new THREE.BoxGeometry(0.08, 0.6, 0.22);
+  const windowGroup = new THREE.Group();
+  windowGroup.position.set(-w / 2 - 0.1, 0, 0);
+  for (let row = 0; row < 3; row++) {
+    for (let col = -1; col <= 1; col++) {
+      const mesh = new THREE.Mesh(windowGeometry, windowMaterial);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.position.set(0, row * 0.9 + 0.7, col * 0.45);
+      windowGroup.add(mesh);
+    }
+  }
+  group.add(windowGroup);
+
+  // Add glowing hovering rings inside
+  const ringCount = 5;
+  const ringMaterial = new THREE.MeshStandardMaterial({
+    color: 0x00ffff,
+    emissive: 0x00ffff,
+    emissiveIntensity: 2,
+    roughness: 0.2,
+    metalness: 0.8,
+    transparent: true,
+    opacity: 0.8
+  });
+
+  for (let i = 0; i < ringCount; i++) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.8, 0.12, 16, 32),
+      ringMaterial.clone()
+    );
+    // Position rings stacked vertically inside the building
+    ring.position.set(0, 1.5 + i * 1.8, 0);
+    ring.rotation.x = Math.PI / 2; // Lay flat
+    ring.castShadow = true;
+    group.add(ring);
+
+    // Store ring info for animation
+    hoveringRings.push({
+      mesh: ring,
+      baseY: 1.5 + i * 1.8,
+      speed: 0.5 + Math.random() * 0.3,
+      phase: Math.random() * Math.PI * 2
+    });
+  }
+
+  group.position.set(x, 0, z);
+
+  // Rotate based on open side
+  if (openSide === 'east') group.rotation.y = 0;
+  else if (openSide === 'west') group.rotation.y = Math.PI;
+  else if (openSide === 'north') group.rotation.y = Math.PI / 2;
+  else if (openSide === 'south') group.rotation.y = -Math.PI / 2;
+
+  scene.add(group);
+  return group;
+}
+
+// Update hovering rings animation
+export function updateHoveringRings(time) {
+  for (const ring of hoveringRings) {
+    // Hover upward with sinusoidal motion
+    ring.mesh.position.y = ring.baseY + Math.sin(time * ring.speed + ring.phase) * 0.3;
+    // Slow rotation
+    ring.mesh.rotation.z = time * 0.3 + ring.phase;
+    // Pulsing emissive intensity
+    ring.mesh.material.emissiveIntensity = 1.5 + Math.sin(time * 2 + ring.phase) * 0.5;
+  }
+
+}
+
 function addBuildings(scene, buildingColliders) {
   const buildingSpecs = [
     { x: -56, z: -54, w: 8, d: 8, h: 10, color: 0x7a5d45 },
@@ -218,13 +361,27 @@ function addBuildings(scene, buildingColliders) {
     { x: -28, z: 12, w: 8, d: 8, h: 8, color: 0x465c5c },
     { x: 6, z: 12, w: 11, d: 9, h: 12, color: 0x7d6a4f },
     { x: 36, z: 12, w: 8, d: 7, h: 7, color: 0x4f5c63 },
-    { x: 56, z: 12, w: 8, d: 8, h: 10, color: 0x6d4f3f },
   ];
 
   buildingSpecs.forEach((spec) => {
     makeBuilding(scene, spec.x, spec.z, spec.w, spec.d, spec.h, spec.color);
     buildingColliders.push({ x: spec.x, z: spec.z, halfW: spec.w / 2, halfD: spec.d / 2, h: spec.h });
   });
+
+  // Special building at east edge with open side facing east (toward map edge)
+  const openBuildingSpec = { x: 56, z: 12, w: 8, d: 8, h: 10, color: 0x6d4f3f };
+  makeOpenBuilding(scene, openBuildingSpec.x, openBuildingSpec.z, openBuildingSpec.w, openBuildingSpec.d, openBuildingSpec.h, openBuildingSpec.color, 'east');
+  // Instead of a full rectangle (which blocks the open east side), add 3 wall
+  // colliders: back (west), north, and south — leaving the east side open.
+  const wt = 0.4; // wall thickness for collider half-width
+  const ow = openBuildingSpec.x, oz = openBuildingSpec.z;
+  const obw = openBuildingSpec.w, obd = openBuildingSpec.d, obh = openBuildingSpec.h;
+  // West wall collider (full depth)
+  buildingColliders.push({ x: ow - obw / 2 + wt / 2, z: oz, halfW: wt / 2, halfD: obd / 2, h: obh });
+  // North wall collider (full width)
+  buildingColliders.push({ x: ow, z: oz + obd / 2 - wt / 2, halfW: obw / 2, halfD: wt / 2, h: obh });
+  // South wall collider (full width)
+  buildingColliders.push({ x: ow, z: oz - obd / 2 + wt / 2, halfW: obw / 2, halfD: wt / 2, h: obh });
 }
 
 // ===== Build everything =====

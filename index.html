@@ -50,10 +50,10 @@
         margin-bottom: 4px;
       }
 
-      /* ===== Touch joystick (bottom-left) ===== */
+      /* ===== Touch joystick (bottom-right) ===== */
       #joystick {
         position: fixed;
-        left: 24px;
+        right: 24px;
         bottom: 24px;
         width: 128px;
         height: 128px;
@@ -105,7 +105,7 @@
 
       #joystick-hit {
         position: fixed;
-        left: 4px;
+        right: 4px;
         bottom: 4px;
         width: 168px;
         height: 168px;
@@ -127,7 +127,7 @@
   </head>
   <body>
     <canvas id="minimap" width="160" height="160"
-      style="position:fixed;right:16px;bottom:16px;pointer-events:none;
+      style="position:fixed;left:16px;bottom:16px;pointer-events:none;
              background:rgba(5,10,18,0.68);border:1px solid rgba(255,255,255,0.15);border-radius:12px;"></canvas>
 
     <!-- Touch joystick: drag the knob to drive -->

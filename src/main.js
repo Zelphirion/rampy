@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap } from './map.js';
+import { buildMap, updateHoveringRings } from './map.js';
 import { addProps, updateFountains } from './props.js';
 import { createCar, addTrafficCars } from './cars.js';
 import { addFiretruck } from './firetruck.js';
@@ -9,7 +9,7 @@ import { addTrain } from './train.js';
 import { addLizard } from './lizard.js';
 import { updateKnockables, knockAt, resetKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
-import { buildRampWorld, buildRampWorldProps, createClouds, createPortal, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './rampworld.js';
+import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './rampworld.js';
 
 // ===== World bounds (full torus on all four sides) =====
 // The whole map wraps like a torus — driving off ANY edge puts you on the
@@ -459,6 +459,18 @@ let currentRamp = null; // ramp the car is ON right now (for body tilt)
 // car rising flat and level). Recomputed every frame on grounded terrain.
 let terrainPitch = 0;
 
+// ===== Building levitation (ring building at 56,12) =====
+// 2 seconds after driving inside, the car levitates upward, then teleports
+// to the ramp world once it clears the roof.
+const buildingLevitate = {
+  active: false,
+  timer: 0,          // counts up from 0 once car enters the building
+  levitating: false,  // true once the 2s delay is over and the car rises
+  levitateTime: 0,    // time since levitation started (0 -> 4 seconds)
+  x: 56, z: 12,       // building centre
+  w: 8, d: 8, h: 10,  // building dimensions
+};
+
 function flattenCarFromRock() {
   if (flatCarState.phase === 'bounce') return;
   flatCarState.active = true;
@@ -536,16 +548,14 @@ const boulder = createRollingBoulder(rampScene, rampWorldFeatures.boulder.x, ram
 wheelOfDeath.cooldown = 0;
 
 // ===== Portals =====
-// City portal: sits right at the END of the small east-side ramp (24,0, run
+// The ring building at (56,12) is the city's gateway to the ramp world.
+// Returning from the ramp world is done by driving UNDER the vortex.
 // -X) — just past its high end, on the launch line — so driving up the ramp
 // and off it carries you straight into the ring. The easy way into the ramp
 // world. The trigger stays generous (radius*1.9) so almost any approach
 // catches, and the ring is turned to face the car flying west off the ramp.
-const cityPortal = createPortal(scene, 16, 5.4, 0, 4, 0x7ef9ff);
-cityPortal.triggerRadius = 6;
-cityPortal.group.rotation.y = Math.PI / 2;   // face +/-X (the ramp launches west)
-// Returning from the ramp world is done by driving UNDER the vortex (see the
-// portal-trigger block) — there is no return portal in the ramp world.
+// The ring building at (56,12) replaces the old city portal — driving into it
+// triggers a levitation sequence that teleports to the ramp world.
 
 // ===== Ramp physics =====
 // Find the ramp whose footprint contains (px, pz); returns { runX, runZ, s,
@@ -752,7 +762,7 @@ function enterCityWorld() {
   // city: spawn high above the main intersection (0,0) and fall back down to
   // the streets (the ballistic code + flight camera handle the descent), with
   // a little forward speed so you can steer during the drop. The grace timer
-  // stops the city portal (now at the small ramp) from instantly re-catching
+  // stops the ring-building levitation from instantly re-catching the car.
   // the car as it drops.
   portalGrace = 1.5;
   velocity.value = 6;
@@ -864,12 +874,7 @@ function drawMinimap() {
     ctx.beginPath();
     ctx.arc(mmCenter + lizard.mesh.position.x * mmScale, mmCenter + lizard.mesh.position.z * mmScale, 2.2, 0, Math.PI * 2);
     ctx.fill();
-    // City portal marker: ring outline at the end of the small east-side ramp
-    ctx.strokeStyle = '#7ef9ff';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.arc(mmCenter + cityPortal.x * mmScale, mmCenter + cityPortal.z * mmScale, 4.5, 0, Math.PI * 2);
-    ctx.stroke();
+
   } else {
     // Ramp world minimap: sandy rolling terrain, the launch ramps, the vortex,
     // and the return portal
@@ -1525,8 +1530,19 @@ function updateCamera(delta) {
     shake.intensity *= 0.88;
   }
 
+  // ===== Levitation camera override =====
+  // When the car is levitating out of the ring building, the camera stays
+  // on the ground nearby and tilts up to watch the car rise.
   camOffset.lerp(desiredOffset, 0.12);
   camera.position.copy(cameraTarget).add(camOffset);
+  if (buildingLevitate.active && buildingLevitate.levitating) {
+    camera.position.set(
+      buildingLevitate.x + buildingLevitate.w / 2 + 6,
+      2,
+      buildingLevitate.z
+    );
+    lookTarget.copy(car.position);
+  }
   camera.lookAt(lookTarget);
 }
 
@@ -1612,11 +1628,12 @@ function animate() {
   // open rolling terrain — nothing to block you.
   const elevated = jumpState.inAir || (worldState === 'city' && buildingTopAt(car.position.x, car.position.z) > 0);
   const canMove =
+    !buildingLevitate.levitating && (
     worldState === 'ramp' ||
     elevated ||
     (!isPositionBlocked(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
       !isPositionBlockedByFiretruck(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
-      !isPositionBlockedByRobot(nextCarPos.x, nextCarPos.z, playerCarRadius));
+      !isPositionBlockedByRobot(nextCarPos.x, nextCarPos.z, playerCarRadius)));
   if (canMove) {
     car.position.copy(nextCarPos);
   } else {
@@ -1625,7 +1642,10 @@ function animate() {
   }
 
   // ===== Ramps: drive up the slope, launch off the top, fall back down =====
-  if (worldState === 'ramp') {
+  // During building levitation, skip all ramp/ground physics — the car is rising.
+  if (buildingLevitate.levitating) {
+    // Levitating: only vertical motion is controlled by the levitation code.
+  } else if (worldState === 'ramp') {
     if (jumpState.inAir) {
       // Airborne in the ramp world: fall under gravity and land on whichever
       // is higher — the bumpy terrain or the top of a launch ramp.
@@ -2075,6 +2095,9 @@ function animate() {
   // Gentle fountain splashes in the centre plaza
   updateFountains(fountains, delta);
 
+  // Animate hovering rings in the open building
+  updateHoveringRings(clock.elapsedTime);
+
   // Walk the pedestrians (they scream and scatter when you or the robot get close)
   updatePeople(delta, { player: car.position, robot: robot.mesh.position });
   }  // end city ambience
@@ -2094,24 +2117,12 @@ function animate() {
   // Blue car follow in the ramp world: countdown, then chase + knock props.
   updateRampWorldBumper(delta);
 
-  // ===== Portal triggers: flying into the city portal (small ramp) or driving
+  // ===== Portal triggers: driving under the ramp-world vortex swaps worlds =====
   // under the ramp-world vortex swaps worlds =====
   // A short grace timer (set on teleport) stops a portal/vortex from instantly
   // re-catching the car the moment it emerges on the other side.
   if (portalGrace > 0) portalGrace -= delta;
-  if (portalGrace <= 0 && worldState === 'city') {
-    // Only warps when the car is UP on the ramp / airborne (not just driving
-    // along the road under the floating ring), so the ring reads as a
-    // ramp-end gateway instead of swallowing cars on the street.
-    if (car.position.y > groundHeight + 0.5) {
-      const pdx = car.position.x - cityPortal.x;
-      const pdy = car.position.y - cityPortal.y;
-      const pdz = car.position.z - cityPortal.z;
-      if (pdx * pdx + pdy * pdy + pdz * pdz < cityPortal.triggerRadius * cityPortal.triggerRadius) {
-        enterRampWorld();
-      }
-    }
-  } else if (portalGrace <= 0 && worldState === 'ramp') {
+  if (portalGrace <= 0 && worldState === 'ramp') {
     // Driving UNDER the vortex (grounded, near its centre) warps you back to
     // the city — dropping you in mid-air above the town centre.
     const vdx = car.position.x - vortex.x;
@@ -2121,11 +2132,52 @@ function animate() {
     }
   }
 
-  // Portal glow: spin the rings and pulse the disc every frame
-  const pt = clock.elapsedTime;
-  cityPortal.ring.rotation.z = pt * 0.9;
-  cityPortal.ring2.rotation.z = -pt * 0.65;
-  cityPortal.glow.material.opacity = 0.28 + 0.14 * Math.sin(pt * 3);
+  // ===== Building levitation trigger (ring building 56,12) =====
+  if (portalGrace <= 0 && worldState === 'city') {
+    const bx = car.position.x - buildingLevitate.x;
+    const bz = car.position.z - buildingLevitate.z;
+    const insideBuilding = Math.abs(bx) < buildingLevitate.w / 2 - 0.5 &&
+                           Math.abs(bz) < buildingLevitate.d / 2 - 0.5;
+    if (insideBuilding && car.position.y < buildingLevitate.h) {
+      if (!buildingLevitate.active) {
+        buildingLevitate.active = true;
+        buildingLevitate.timer = 0;
+        buildingLevitate.levitating = false;
+      }
+    } else if (!buildingLevitate.levitating) {
+      // Car left before levitation started — reset
+      buildingLevitate.active = false;
+      buildingLevitate.timer = 0;
+    }
+    if (buildingLevitate.active) {
+      buildingLevitate.timer += delta;
+      if (buildingLevitate.timer >= 2 && !buildingLevitate.levitating) {
+        // Start levitation
+        buildingLevitate.levitating = true;
+        velocity.value = 0;
+        shake.intensity = Math.max(shake.intensity, 0.3);
+      }
+      if (buildingLevitate.levitating) {
+        // Rise upward: slow start, then accelerate over 4 seconds.
+        // Use a quadratic ease-in: speed = maxSpeed * (t/4)^2 so the car
+        // barely moves at first and rockets upward by the end.
+        buildingLevitate.levitateTime += delta;
+        const t = Math.min(buildingLevitate.levitateTime / 4, 1);  // 0..1
+        const speed = 18 * t * t;  // quadratic ease-in, peaks at 18 u/s
+        car.position.y += speed * delta;
+        // Slowly fade horizontal velocity to zero
+        velocity.value *= 0.95;
+        // Once past the roof, teleport to ramp world
+        if (car.position.y > buildingLevitate.h + 2) {
+          enterRampWorld();
+          buildingLevitate.active = false;
+          buildingLevitate.levitating = false;
+          buildingLevitate.levitateTime = 0;
+          buildingLevitate.timer = 0;
+        }
+      }
+    }
+  }
 
   // Ramp-world vortex: spin the spiral arms, the shear rings, and the rising
   // funnel ribbons, and pulse the funnel. It only exists in the ramp world.

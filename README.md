@@ -13,7 +13,7 @@ train that circles the town.
 Run these commands in PowerShell to start the game:
 
 ```powershell
-cd c:\xampp\htdocs\city
+cd c:\xampp\htdocs\rampy
 python -m http.server 8090
 ```
 
