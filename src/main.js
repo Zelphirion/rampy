@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings } from './map.js';
-import { addProps, updateFountains } from './props.js';
+import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays } from './props.js';
 import { createCar, addTrafficCars } from './cars.js';
 import { addFiretruck } from './firetruck.js';
 import { addPeople } from './people.js';
@@ -730,6 +730,7 @@ function enterRampWorld() {
   // benches, barrels, parked cars, ...) so the streets are tidy when you
   // come back through the portal.
   resetKnockables();
+  resetHydrantSprays();
   portalGrace = 1.5;
   velocity.value = 12;
   steering.value = 0;
@@ -758,6 +759,7 @@ function enterCityWorld() {
   // Leaving the ramp world: stand the bowling pins, dominoes, barrels and
   // logs back up so they're all ready to knock over again when you return.
   resetKnockables();
+  resetHydrantSprays();
   // Driving under the ramp-world vortex dumps you back over the CENTRE of the
   // city: spawn high above the main intersection (0,0) and fall back down to
   // the streets (the ballistic code + flight camera handle the descent), with
@@ -2094,6 +2096,9 @@ function animate() {
 
   // Gentle fountain splashes in the centre plaza
   updateFountains(fountains, delta);
+
+  // Fire hydrant water sprays
+  updateHydrantSprays(delta);
 
   // Animate hovering rings in the open building
   updateHoveringRings(clock.elapsedTime);
