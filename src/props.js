@@ -344,18 +344,16 @@ function makePothole(scene) {
   }
 }
 
-// Build a gentle curving line of cones on the SOUTH side of the pothole,
-// guiding traffic left (toward the centre line) as it passes.
+// Build a tight semicircle of 8 cones on the north side of the pothole
+// (the side facing traffic), guiding drivers to swerve toward the centre.
 function addPotholeCones(scene) {
   const { x, z, radius } = POTHOLE;
-  const peakX = x;
-  const peakZ = z - radius - 3;          // 3 units south of the rim
-  const halfSpan = 28;
-  const steps = 16;
-  for (let i = 0; i <= steps; i++) {
-    const t = (i / steps) * 2 - 1;       // –1 … +1
-    const cx = peakX + t * halfSpan;
-    const cz = peakZ - t * t * (peakZ - (z - 1)); // parabola: high at centre, low at ends
+  const ringR = 5.5;
+  const n = 8;
+  for (let i = 0; i < n; i++) {
+    const angle = Math.PI + (i / (n - 1)) * Math.PI;   // π → 2π (west → east via north)
+    const cx = x + ringR * Math.cos(angle);
+    const cz = z + ringR * Math.sin(angle);
     makeStreetCone(scene, cx, cz);
   }
 }

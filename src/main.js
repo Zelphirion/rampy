@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings } from './map.js?v=1787160950000';
-import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones } from './props.js?v=1787159050000';
+import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones } from './props.js?v=1787180000000';
 import { createCar, addTrafficCars } from './cars.js';
 import { addFiretruck } from './firetruck.js?v=1787162000000';
 import { addPeople } from './people.js';
@@ -2020,20 +2020,16 @@ function animate() {
     let lat = t.axis === 'x' ? t.mesh.position.z : t.mesh.position.x;
     // Pothole detour — ONLY westbound cars (approaching from the east) swerve.
     // Eastbound traffic is unaffected (the pothole is on the north edge).
-    if (!t.latOff) { t.latOff = 0; t.detour = 0; }
+    if (!t.latOff) t.latOff = 0;
     const tdx = t.mesh.position.x - POTHOLE.x;
     const tDist = Math.abs(tdx);
     const coneZone = POTHOLE.radius + 10;
     // Only trigger for eastbound (dir=1) cars at z≈5.5, approaching from the west
     const inZone = t.axis === 'x' && t.dir === 1 && tDist < coneZone && tdx < 0;
     if (inZone) {
-      t.detour = 0;
-      t.latOff = Math.max(t.latOff - 0.3 * delta, -0.2);  // cap at 0.2 units south
+      t.latOff = Math.max(t.latOff - 0.3 * delta, -0.2911);
     } else {
-      t.detour += delta;
-      if (t.detour > 4) {
-        t.latOff *= Math.pow(0.08, delta);
-      }
+      t.latOff *= Math.pow(0.3, delta);
     }
     lat += t.latOff;
     lat = THREE.MathUtils.clamp(lat, -11, 11);
