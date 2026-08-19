@@ -2,7 +2,6 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 
 // ===== Shared map materials =====
 const streetMaterial = new THREE.MeshStandardMaterial({ color: 0x1c1f24, roughness: 1 });
-const sidewalkMaterial = new THREE.MeshStandardMaterial({ color: 0x8d8d8d, roughness: 0.95 });
 const grassMaterial = new THREE.MeshStandardMaterial({ color: 0x3a7a3f, roughness: 1 });
 const windowMaterial = new THREE.MeshStandardMaterial({
   color: 0x7eb8ff,
@@ -24,7 +23,7 @@ function addGround(scene) {
   scene.add(ground);
 }
 
-// ===== Roads, sidewalks, crosswalks =====
+// ===== Roads, crosswalks =====
 function addRoads(scene) {
   const mainRoad = new THREE.Mesh(new THREE.BoxGeometry(160, 0.2, 24), streetMaterial);
   mainRoad.position.set(0, 0.13, 0);
@@ -42,28 +41,10 @@ function addRoads(scene) {
   crossRoad.receiveShadow = true;
   scene.add(crossRoad);
 
-  // Sidewalks form a ring at ±42. The north/south edges run along Z (rotated
-  // 90°), and their tops sit clearly above the road as a curb so the two can
-  // never z-fight where they overlap.
-  const sidewalks = [];
-  const sidewalkWidths = [24, 24, 26, 26];
-  for (let i = 0; i < sidewalkWidths.length; i++) {
-    const side = new THREE.Mesh(new THREE.BoxGeometry(160, 0.18, sidewalkWidths[i]), sidewalkMaterial);
-    side.position.set(0, 0.21, 0);            // top = 0.30, a 0.07 curb above the road
-    if (i >= 2) side.rotation.y = Math.PI / 2; // N/S sidewalks run along Z
-    side.receiveShadow = true;
-    sidewalks.push(side);
-  }
-  sidewalks[0].position.z = -42;
-  sidewalks[1].position.z = 42;
-  sidewalks[2].position.x = -42;
-  sidewalks[3].position.x = 42;
-  scene.add(...sidewalks);
-
   const crosswalkMaterial = new THREE.MeshStandardMaterial({ color: 0xf8f8f8, roughness: 0.8 });
   for (let i = 0; i < 4; i++) {
     const cross = new THREE.Mesh(new THREE.BoxGeometry(6, 0.16, 24), crosswalkMaterial);
-    cross.position.set(i % 2 === 0 ? -20 : 20, 0.26, i < 2 ? -42 : 42);  // top = 0.34, above the curb
+    cross.position.set(i % 2 === 0 ? -20 : 20, 0.26, i < 2 ? -42 : 42);
     cross.receiveShadow = true;
     scene.add(cross);
   }

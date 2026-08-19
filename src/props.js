@@ -192,8 +192,9 @@ function makeFireHydrant(scene, x, z) {
     group.add(nozzle);
   }
   group.position.set(x, 0, z);
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  const k = addKnockable(group, 0.35, { fallTime: 0.25 });
+  const k = addKnockable(group, 1.05, { fallTime: 0.25 });
 
   // Water spray system — geyser column + 55 droplets
   const geyser = new THREE.Mesh(_geyserGeo, _geyserMat.clone());
@@ -296,8 +297,9 @@ function makeStreetCone(scene, x, z) {
   stripe.position.y = 0.19;
   group.add(stripe);
   group.position.set(x, 0, z);
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  addKnockable(group, 0.22, { mode: 'scatter', fallTime: 0.3, slideDistance: 1.5, flyHeight: 0.45 });
+  addKnockable(group, 0.66, { mode: 'scatter', fallTime: 0.3, slideDistance: 1.5, flyHeight: 0.45 });
 }
 
 // ===== Newspaper Boxes =====
@@ -321,8 +323,9 @@ function makeNewspaperBox(scene, x, z, rotY) {
   }
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  const k = addKnockable(group, 0.45, { fallTime: 0.35 });
+  const k = addKnockable(group, 1.35, { fallTime: 0.35 });
   k.linked = [];
   for (let i = 0; i < 10; i++) {
     const pg = new THREE.Group();
@@ -331,8 +334,9 @@ function makeNewspaperBox(scene, x, z, rotY) {
     pg.add(sheet);
     pg.position.set(x, 0.65, z);
     pg.rotation.y = rotY || 0;
+    pg.scale.set(3, 3, 3);
     scene.add(pg);
-    k.linked.push(addKnockable(pg, 0.25, {
+    k.linked.push(addKnockable(pg, 0.75, {
       mode: 'scatter',
       fallTime: 0.35 + Math.random() * 0.3,
       slideDistance: 1.5 + Math.random() * 2.0,
@@ -363,8 +367,9 @@ function makeParkingMeter(scene, x, z, rotY) {
   group.add(face);
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  const k = addKnockable(group, 0.35, { fallTime: 0.3 });
+  const k = addKnockable(group, 1.05, { fallTime: 0.3 });
   k.linked = [];
   for (let i = 0; i < 10; i++) {
     const cg = new THREE.Group();
@@ -372,8 +377,9 @@ function makeParkingMeter(scene, x, z, rotY) {
     disc.castShadow = true;
     cg.add(disc);
     cg.position.set(x, 1.2, z);
+    cg.scale.set(3, 3, 3);
     scene.add(cg);
-    k.linked.push(addKnockable(cg, 0.18, {
+    k.linked.push(addKnockable(cg, 0.54, {
       mode: 'scatter',
       fallTime: 0.25 + Math.random() * 0.2,
       slideDistance: 1.0 + Math.random() * 2.5,
@@ -395,8 +401,9 @@ function makeStreetBench(scene, x, z, rotY) {
   group.add(back);
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  addKnockable(group, 1.1, { fallTime: 0.35, shovePower: 9, shoveSpinPower: 2.0 });
+  addKnockable(group, 3.3, { fallTime: 0.35, shovePower: 9, shoveSpinPower: 2.0 });
 }
 
 // ===== Trash Cans =====
@@ -418,8 +425,9 @@ function makeTrashCan(scene, x, z) {
   lid.position.y = 0.67;
   group.add(lid);
   group.position.set(x, 0, z);
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  const k = addKnockable(group, 0.4, { fallTime: 0.35, shovePower: 10, shoveSpinPower: 2.2 });
+  const k = addKnockable(group, 1.2, { fallTime: 0.35, shovePower: 10, shoveSpinPower: 2.2 });
   k.linked = [];
   for (let i = 0; i < 8; i++) {
     const gg = new THREE.Group();
@@ -431,8 +439,9 @@ function makeTrashCan(scene, x, z) {
     mesh.castShadow = true;
     gg.add(mesh);
     gg.position.set(x, 0.75, z);
+    gg.scale.set(3, 3, 3);
     scene.add(gg);
-    k.linked.push(addKnockable(gg, 0.18, {
+    k.linked.push(addKnockable(gg, 0.54, {
       mode: 'scatter',
       fallTime: 0.3 + Math.random() * 0.3,
       slideDistance: 1.0 + Math.random() * 2.0,
@@ -453,12 +462,71 @@ function makeSodaVendingMachine(scene, x, z, rotY) {
   body.castShadow = true;
   body.receiveShadow = true;
   group.add(body);
+  // Top cap / brand header
+  const topCap = new THREE.Mesh(
+    new THREE.BoxGeometry(0.89, 0.12, 0.69),
+    new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.5 })
+  );
+  topCap.position.y = 1.56;
+  group.add(topCap);
+  // Brand sign area on front-top
+  const brandSign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.6, 0.2, 0.02),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 })
+  );
+  brandSign.position.set(0, 1.42, 0.34);
+  group.add(brandSign);
+  // Display panel with selection buttons
   const panel = new THREE.Mesh(
     new THREE.BoxGeometry(0.45, 0.55, 0.02),
     new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.3 })
   );
   panel.position.set(0, 1.05, 0.34);
   group.add(panel);
+  // Selection buttons (colored rows representing different sodas)
+  const buttonColors = [0xdd1111, 0x1177dd, 0x22aa22, 0xff8800, 0xdd1111, 0x1177dd];
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 2; col++) {
+      const btn = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.12, 0.025),
+        new THREE.MeshStandardMaterial({ color: buttonColors[row * 2 + col], roughness: 0.4, metalness: 0.2 })
+      );
+      btn.position.set(-0.1 + col * 0.2, 1.18 - row * 0.16, 0.355);
+      group.add(btn);
+    }
+  }
+  // Coin slot
+  const coinSlot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.04, 0.02),
+    new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.3, metalness: 0.6 })
+  );
+  coinSlot.position.set(0.18, 1.28, 0.35);
+  group.add(coinSlot);
+  // Coin return slot
+  const coinReturn = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 0.025, 8),
+    new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.4, metalness: 0.5 })
+  );
+  coinReturn.position.set(0.18, 0.95, 0.35);
+  coinReturn.rotation.x = Math.PI / 2;
+  group.add(coinReturn);
+  // Delivery tray / bin at bottom
+  const tray = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.18, 0.15),
+    new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5 })
+  );
+  tray.position.set(0, 0.18, 0.35);
+  group.add(tray);
+  // Side trim strips
+  for (const sx of [-0.44, 0.44]) {
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, 1.3, 0.66),
+      new THREE.MeshStandardMaterial({ color: 0xaa1111, roughness: 0.5, metalness: 0.2 })
+    );
+    trim.position.set(sx, 0.75, 0);
+    group.add(trim);
+  }
+  // Dispensing slot
   const slot = new THREE.Mesh(
     new THREE.BoxGeometry(0.3, 0.16, 0.04),
     new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 })
@@ -467,18 +535,19 @@ function makeSodaVendingMachine(scene, x, z, rotY) {
   group.add(slot);
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  const k = addKnockable(group, 0.75, { fallTime: 0.5, shovePower: 6 });
+  const k = addKnockable(group, 2.25, { fallTime: 0.5, shovePower: 6 });
   k.linked = [];
   for (let i = 0; i < 14; i++) {
     const cg = new THREE.Group();
     const mat = Math.random() < 0.5 ? sodaCanRedMat : sodaCanBlueMat;
-    const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.11, 8), mat);
+    const cylinder = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.44, 8), mat);
     cylinder.castShadow = true;
     cg.add(cylinder);
     cg.position.set(x, 0.9, z);
     scene.add(cg);
-    k.linked.push(addKnockable(cg, 0.14, {
+    k.linked.push(addKnockable(cg, 0.56, {
       mode: 'scatter',
       fallTime: 0.3 + Math.random() * 0.3,
       slideDistance: 1.5 + Math.random() * 3.0,
@@ -520,8 +589,9 @@ function makePhoneBooth(scene, x, z, rotY) {
   group.add(phone);
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
+  group.scale.set(3, 3, 3);
   scene.add(group);
-  addKnockable(group, 0.65, { fallTime: 0.5 });
+  addKnockable(group, 1.95, { fallTime: 0.5 });
 }
 
 // ===== Street Furniture Placement =====
