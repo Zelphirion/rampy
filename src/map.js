@@ -338,7 +338,6 @@ function addBuildings(scene, buildingColliders) {
     { x: 0, z: -24, w: 10, d: 8, h: 13, color: 0x6e5f52 },
     { x: 26, z: -24, w: 7, d: 7, h: 10, color: 0x6e7d6e },
     { x: 54, z: -24, w: 8, d: 8, h: 6, color: 0x4b5a62 },
-    { x: -56, z: 12, w: 7, d: 7, h: 9, color: 0x6f5d56 },
     { x: -28, z: 12, w: 8, d: 8, h: 8, color: 0x465c5c },
     { x: 6, z: 12, w: 11, d: 9, h: 12, color: 0x7d6a4f },
     { x: 36, z: 12, w: 8, d: 7, h: 7, color: 0x4f5c63 },

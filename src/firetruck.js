@@ -23,7 +23,6 @@ const FLAME_GEO = {
 // upper corners (no ground-floor fire). At most two buildings burn at once.
 // The truck parks on the road (z=0) and douses them.
 const FIRE_SPOTS = [
-  { x: -56, z: 12, h: 9,  w: 7,  d: 7 },
   { x: -28, z: 12, h: 8,  w: 8,  d: 8 },
   { x: 36,  z: 12, h: 7,  w: 8,  d: 7 },
   { x: 56,  z: 12, h: 10, w: 8,  d: 8 },

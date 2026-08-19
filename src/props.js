@@ -283,6 +283,10 @@ export function resetHydrantSprays() {
 const coneMat = new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.7 });
 const coneWhiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7 });
 
+// Standing cone positions used by traffic collision detection.
+// Each entry: { x, z, r } where r is the traffic collision radius.
+export const standingCones = [];
+
 function makeStreetCone(scene, x, z) {
   const group = new THREE.Group();
   const base = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 0.05, 8), coneMat);
@@ -300,6 +304,60 @@ function makeStreetCone(scene, x, z) {
   group.scale.set(3, 3, 3);
   scene.add(group);
   addKnockable(group, 0.66, { mode: 'scatter', fallTime: 0.3, slideDistance: 1.5, flyHeight: 0.45 });
+  standingCones.push({ x, z, r: 2.2 });  // traffic collision radius
+}
+
+// ===== Pothole =====
+// Position on the main east-west road, far east of the intersection.
+export const POTHOLE = { x: -50, z: 8, radius: 3 };
+
+function makePothole(scene) {
+  const { x, z, radius } = POTHOLE;
+
+  // Dark hole surface flush with the road
+  const holeMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1 });
+  const hole = new THREE.Mesh(new THREE.CircleGeometry(radius, 24), holeMat);
+  hole.rotation.x = -Math.PI / 2;
+  hole.position.set(x, 0.24, z);
+  scene.add(hole);
+
+  // Shadow underneath to suggest depth
+  const shadow = new THREE.Mesh(
+    new THREE.CircleGeometry(radius * 0.85, 20),
+    new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 1 })
+  );
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(x, 0.12, z);
+  scene.add(shadow);
+
+  // Broken asphalt chunks around the rim
+  const chunkMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, roughness: 0.95 });
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+    const r = radius * (0.85 + Math.random() * 0.4);
+    const s = 0.3 + Math.random() * 0.6;
+    const chunk = new THREE.Mesh(new THREE.BoxGeometry(s, 0.08, s * 0.7), chunkMat);
+    chunk.position.set(x + Math.cos(a) * r, 0.22, z + Math.sin(a) * r);
+    chunk.rotation.y = Math.random() * Math.PI;
+    chunk.castShadow = true;
+    scene.add(chunk);
+  }
+}
+
+// Build a gentle curving line of cones on the SOUTH side of the pothole,
+// guiding traffic left (toward the centre line) as it passes.
+function addPotholeCones(scene) {
+  const { x, z, radius } = POTHOLE;
+  const peakX = x;
+  const peakZ = z - radius - 3;          // 3 units south of the rim
+  const halfSpan = 28;
+  const steps = 16;
+  for (let i = 0; i <= steps; i++) {
+    const t = (i / steps) * 2 - 1;       // –1 … +1
+    const cx = peakX + t * halfSpan;
+    const cz = peakZ - t * t * (peakZ - (z - 1)); // parabola: high at centre, low at ends
+    makeStreetCone(scene, cx, cz);
+  }
 }
 
 // ===== Newspaper Boxes =====
@@ -596,13 +654,9 @@ function makePhoneBooth(scene, x, z, rotY) {
 
 // ===== Street Furniture Placement =====
 function addStreetFurniture(scene) {
-  // Street cones — lightweight, scatter on impact
-  const conePos = [
-    [14, 14], [14, -14], [-14, 14], [-14, -14],
-    [35, 14], [-35, 14], [35, -14], [-35, -14],
-    [14, 35], [14, -35], [-14, 35], [-14, -35],
-  ];
-  conePos.forEach(([x, z]) => makeStreetCone(scene, x, z));
+  // Pothole on the main road with cones ringed around it
+  makePothole(scene);
+  addPotholeCones(scene);
 
   // Newspaper boxes — papers burst out on impact
   const newsPos = [
@@ -627,11 +681,14 @@ function addStreetFurniture(scene) {
   ];
   benchPos.forEach(([x, z, r]) => makeStreetBench(scene, x, z, r));
 
-  // Trash cans — garbage spews out, can rolls like barrel
+  // Trash cans — beside shops and select buildings, not along roads
   const trashPos = [
-    [16, 16], [16, -16], [-16, 16], [-16, -16],
-    [40, 14], [-40, 14], [60, 14], [-60, 14],
-    [14, 40], [-14, 40], [14, -40], [-14, -40],
+    // beside each shop (south side of shops at z=64)
+    [-68, 61], [-54, 61], [-40, 61], [-26, 61],
+    // beside select buildings (not all)
+    [-56, -51], [16, -51],   // south row buildings
+    [-56, -21], [26, -21],   // mid row buildings
+    [-28, 16],  [36, 16],    // north row buildings
   ];
   trashPos.forEach(([x, z]) => makeTrashCan(scene, x, z));
 

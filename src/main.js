@@ -1,8 +1,8 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap, updateHoveringRings } from './map.js';
-import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays } from './props.js';
+import { buildMap, updateHoveringRings } from './map.js?v=1787160950000';
+import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones } from './props.js?v=1787159050000';
 import { createCar, addTrafficCars } from './cars.js';
-import { addFiretruck } from './firetruck.js';
+import { addFiretruck } from './firetruck.js?v=1787162000000';
 import { addPeople } from './people.js';
 import { addRobot } from './robot.js';
 import { addTrain } from './train.js';
@@ -639,6 +639,8 @@ const BUMPER_RAMP_DELAY = 20;
 const playerKnockRadius = 2.6;      // how far the player shoves props
 const aiKnockRadius = 1.5;          // how far the blue car shoves props
 const shake = { intensity: 0 };
+// Pothole wobble — set when driving through the pothole on the main road
+const potholeWobble = { active: false, t: 0 };
 // Tier 3 knock impulse: a hammer / wheel-rim / boulder hit slides the car in
 // world space AND spins it (like the bumper car's knock), plus a hop.
 let playerKnock = null;
@@ -1778,6 +1780,31 @@ function animate() {
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
   }
 
+  // Pothole wobble — car rocks when driven through the pothole on the main road.
+  // Does not block movement; just adds a fun visual wobble.
+  if (worldState === 'city') {
+    const pdx = car.position.x - POTHOLE.x;
+    const pdz = car.position.z - POTHOLE.z;
+    const overHole = pdx * pdx + pdz * pdz < POTHOLE.radius * POTHOLE.radius;
+    if (overHole && !potholeWobble.active) {
+      potholeWobble.active = true;
+      potholeWobble.t = 0;
+    }
+    if (potholeWobble.active) {
+      potholeWobble.t += delta;
+      const wt = potholeWobble.t;
+      if (wt < 1.0) {
+        const decay = 1.0 - wt;
+        car.rotation.z += Math.sin(wt * 18) * 0.22 * decay;
+        car.rotation.x += Math.cos(wt * 22) * 0.16 * decay;
+        // Small vertical bump — car hops slightly on entry
+        if (wt < 0.25) car.position.y += (0.25 - wt) * 0.6;
+      } else {
+        potholeWobble.active = false;
+      }
+    }
+  }
+
   // Tier 3 knock impulse: a hammer / wheel-rim / boulder hit slides the car
   // in world space and spins it, independent of the throttle-driven forward
   // motion (it decays each frame, same as the bumper car's knock).
@@ -1991,7 +2018,29 @@ function animate() {
     for (const w of t.mesh.userData.wheels) w.rotation.y += step * 2.6;
     // Ease back toward the lane centre after being knocked out of the way...
     let lat = t.axis === 'x' ? t.mesh.position.z : t.mesh.position.x;
-    lat += (t.homeLat - lat) * 1.2 * delta;
+    // Pothole detour — ONLY westbound cars (approaching from the east) swerve.
+    // Eastbound traffic is unaffected (the pothole is on the north edge).
+    if (!t.latOff) { t.latOff = 0; t.detour = 0; }
+    const tdx = t.mesh.position.x - POTHOLE.x;
+    const tDist = Math.abs(tdx);
+    const coneZone = POTHOLE.radius + 10;
+    // Only trigger for eastbound (dir=1) cars at z≈5.5, approaching from the west
+    const inZone = t.axis === 'x' && t.dir === 1 && tDist < coneZone && tdx < 0;
+    if (inZone) {
+      t.detour = 0;
+      t.latOff = Math.max(t.latOff - 0.3 * delta, -0.2);  // cap at 0.2 units south
+    } else {
+      t.detour += delta;
+      if (t.detour > 4) {
+        t.latOff *= Math.pow(0.08, delta);
+      }
+    }
+    lat += t.latOff;
+    lat = THREE.MathUtils.clamp(lat, -11, 11);
+    // Only ease back to lane when detour is done — prevents jitter
+    if (Math.abs(t.latOff) < 0.3) {
+      lat += (t.homeLat - lat) * 1.2 * delta;
+    }
     if (t.axis === 'x') t.mesh.position.z = lat;
     else t.mesh.position.x = lat;
     // ...and straighten back up to the lane heading after being spun around.
