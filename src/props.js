@@ -171,26 +171,35 @@ const _hydrantSprays = [];
 
 function makeFireHydrant(scene, x, z) {
   const group = new THREE.Group();
+  const redMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.6 });
+
+  // Thinner body
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.2, 0.55, 8),
-    new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.6 })
+    new THREE.CylinderGeometry(0.10, 0.12, 0.55, 8),
+    redMat
   );
   body.position.y = 0.32;
   body.castShadow = true;
   group.add(body);
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.16, 0.1, 8), body.material);
-  cap.position.y = 0.62;
-  group.add(cap);
-  // Side nozzles
-  for (const side of [-1, 1]) {
-    const nozzle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.04, 0.06, 0.15, 6),
-      new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.6 })
-    );
-    nozzle.position.set(side * 0.18, 0.38, 0);
-    nozzle.rotation.z = side * Math.PI / 2;
-    group.add(nozzle);
-  }
+
+  // Bell-shaped head (hemisphere dome)
+  const bell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.18, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    redMat
+  );
+  bell.position.y = 0.60;
+  bell.castShadow = true;
+  group.add(bell);
+
+  // Single large nozzle on the front
+  const nozzle = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.08, 0.22, 8),
+    redMat
+  );
+  nozzle.position.set(0, 0.38, 0.13);
+  nozzle.rotation.x = Math.PI / 2;
+  group.add(nozzle);
+
   group.position.set(x, 0, z);
   group.scale.set(3, 3, 3);
   scene.add(group);
@@ -355,49 +364,6 @@ function addPotholeCones(scene) {
     const cx = x + ringR * Math.cos(angle);
     const cz = z + ringR * Math.sin(angle);
     makeStreetCone(scene, cx, cz);
-  }
-}
-
-// ===== Newspaper Boxes =====
-const newsBoxMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, roughness: 0.7 });
-const paperMat = new THREE.MeshStandardMaterial({ color: 0xf5f0e0, roughness: 0.9 });
-const newsGlassMat = new THREE.MeshStandardMaterial({ color: 0xaaddee, transparent: true, opacity: 0.4, roughness: 0.1 });
-
-function makeNewspaperBox(scene, x, z, rotY) {
-  const group = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.38), newsBoxMat);
-  body.position.y = 0.42;
-  body.castShadow = true;
-  group.add(body);
-  const glass = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.28, 0.02), newsGlassMat);
-  glass.position.set(0, 0.48, 0.2);
-  group.add(glass);
-  for (let i = 0; i < 3; i++) {
-    const p = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.02, 0.15), paperMat);
-    p.position.set((Math.random() - 0.5) * 0.08, 0.38 + i * 0.07, 0);
-    group.add(p);
-  }
-  group.position.set(x, 0, z);
-  group.rotation.y = rotY || 0;
-  group.scale.set(3, 3, 3);
-  scene.add(group);
-  const k = addKnockable(group, 1.35, { fallTime: 0.35 });
-  k.linked = [];
-  for (let i = 0; i < 10; i++) {
-    const pg = new THREE.Group();
-    const sheet = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.012, 0.14), paperMat.clone());
-    sheet.castShadow = true;
-    pg.add(sheet);
-    pg.position.set(x, 0.65, z);
-    pg.rotation.y = rotY || 0;
-    pg.scale.set(3, 3, 3);
-    scene.add(pg);
-    k.linked.push(addKnockable(pg, 0.75, {
-      mode: 'scatter',
-      fallTime: 0.35 + Math.random() * 0.3,
-      slideDistance: 1.5 + Math.random() * 2.0,
-      flyHeight: 0.5 + Math.random() * 0.8,
-    }));
   }
 }
 
@@ -650,18 +616,365 @@ function makePhoneBooth(scene, x, z, rotY) {
   addKnockable(group, 1.95, { fallTime: 0.5 });
 }
 
+// ===== Old Mine Shaft Entrance =====
+// Rough-hewn timber frame and boulders at the mouth of an old mine shaft.
+// The entrance faces -X (west, toward the road) so the car can drive in.
+// Returns { colliders } so main.js can block the car from driving through walls.
+function makeMineShaftEntrance(scene) {
+  // Build the mine in a group, then rotate to face north (-Z = top of minimap).
+  // Local coords: tunnel runs +X, width along Z (same as original layout).
+  // Rotation.y = π/2 maps local +X → world -Z (north) and local +Z → world +X.
+  const mineGroup = new THREE.Group();
+  const _realScene = scene;
+  scene = mineGroup;                 // redirect all scene.add() into the group
+  const x = 0, z = 0;               // local centre (group is positioned later)
+  const timberMat = new THREE.MeshStandardMaterial({ color: 0x5a3d22, roughness: 0.95 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1 });
+  const boulderMat = new THREE.MeshStandardMaterial({ color: 0x5c5550, roughness: 1 });
+  const plankMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.9 });
+  const dirtMat = new THREE.MeshStandardMaterial({ color: 0x6b5a3e, roughness: 1 });
+
+  // --- Open cave interior: dark floor + far back wall + glowing crystals ---
+  // No walls/ceiling near the entrance — the archway stays open and driveable
+  const tunnelLen = 12;     // how far back the cave extends
+  const tunnelW = 5;        // interior width (z)
+  const tunnelH = 4.5;      // interior height (y)
+  const hw = tunnelW / 2;   // half-width
+  const tx = x + 1;         // cave interior starts just behind the frame
+
+  // Dark floor inside the tunnel
+  const caveFloor = new THREE.Mesh(
+    new THREE.BoxGeometry(tunnelLen, 0.1, tunnelW),
+    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1 })
+  );
+  caveFloor.position.set(tx + tunnelLen / 2, 0.05, z);
+  scene.add(caveFloor);
+
+  // Far back wall (deep inside, so it doesn't block the entrance view)
+  const backWall = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, tunnelH + 1, tunnelW + 1),
+    darkMat
+  );
+  backWall.position.set(tx + tunnelLen, tunnelH / 2, z);
+  scene.add(backWall);
+
+  // Subtle side walls that start MIDWAY through the tunnel (not at the entrance)
+  for (const side of [-1, 1]) {
+    const sideWall = new THREE.Mesh(
+      new THREE.BoxGeometry(tunnelLen * 0.6, tunnelH, 0.4),
+      darkMat
+    );
+    sideWall.position.set(tx + tunnelLen * 0.7, tunnelH / 2, z + side * (hw + 0.2));
+    scene.add(sideWall);
+  }
+
+  // Partial ceiling that only covers the back half (front stays open)
+  const backCeil = new THREE.Mesh(
+    new THREE.BoxGeometry(tunnelLen * 0.5, 0.4, tunnelW + 0.8),
+    darkMat
+  );
+  backCeil.position.set(tx + tunnelLen * 0.75, tunnelH + 0.2, z);
+  scene.add(backCeil);
+
+  // --- Collision colliders for the tunnel walls (car can't drive through) ---
+  // h=0 so buildingTopAt() doesn't mistake them for rooftops (which bypass collisions).
+  // World-space colliders (after group rotation.y = -π/2 at position (-55, 0, 34)):
+  //   local (lx,ly,lz) → world (-55-lz, ly, 34+lx)
+  //   local halfX → world halfD,  local halfZ → world halfW
+  const mineColliders = [
+    { x: -55, z: 47, halfW: 3.0, halfD: 0.5, h: 0 },     // back wall
+    { x: -60, z: 41, halfW: 1.25, halfD: 6.5, h: 0 },     // west dirt bank
+    { x: -50, z: 41, halfW: 1.25, halfD: 6.5, h: 0 },     // east dirt bank
+  ];
+
+  // --- Shining crystals at the back of the cave ---
+  const crystalColors = [0x44ddff, 0x88ff88, 0xff88ff, 0xffff66, 0x66aaff];
+  const crystalPositions = [
+    [tx + tunnelLen - 2, 0.5, z - 1.5],
+    [tx + tunnelLen - 1, 0.8, z + 0.5],
+    [tx + tunnelLen - 1.5, 0.4, z + 2],
+    [tx + tunnelLen - 2.5, 0.6, z - 0.3],
+    [tx + tunnelLen - 1.2, 1.2, z - 2],
+    [tx + tunnelLen - 0.8, 0.3, z + 1.5],
+    [tx + tunnelLen - 2, 1.0, z + 1],
+  ];
+  crystalPositions.forEach(([cx, cy, cz], i) => {
+    const col = crystalColors[i % crystalColors.length];
+    const crystalMat = new THREE.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: 1.2, roughness: 0.2,
+    });
+    const h = 0.4 + Math.random() * 0.6;
+    const crystal = new THREE.Mesh(
+      new THREE.ConeGeometry(0.15 + Math.random() * 0.1, h, 5),
+      crystalMat
+    );
+    crystal.position.set(cx, cy, cz);
+    crystal.rotation.z = (Math.random() - 0.5) * 0.4;
+    crystal.rotation.x = (Math.random() - 0.5) * 0.4;
+    scene.add(crystal);
+  });
+
+  // Faint glow light deep inside the cave
+  const caveLight = new THREE.PointLight(0x44aaff, 1.5, 14, 2);
+  caveLight.position.set(tx + tunnelLen - 2, 2.5, z);
+  scene.add(caveLight);
+
+  // --- Dirt/earth mound on top of the cave (visible from outside) ---
+  const dirtRoof = new THREE.Mesh(new THREE.BoxGeometry(tunnelLen + 2, 2.0, tunnelW + 4), dirtMat);
+  dirtRoof.position.set(tx + tunnelLen / 2, tunnelH + 1.0, z);
+  scene.add(dirtRoof);
+  // Dirt side-banks flanking the tunnel
+  for (const side of [-1, 1]) {
+    const bank = new THREE.Mesh(new THREE.BoxGeometry(tunnelLen + 1, 2.2, 2.5), dirtMat);
+    bank.position.set(tx + tunnelLen / 2, 1.1, z + side * (hw + 2.5));
+    scene.add(bank);
+  }
+
+  // --- Two main vertical timber posts (the frame) ---
+  for (const side of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.5, 0.45), timberMat);
+    post.position.set(x - 2.5, 2.25, z + side * 2.8);
+    post.castShadow = true;
+    scene.add(post);
+  }
+
+  // --- Horizontal lintel beam across the top ---
+  const lintel = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 6.5), timberMat);
+  lintel.position.set(x - 2.5, 4.6, z);
+  lintel.castShadow = true;
+  scene.add(lintel);
+
+  // --- Second (inner) set of posts deeper inside the tunnel ---
+  for (const side of [-1, 1]) {
+    const innerPost = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.8, 0.35), timberMat);
+    innerPost.position.set(tx + 3, 1.9, z + side * 2.5);
+    scene.add(innerPost);
+  }
+  const innerLintel = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 5.8), timberMat);
+  innerLintel.position.set(tx + 3, 3.9, z);
+  scene.add(innerLintel);
+
+  // --- Cross-bracing timbers on each side (inside the tunnel) ---
+  for (const side of [-1, 1]) {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.18, 5.2, 0.18), timberMat);
+    brace.position.set(tx + 2, 2.3, z + side * 2.7);
+    brace.rotation.z = side * 0.35;
+    scene.add(brace);
+  }
+
+  // === EXTRA ROUGH LUMBER on the outside — extra posts, beams, angled braces ===
+  // Additional vertical posts flanking the entrance (wider spread)
+  for (const side of [-1, 1]) {
+    const outerPost = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.6, 0.35), timberMat);
+    outerPost.position.set(x - 2.5, 1.8, z + side * 3.8);
+    outerPost.rotation.z = side * 0.08;  // slight lean outward
+    outerPost.castShadow = true;
+    scene.add(outerPost);
+  }
+  // Diagonal log braces from outer posts to the main frame (like flying buttresses)
+  for (const side of [-1, 1]) {
+    const diagLog = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.8, 0.2), timberMat);
+    diagLog.position.set(x - 3.5, 2.0, z + side * 3.3);
+    diagLog.rotation.z = side * 0.55;
+    diagLog.rotation.y = -0.15;
+    diagLog.castShadow = true;
+    scene.add(diagLog);
+  }
+  // Extra horizontal collar beams across the top (behind the main lintel)
+  for (let i = 0; i < 3; i++) {
+    const collarBeam = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25 + Math.random() * 0.1, 0.25 + Math.random() * 0.1, 6.2 + Math.random() * 0.6),
+      timberMat
+    );
+    collarBeam.position.set(x - 1.5 - i * 1.5, 3.8 + Math.random() * 0.5, z);
+    collarBeam.rotation.z = (Math.random() - 0.5) * 0.12;
+    collarBeam.castShadow = true;
+    scene.add(collarBeam);
+  }
+  // Short horizontal ledger boards nailed to the side of each outer post
+  for (const side of [-1, 1]) {
+    for (let h = 0; h < 3; h++) {
+      const ledger = new THREE.Mesh(new THREE.BoxGeometry(1.0 + Math.random() * 0.4, 0.12, 0.12), plankMat);
+      ledger.position.set(x - 2.5 + (Math.random() - 0.5) * 0.3, 1.0 + h * 1.1, z + side * 3.8);
+      ledger.rotation.y = (Math.random() - 0.5) * 0.2;
+      scene.add(ledger);
+    }
+  }
+  // Leaning support logs on the ground (angled against the outer posts)
+  for (const side of [-1, 1]) {
+    const leanLog = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 4.5, 6), timberMat);
+    leanLog.position.set(x - 4.5, 1.5, z + side * 3.5);
+    leanLog.rotation.z = side * 0.35;
+    leanLog.rotation.x = -0.1;
+    leanLog.castShadow = true;
+    scene.add(leanLog);
+  }
+  // Extra side timbers — rough horizontal planks bridging outer posts to the frame
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 4; i++) {
+      const sidePlank = new THREE.Mesh(
+        new THREE.BoxGeometry(1.4 + Math.random() * 0.6, 0.1, 0.14 + Math.random() * 0.06),
+        plankMat
+      );
+      sidePlank.position.set(
+        x - 3.0 - i * 0.8 + (Math.random() - 0.5) * 0.2,
+        0.6 + i * 1.0 + Math.random() * 0.3,
+        z + side * (3.0 + Math.random() * 0.5)
+      );
+      sidePlank.rotation.y = side * 0.15 + (Math.random() - 0.5) * 0.1;
+      sidePlank.rotation.z = side * 0.08;
+      sidePlank.castShadow = true;
+      scene.add(sidePlank);
+    }
+  }
+  // Additional vertical supports pressed against the dirt banks
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 2; i++) {
+      const bankPost = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 2.8 + Math.random() * 1.2, 0.22),
+        timberMat
+      );
+      bankPost.position.set(
+        tx + 2 + i * 5 + Math.random() * 2,
+        1.4,
+        z + side * (hw + 1.5 + Math.random() * 0.8)
+      );
+      bankPost.rotation.z = (Math.random() - 0.5) * 0.15;
+      bankPost.castShadow = true;
+      scene.add(bankPost);
+    }
+  }
+  // Diagonal kickers bracing the dirt banks from below
+  for (const side of [-1, 1]) {
+    const kicker = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 3.2, 5), timberMat);
+    kicker.position.set(tx + 6, 0.8, z + side * (hw + 2.0));
+    kicker.rotation.z = side * 0.6;
+    kicker.rotation.x = 0.2;
+    kicker.castShadow = true;
+    scene.add(kicker);
+  }
+
+  // === ROCKS ON TOP of the dirt mound ===
+  const rockColors = [0x6e665e, 0x7a756d, 0x5c574f, 0x847e76, 0x635e56];
+  // Large boulders sitting on the roof mound
+  const roofRockData = [
+    [tx + 1,    tunnelH + 2.2, z - 1.5, 1.0],
+    [tx + 3,    tunnelH + 2.5, z + 0.8, 0.85],
+    [tx + 5,    tunnelH + 2.1, z - 0.5, 1.1],
+    [tx + 7,    tunnelH + 2.6, z + 1.2, 0.9],
+    [tx + 9,    tunnelH + 2.3, z - 1.0, 0.95],
+    [tx + 10.5, tunnelH + 2.0, z + 0.3, 0.8],
+    [tx + 2,    tunnelH + 2.4, z + 2.0, 0.7],
+    [tx + 6,    tunnelH + 2.2, z - 2.0, 0.75],
+    [tx + 8,    tunnelH + 2.5, z + 2.2, 0.65],
+    [tx + 4,    tunnelH + 2.1, z,       1.05],
+  ];
+  roofRockData.forEach(([rx, ry, rz, rr]) => {
+    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
+    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
+    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 7, 5), rockMat);
+    rock.scale.y = 0.55 + Math.random() * 0.3;
+    rock.scale.x = 0.8 + Math.random() * 0.4;
+    rock.position.set(rx, ry, rz);
+    rock.rotation.set(Math.random(), Math.random() * Math.PI, Math.random() * 0.3);
+    rock.castShadow = true;
+    scene.add(rock);
+  });
+  // Medium rocks scattered across the mound slope
+  for (let i = 0; i < 14; i++) {
+    const rx = tx + 1 + Math.random() * (tunnelLen - 2);
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const rz = z + side * (hw + 1 + Math.random() * 1.5);
+    const rr = 0.35 + Math.random() * 0.45;
+    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
+    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
+    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 6, 4), rockMat);
+    rock.scale.y = 0.5 + Math.random() * 0.3;
+    rock.position.set(rx, tunnelH + 0.8 + Math.random() * 1.2, rz);
+    rock.rotation.set(Math.random(), Math.random() * Math.PI, 0);
+    rock.castShadow = true;
+    scene.add(rock);
+  }
+  // Small pebbles across the top
+  for (let i = 0; i < 18; i++) {
+    const rx = tx + Math.random() * tunnelLen;
+    const rz = z + (Math.random() - 0.5) * (tunnelW + 2);
+    const rr = 0.15 + Math.random() * 0.25;
+    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
+    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
+    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 5, 4), rockMat);
+    rock.scale.y = 0.4 + Math.random() * 0.3;
+    rock.position.set(rx, tunnelH + 1.8 + Math.random() * 0.8, rz);
+    scene.add(rock);
+  }
+
+  // --- Worn planks on the ground at the entrance ---
+  for (let i = 0; i < 4; i++) {
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(1.8 + Math.random() * 0.8, 0.1, 0.5), plankMat);
+    plank.position.set(x - 2 + Math.random() * 1.5, 0.06, z + (i - 1.5) * 1.4 + (Math.random() - 0.5) * 0.3);
+    plank.rotation.y = (Math.random() - 0.5) * 0.3;
+    scene.add(plank);
+  }
+
+  // --- Boulders scattered around the entrance (knockable — they scatter on impact) ---
+  const boulderData = [
+    [x - 3.5, z - 3.2, 1.1], [x - 3.8, z + 3.5, 0.9],
+    [x - 2.0, z - 3.8, 0.7], [x - 1.5, z + 3.6, 0.8],
+    [x + 0.5, z - 3.3, 1.0], [x + 0.8, z + 3.4, 0.75],
+    [x - 4.2, z - 1.0, 0.6], [x - 4.0, z + 1.2, 0.55],
+    [x - 3.0, z - 4.0, 0.5], [x - 2.8, z + 4.1, 0.6],
+    [x + 2.5, z - 3.0, 0.85], [x + 2.2, z + 3.1, 0.7],
+    [x + 3.8, z - 2.0, 0.9], [x + 4.0, z + 1.8, 0.8],
+    [x + 1.0, z + 3.9, 0.65], [x + 1.2, z - 3.7, 0.6],
+    // top of frame boulders
+    [x - 2.5, z - 1.0, 0.5], [x - 2.5, z + 0.8, 0.45],
+    [x + 3.0, z + 0.5, 0.55],
+  ];
+  boulderData.forEach(([bx, bz, r]) => {
+    const g = new THREE.Group();
+    const b = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), boulderMat);
+    b.position.y = r * 0.6;
+    b.scale.y = 0.65 + Math.random() * 0.2;
+    b.castShadow = true;
+    g.add(b);
+    g.position.set(bx, 0, bz);
+    g.rotation.y = Math.random() * Math.PI;
+    scene.add(g);
+    addKnockable(g, r + 0.3, {
+      mode: 'slide',
+      fallTime: 0.35 + Math.random() * 0.2,
+      slideDistance: 1.5 + Math.random() * 1.5,
+      shovePower: 10,
+      shoveSpinPower: 2.5,
+    });
+  });
+
+  // --- Small rocks/gravel on the ground around the entrance ---
+  const gravelMat = new THREE.MeshStandardMaterial({ color: 0x8a8078, roughness: 1 });
+  for (let i = 0; i < 12; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 3 + Math.random() * 2.5;
+    const gr = 0.12 + Math.random() * 0.18;
+    const g = new THREE.Mesh(new THREE.SphereGeometry(gr, 5, 4), gravelMat);
+    g.position.set(x + Math.cos(angle) * dist, gr * 0.4, z + Math.sin(angle) * dist);
+    g.scale.y = 0.5;
+    scene.add(g);
+  }
+
+  // --- Position & orient the mine group ---
+  // Rotate π/2 around Y so the tunnel faces north (-Z = top of minimap).
+  mineGroup.position.set(-55, 0, 34);
+  mineGroup.rotation.y = -Math.PI / 2;  // face south (+Z = bottom of minimap)
+  _realScene.add(mineGroup);
+
+  return { colliders: mineColliders };
+}
+
 // ===== Street Furniture Placement =====
 function addStreetFurniture(scene) {
   // Pothole on the main road with cones ringed around it
   makePothole(scene);
   addPotholeCones(scene);
-
-  // Newspaper boxes — papers burst out on impact
-  const newsPos = [
-    [14, 6], [-14, 6], [6, 14], [-6, 14],
-    [14, -6], [-14, -6], [6, -14], [-6, -14],
-  ];
-  newsPos.forEach(([x, z]) => makeNewspaperBox(scene, x, z, Math.atan2(-z, -x)));
 
   // Parking meters — coins clatter everywhere on impact
   const meterPos = [
@@ -670,14 +983,6 @@ function addStreetFurniture(scene) {
     [14, -30], [-14, -30],
   ];
   meterPos.forEach(([x, z]) => makeParkingMeter(scene, x, z, Math.atan2(-z, -x)));
-
-  // Street benches along sidewalks — can be re-shoved after falling
-  const benchPos = [
-    [25, 14, 0], [-25, 14, 0], [45, 14, 0], [-45, 14, 0],
-    [14, 25, Math.PI / 2], [-14, 25, Math.PI / 2],
-    [14, -25, -Math.PI / 2], [-14, -25, -Math.PI / 2],
-  ];
-  benchPos.forEach(([x, z, r]) => makeStreetBench(scene, x, z, r));
 
   // Trash cans — beside shops and select buildings, not along roads
   const trashPos = [
@@ -763,8 +1068,15 @@ function addPark(scene) {
   scene.add(pond);
 
   [[52,52],[72,52],[52,72],[72,72],[62,48],[48,62],[76,62],[62,76]].forEach(([x, z]) => makeTree(scene, x, z));
+  // Park benches around the perimeter — facing inward
   makeBench(scene, 58, 66, 0);
   makeBench(scene, 66, 58, Math.PI / 2);
+  makeBench(scene, 50, 58, 0);
+  makeBench(scene, 58, 50, -Math.PI / 2);
+  makeBench(scene, 74, 58, Math.PI);
+  makeBench(scene, 66, 74, Math.PI / 2);
+  makeBench(scene, 74, 66, Math.PI);
+  makeBench(scene, 50, 66, 0);
 }
 
 // ===== Parking lot (southwest) =====
@@ -1137,6 +1449,13 @@ function addVillageCharm(scene, fountains) {
   ];
   shopData.forEach((s) => makeShop(scene, s.x, s.z, s.r, s.c, s.rc));
 
+  // Small sidewalk strip in front of the shops (south side, facing the town)
+  const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xb0a899, roughness: 0.9 });
+  const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(56, 0.12, 4), sidewalkMat);
+  sidewalk.position.set(-47, 0.07, 59);
+  sidewalk.receiveShadow = true;
+  scene.add(sidewalk);
+
   // Fountain + statues at the town's north edge, out on the grass and well
   // clear of the roads (the crossroads run the full length of town).
   makeFountain(scene, 30, 58, fountains);
@@ -1179,10 +1498,25 @@ export function addProps(scene) {
     makeLampPost(scene, -17, z);
   }
 
-  makeFireHydrant(scene, -60, -46);
-  makeFireHydrant(scene, 8, -46);
-  makeFireHydrant(scene, 50, -46);
-  makeFireHydrant(scene, -60, 6);
+  // Fire hydrants on the grass, near buildings (never on the road)
+  makeFireHydrant(scene, -62, -58);   // near south-west building (-56,-54)
+  makeFireHydrant(scene, 20, -58);    // near south-east building (12,-54)
+  makeFireHydrant(scene, 60, -20);    // near mid-east building (54,-24)
+  makeFireHydrant(scene, -36, -20);   // near mid-west building (-32,-24)
+  makeFireHydrant(scene, -34, 58);    // near the shops row
+  // 12 additional hydrants spread around the map near buildings
+  makeFireHydrant(scene, -28, -58);   // near south building (-34,-54)
+  makeFireHydrant(scene, -18, -58);   // near south building (-12,-54)
+  makeFireHydrant(scene, 42, -58);    // near south-east building (36,-54)
+  makeFireHydrant(scene, -62, -28);   // near mid-west building (-56,-24)
+  makeFireHydrant(scene, -16, -20);   // near mid building (0,-24)
+  makeFireHydrant(scene, 32, -28);    // near mid-east building (26,-24)
+  makeFireHydrant(scene, -34, 18);    // near north building (-28,12)
+  makeFireHydrant(scene, 16, 18);     // near north building (6,12)
+  makeFireHydrant(scene, 42, 18);     // near north-east building (36,12)
+  makeFireHydrant(scene, 62, 18);     // near north-east building (56,12)
+  makeFireHydrant(scene, -20, 58);    // near rightmost shop
+  makeFireHydrant(scene, 60, 48);     // near park edge
 
   makeFenceLine(scene, 49, 49, 49, 75, 7);
   makeFenceLine(scene, 49, 75, 75, 75, 7);
@@ -1194,8 +1528,9 @@ export function addProps(scene) {
   addMarketStalls(scene);
   addVillageCharm(scene, fountains);
   addStreetFurniture(scene);
+  const { colliders: mineColliders } = makeMineShaftEntrance(scene);
 
-  return { trafficLights, fountains };
+  return { trafficLights, fountains, mineColliders };
 }
 
 export { updateFountains };

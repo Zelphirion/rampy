@@ -172,10 +172,10 @@ export function createFiretruck() {
   box(1.5, 0.07, 0.07, ladderMat, -3.0, 2.78, 0.42);
   for (let x = -3.6; x <= -2.4; x += 0.4) box(0.06, 0.07, 0.84, ladderMat, x, 2.78, 0);
 
-  // Warning lightbar at the back of the cab roof
-  box(1.2, 0.16, 0.3, dark, -1.95, 2.8, 0);
-  const lightRed = box(0.26, 0.14, 0.26, warnRed, -2.15, 2.92, 0);
-  const lightAmber = box(0.26, 0.14, 0.26, warnAmber, -1.75, 2.92, 0);
+  // Warning lightbar across the cab roof (driver door ↔ passenger door)
+  box(0.32, 0.16, 1.8, dark, -2.55, 2.8, 0);
+  const lightRed = box(0.28, 0.16, 0.32, warnRed, -2.55, 2.92, -0.58);
+  const lightAmber = box(0.28, 0.16, 0.32, warnRed, -2.55, 2.92, 0.58);
 
   // Cab door handles (round knobs)
   addKnob(group, -3.0, 1.25, 1.2, 0.11, chromeMat);

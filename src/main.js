@@ -10,6 +10,7 @@ import { addLizard } from './lizard.js';
 import { updateKnockables, knockAt, resetKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './rampworld.js';
+import { addCaveEntrance, addUnderground, UNDERGROUND_Y, tunnelPoint } from './underground.js';
 
 // ===== World bounds (full torus on all four sides) =====
 // The whole map wraps like a torus — driving off ANY edge puts you on the
@@ -78,6 +79,9 @@ const ROBOT_CAM_MAX_RADIUS = 42;  // fully zoomed distance when the robot is rig
 // User yaw offset (radians) added to the car's heading for the chase cam
 let cameraYawOffset = 0;
 const cameraTarget = new THREE.Vector3(0, 0.6, 0);
+const _lookTarget = new THREE.Vector3(0, 0.6, 0);      // persistent across frames
+const _mineCamTarget = new THREE.Vector3();   // reused each frame during mine dive
+const _mineLookTarget = new THREE.Vector3();
 // Initial camera sits behind the car (car faces -X at spawn)
 const startX = cameraOrbit.radius * Math.sin(cameraOrbit.phi);
 const startY = cameraOrbit.radius * Math.cos(cameraOrbit.phi) + 2.2;
@@ -116,7 +120,8 @@ scene.add(dirLight);
 
 // ===== Build the world =====
 const { buildingColliders, ramps } = buildMap(scene);
-const { trafficLights, fountains } = addProps(scene);
+const { trafficLights, fountains, mineColliders } = addProps(scene);
+addCaveEntrance(scene);
 const traffic = addTrafficCars(scene);
 const { people, update: updatePeople } = addPeople(scene);
 
@@ -125,7 +130,7 @@ const { people, update: updatePeople } = addPeople(scene);
 // colliders across the wrap seams (the 8 neighboring copies of the world) keep
 // collisions continuous at the edges: x ghosts are spaced one x-span (180)
 // apart, z ghosts one z-span (213).
-const colliders = [...buildingColliders];
+const colliders = [...buildingColliders, ...mineColliders];
 for (const c of buildingColliders) {
   for (const ox of [-worldSizeX, 0, worldSizeX]) {
     for (const oz of [-worldSizeZ, 0, worldSizeZ]) {
@@ -147,7 +152,8 @@ function rectCircleIntersect(px, pz, collider, radius) {
 }
 
 function isPositionBlocked(x, z, radius) {
-  return colliders.some((collider) => rectCircleIntersect(x, z, collider, radius));
+  const list = worldState === 'underground' ? ugColliders : colliders;
+  return list.some((collider) => rectCircleIntersect(x, z, collider, radius));
 }
 
 // Traffic cars are moving obstacles: check a position against every car on the
@@ -471,6 +477,18 @@ const buildingLevitate = {
   w: 8, d: 8, h: 10,  // building dimensions
 };
 
+// ===== Mine shaft portal (entrance at -55,50, tunnel faces north) =====
+// Driving deep into the mine tunnel triggers a dive animation: the car's
+// nose tips down as if descending into the earth, then it teleports to
+// the underground world.
+const minePortal = {
+  active: false,       // true when the car is inside the trigger zone
+  timer: 0,            // counts up once active — teleport at 2.5s
+  triggerX: -55,       // X centre of the tunnel
+  triggerXHalf: 2.2,   // half-width of the trigger zone in X
+  triggerZ: 42,        // Z threshold — deep in tunnel near the crystals (south)
+};
+
 function flattenCarFromRock() {
   if (flatCarState.phase === 'bounce') return;
   flatCarState.active = true;
@@ -489,7 +507,7 @@ function updateFlatCarState(delta) {
 // A SECOND scene so the city stays intact in memory: while we're in the ramp
 // world we stop rendering the city and switch the car over to this scene. On
 // the way back we just switch it again.
-let worldState = 'city';   // 'city' | 'ramp'
+let worldState = 'city';   // 'city' | 'ramp' | 'underground'
 // Seconds to ignore portal triggers right after a teleport, so the car isn't
 // instantly re-caught by the portal it just emerged from.
 let portalGrace = 0;
@@ -546,6 +564,44 @@ const trebuchet = createTrebuchet(rampScene, rampWorldFeatures.trebuchet.x, ramp
 const boulder = createRollingBoulder(rampScene, rampWorldFeatures.boulder.x, rampWorldFeatures.boulder.z, terrainHeightAt);
 // The wheel of death gains a rim knock (see updateRampWorldDanger).
 wheelOfDeath.cooldown = 0;
+
+// ===== Underground world (the mine shaft portal destination) =====
+// A third scene for the cavern beneath the map.  The mine shaft at (-55,50)
+// is the portal entry — driving deep into the tunnel triggers a dive
+// animation and teleports the car here, spawning high above the cavern
+// floor so it falls in.  Driving into the tunnel foot returns to the city.
+const undergroundScene = new THREE.Scene();
+undergroundScene.background = new THREE.Color(0x120820);
+undergroundScene.fog = new THREE.FogExp2(0x180e28, 0.003);
+
+const ugHemi = new THREE.HemisphereLight(0x8866cc, 0x332244, 1.8);
+undergroundScene.add(ugHemi);
+const ugDir = new THREE.DirectionalLight(0xccbbdd, 1.2);
+ugDir.position.set(10, 40, 10);
+undergroundScene.add(ugDir);
+
+// Crystal-tinted ambient — bright enough to see the cavern
+const ugAmbCrystal = new THREE.PointLight(0x6644ff, 2.0, 140, 1);
+ugAmbCrystal.position.set(-20, 18, 60);
+undergroundScene.add(ugAmbCrystal);
+
+// Purple sky glow from high above — gives the cavern a violet ceiling
+const ugSkyGlow = new THREE.PointLight(0x9944ff, 2.5, 200, 1);
+ugSkyGlow.position.set(0, 40, 40);
+undergroundScene.add(ugSkyGlow);
+
+// Additional warm fill light from above the tunnel foot area
+const ugWarm = new THREE.PointLight(0xffaa66, 1.2, 110, 1);
+ugWarm.position.set(-55, 8, 83);
+undergroundScene.add(ugWarm);
+
+// Far-cavern fill so the edges aren't pitch black
+const ugFill = new THREE.PointLight(0x7755cc, 1.0, 160, 1);
+ugFill.position.set(30, 20, 10);
+undergroundScene.add(ugFill);
+
+const undergroundWorld = addUnderground(undergroundScene);
+const ugColliders = undergroundWorld.colliders;
 
 // ===== Portals =====
 // The ring building at (56,12) is the city's gateway to the ramp world.
@@ -620,7 +676,8 @@ function rampRampSurfaceY(px, pz) {
 // off a roof edge back onto the street.
 function buildingTopAt(x, z) {
   let top = 0;
-  for (const c of colliders) {
+  const list = worldState === 'underground' ? ugColliders : colliders;
+  for (const c of list) {
     if (Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD) {
       top = Math.max(top, c.h + 0.3);
     }
@@ -790,6 +847,56 @@ function enterCityWorld() {
   shake.intensity = Math.max(shake.intensity, 0.5);
 }
 
+// City → Underground (mine shaft portal at -55,50)
+function enterUndergroundWorld() {
+  scene.remove(car);
+  undergroundScene.add(car);
+  worldState = 'underground';
+  resetKnockables();
+  resetHydrantSprays();
+  portalGrace = 2.0;
+  velocity.value = 8;
+  steering.value = 0;
+  jumpState.inAir = true;      // start airborne — fall from the sky
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  // Spawn high above the cavern, directly over the Holy Mountain centre
+  // (-58, 104) so the car falls down onto the underground floor.
+  const sx = -58, sz = 104;
+  car.position.set(sx, 30, sz);
+  car.rotation.set(0, Math.PI / 2, 0);   // face +Z (north)
+  shake.intensity = Math.max(shake.intensity, 0.5);
+  // Reset mine portal state
+  minePortal.active = false;
+  minePortal.timer = 0;
+}
+
+// Underground → City (drive into the tunnel foot in the underground)
+function leaveUndergroundWorld() {
+  undergroundScene.remove(car);
+  scene.add(car);
+  worldState = 'city';
+  resetKnockables();
+  resetHydrantSprays();
+  portalGrace = 2.0;
+  velocity.value = 6;
+  steering.value = 0;
+  jumpState.inAir = true;      // fall from above the mine shaft
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  // Spawn high above the mine shaft entrance, facing south so you land
+  // on the road and can drive away.
+  car.position.set(-55, 40, 31);  // above entrance (north side)
+  car.rotation.set(0, -Math.PI / 2, 0);
+  shake.intensity = Math.max(shake.intensity, 0.5);
+}
+
 // ===== Minimap =====
 const minimap = document.getElementById('minimap');
 const mmCtx = minimap.getContext('2d');
@@ -804,6 +911,9 @@ function drawMinimap() {
   // and crosshair stay on top).
   if (worldState === 'ramp') {
     ctx.fillStyle = 'rgba(150,110,60,0.28)';
+    ctx.fillRect(0, 0, 160, 160);
+  } else if (worldState === 'underground') {
+    ctx.fillStyle = 'rgba(30,15,40,0.35)';
     ctx.fillRect(0, 0, 160, 160);
   }
 
@@ -879,7 +989,7 @@ function drawMinimap() {
     ctx.arc(mmCenter + lizard.mesh.position.x * mmScale, mmCenter + lizard.mesh.position.z * mmScale, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
-  } else {
+  } else if (worldState === 'ramp') {
     // Ramp world minimap: sandy rolling terrain, the launch ramps, the vortex,
     // and the return portal
     // Launch ramps: a short line along each ramp's run (base -> high end)
@@ -1460,6 +1570,21 @@ const clock = new THREE.Clock();
 // still. (The shake decay doubles as a stabilizer: pause right after a jump
 // and the camera settles flat for the shot.)
 function updateCamera(delta) {
+  // ===== Mine portal camera override =====
+  // When the dive starts, bypass the entire chase cam and smoothly ease the
+  // camera to a fixed ground-level position outside the mine entrance.
+  if (minePortal.active) {
+    const t = Math.min(minePortal.timer / 2.5, 1);
+    const camY = THREE.MathUtils.lerp(camera.position.y, 1.2, t);  // ease Y down
+    _mineCamTarget.set(-55, camY, 29);
+    _mineLookTarget.set(-55, 0, 42);
+    const blend = 1 - Math.pow(0.004, delta);
+    camera.position.lerp(_mineCamTarget, blend);
+    _lookTarget.lerp(_mineLookTarget, blend);
+    camera.lookAt(_lookTarget);
+    return;   // skip chase cam entirely — nothing else touches the camera
+  }
+
   cameraTarget.copy(car.position);
   cameraTarget.y = Math.max(0.8, car.position.y);   // follow the car up ramps / into the robot's mouth
 
@@ -1523,8 +1648,8 @@ function updateCamera(delta) {
 
   // Look slightly ahead of the car in the direction of travel (off when the
   // shot is focused on the robot).
-  const lookTarget = cameraTarget.clone();
-  lookTarget.addScaledVector(fwd, THREE.MathUtils.clamp(velocity.value, 0, 14) * 0.12 * (1 - zoomT));
+  _lookTarget.copy(cameraTarget);
+  _lookTarget.addScaledVector(fwd, THREE.MathUtils.clamp(velocity.value, 0, 14) * 0.12 * (1 - zoomT));
 
   // Camera shake (jump / landing)
   if (shake.intensity > 0.002) {
@@ -1545,9 +1670,10 @@ function updateCamera(delta) {
       2,
       buildingLevitate.z
     );
-    lookTarget.copy(car.position);
+    _lookTarget.copy(car.position);
   }
-  camera.lookAt(lookTarget);
+
+  camera.lookAt(_lookTarget);
 }
 
 function animate() {
@@ -1559,7 +1685,7 @@ function animate() {
   // and the frame keeps rendering so you can grab it.
   if (isPaused) {
     updateCamera(1 / 60);
-    renderer.render(worldState === 'city' ? scene : rampScene, camera);
+    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene, camera);
     return;
   }
 
@@ -1699,6 +1825,25 @@ function animate() {
         }
       }
     }
+  } else if (worldState === 'underground') {
+    currentRamp = null;
+    wasOnRamp = null;
+    if (jumpState.inAir) {
+      // Airborne in the underground: fall under gravity, land on the cavern
+      // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02).
+      jumpState.yVelocity -= gravity * delta;
+      car.position.y += jumpState.yVelocity * delta;
+      if (car.position.y <= 0) {
+        car.position.y = 0;
+        const impact = Math.abs(jumpState.yVelocity);
+        jumpState.yVelocity = 0;
+        jumpState.inAir = false;
+        shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
+      }
+    } else {
+      // On the ground in the underground: stay on the cavern floor
+      car.position.y = 0;
+    }
   } else if (jumpState.inAir) {
     currentRamp = null;   // airborne — level back out
     // Ballistic flight — hang in the air, then fall hard.
@@ -1742,6 +1887,8 @@ function animate() {
         const roof = buildingTopAt(car.position.x, car.position.z);
         if (roof > 0) {
           car.position.y = Math.max(car.position.y, roof);
+        } else if (minePortal.active) {
+          // Mine dive: let the portal code control Y (sinking into the earth)
         } else if (car.position.y > groundHeight + 1) {
           jumpState.inAir = true;
           jumpState.yVelocity = 0;
@@ -1775,6 +1922,9 @@ function animate() {
     // arcade rock — nose up over the bumps, tail up after, then settle.
     car.rotation.z += (terrainPitch - car.rotation.z) * 0.25;
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
+  } else if (minePortal.active) {
+    // Mine portal dive: the portal code controls car.rotation.z directly.
+    // Do not touch rotation.z here — the dive code sets it each frame.
   } else {
     car.rotation.z += (targetRoll - car.rotation.z) * 0.12;
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
@@ -1826,7 +1976,8 @@ function animate() {
   // the east edge -> west edge, keeping z. z wraps -90..123 (span 213): off
   // the field's far end -> south edge, off the south edge -> the field's far
   // end (the opposite side of the world).
-  {
+  // Underground world has its own enclosed cavern — no wrapping needed.
+  if (worldState !== 'underground') {
     const px = car.position.x;
     const pz = car.position.z;
 
@@ -1850,6 +2001,7 @@ function animate() {
   // near the edge also topple city props folded across the seam).
   if (worldState === 'city') knockAt(car.position, playerKnockRadius, worldSizeX, worldSizeZ);
   else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0);
+  else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0);
 
   }  // end !robot.playerCaptured
 
@@ -1942,9 +2094,6 @@ function animate() {
     const push = bumperStopDistance * 0.65 - chaseDistance;
     bumperCar.position.addScaledVector(chaseDir.normalize(), -push);
   }
-
-  // Blue car knocks props over too (wrap-aware)
-  knockAt(bumperCar.position, aiKnockRadius, worldSizeX, worldSizeZ);
 
   // Toroidal wrap for the blue car too
   bumperCar.position.x = wrapCoordX(bumperCar.position.x);
@@ -2229,6 +2378,69 @@ function animate() {
     }
   }
 
+  // ===== Mine shaft portal (-55,50 → underground) =====
+  // When the car drives deep into the mine tunnel (south past z=42), the nose
+  // tips downward as if descending into the earth, then after 2.5 seconds
+  // it teleports to the underground world.
+  if (portalGrace <= 0 && worldState === 'city') {
+    const inTunnel = Math.abs(car.position.x - minePortal.triggerX) < minePortal.triggerXHalf &&
+                     car.position.z > minePortal.triggerZ &&
+                     !jumpState.inAir;
+    if (inTunnel) {
+      if (!minePortal.active) {
+        minePortal.active = true;
+        minePortal.timer = 0;
+        // Don't freeze velocity — let the car coast toward the crystals
+      }
+    } else if (minePortal.active) {
+      // Car left the trigger zone before teleport — reset
+      minePortal.active = false;
+      minePortal.timer = 0;
+      car.rotation.z = 0;    // undo any tilt
+    }
+    if (minePortal.active) {
+      minePortal.timer += delta;
+      // Gradually slow down as the nose dips — the car coasts deeper toward
+      // the crystals but eases to a stop before the teleport fires.
+      velocity.value *= (1 - 1.5 * delta);
+      // Tilt the nose down over time (max ~35°) — pivot around the rear
+      // axle so the back wheels stay on the ground while the front dips.
+      const tiltProgress = Math.min(minePortal.timer / 2.0, 1);
+      const tiltAngle = tiltProgress * 0.6;
+      car.rotation.z = tiltAngle;  // positive rotation.z = hood/nose dips DOWN
+      // Lower the car so the rear wheels stay grounded during the tilt
+      // (rear axle is ~1.0 unit behind the pivot centre)
+      car.position.y -= Math.sin(tiltAngle) * 1.0;
+      // Sink the entire car into the earth
+      const sinkProgress = Math.min(minePortal.timer / 2.5, 1);
+      car.position.y -= sinkProgress * 3 * delta;
+      // Camera shake builds as the dive deepens
+      shake.intensity = Math.max(shake.intensity, 0.15 + tiltProgress * 0.4);
+      // Teleport after 2.5 seconds
+      if (minePortal.timer >= 2.5) {
+        enterUndergroundWorld();
+      }
+    }
+  }
+
+  // Underground world: return portal (tunnel foot → city)
+  // Driving into the tunnel foot area in the underground teleports back.
+  if (portalGrace <= 0 && worldState === 'underground') {
+    // The tunnel foot is at s=1 of the helix: approximately (-38, -29.85, 90)
+    // based on the tunnel definition.  Check proximity to that area.
+    const tEnd = tunnelPoint(1);
+    const dx = car.position.x - tEnd.x;
+    const dz = car.position.z - tEnd.z;
+    if (!jumpState.inAir && dx * dx + dz * dz < 8 * 8) {
+      leaveUndergroundWorld();
+    }
+  }
+
+  // Mine portal: glow pulse on crystals when the car is inside the tunnel
+  if (worldState === 'city' && minePortal.active) {
+    // Crystal glow is handled by the emissive materials — no extra animation needed
+  }
+
   // Ramp-world vortex: spin the spiral arms, the shear rings, and the rising
   // funnel ribbons, and pulse the funnel. It only exists in the ramp world.
   if (worldState === 'ramp') {
@@ -2249,7 +2461,7 @@ function animate() {
 
   drawMinimap();
 
-  renderer.render(worldState === 'city' ? scene : rampScene, camera);
+  renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene, camera);
 }
 
 animate();
