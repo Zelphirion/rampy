@@ -10,7 +10,7 @@ import { addLizard } from './lizard.js';
 import { updateKnockables, knockAt, resetKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './rampworld.js';
-import { addCaveEntrance, addUnderground, UNDERGROUND_Y, tunnelPoint } from './underground.js';
+import { addUnderground, UNDERGROUND_Y, tunnelPoint } from './underground.js';
 
 // ===== World bounds (full torus on all four sides) =====
 // The whole map wraps like a torus — driving off ANY edge puts you on the
@@ -82,6 +82,8 @@ const cameraTarget = new THREE.Vector3(0, 0.6, 0);
 const _lookTarget = new THREE.Vector3(0, 0.6, 0);      // persistent across frames
 const _mineCamTarget = new THREE.Vector3();   // reused each frame during mine dive
 const _mineLookTarget = new THREE.Vector3();
+const _levCamTarget = new THREE.Vector3();    // reused each frame during levitation
+const _levLookTarget = new THREE.Vector3();
 // Initial camera sits behind the car (car faces -X at spawn)
 const startX = cameraOrbit.radius * Math.sin(cameraOrbit.phi);
 const startY = cameraOrbit.radius * Math.cos(cameraOrbit.phi) + 2.2;
@@ -121,9 +123,67 @@ scene.add(dirLight);
 // ===== Build the world =====
 const { buildingColliders, ramps } = buildMap(scene);
 const { trafficLights, fountains, mineColliders } = addProps(scene);
-addCaveEntrance(scene);
 const traffic = addTrafficCars(scene);
 const { people, update: updatePeople } = addPeople(scene);
+
+// ===== Small spinning arrow marking the map's top-left ("northwest") corner =====
+// The minimap renders north (+z) up and east (+x) LEFT — a true view-from-
+// above, so turns match the driving (see drawMinimap). On that layout the
+// corner players read as "northwest" is the TOP-LEFT one: world
+// (worldXHi, worldZHi) = (90, 123), the far corner of the mega-ramp grass
+// field. The marker lies directly ON the ground there: a dart-like arrow
+// whose tip touches the exact corner point, tail raised just enough to clear
+// the grass, spinning on its own long axis. Its materials ignore the fog so
+// it stays visible from anywhere on the map.
+const nwCornerAim = new THREE.Vector3(worldXHi, 0, worldZHi);   // the exact corner, at grass level
+const nwArrowTailDir = new THREE.Vector3(-2.8, 0.7, -2.8);      // from the tip toward the tail: into the map & slightly up
+function createNwCornerArrow() {
+  const group = new THREE.Group();
+  const shaftMat = new THREE.MeshStandardMaterial({ color: 0xffc93c, emissive: 0xff9500, emissiveIntensity: 0.55, roughness: 0.45, metalness: 0.2, fog: false });
+  const headMat = new THREE.MeshStandardMaterial({ color: 0xff4b2e, emissive: 0xd41f00, emissiveIntensity: 0.7, roughness: 0.4, metalness: 0.2, fog: false });
+  const finMat = new THREE.MeshStandardMaterial({ color: 0xfff6e0, emissive: 0x885500, emissiveIntensity: 0.35, roughness: 0.6, side: THREE.DoubleSide, fog: false });
+
+  // Built along +Y with the tip at the top: shaft (26 long) + head cone
+  // (14 tall) = 40 units of arrow. Three fletching fins at the tail break the
+  // symmetry so the spin around the long axis actually reads from a distance.
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 2.6, 26, 20), shaftMat);
+  shaft.position.y = -7;
+  group.add(shaft);
+
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(3.1, 3.1, 2.2, 20), shaftMat);
+  collar.position.y = 6.4;
+  group.add(collar);
+
+  const head = new THREE.Mesh(new THREE.ConeGeometry(6.4, 14, 20), headMat);
+  head.position.y = 13;
+  group.add(head);
+
+  const finGeo = new THREE.BoxGeometry(0.5, 9, 5.5);
+  finGeo.translate(0, -13.5, 3.4);   // push each fin out from the shaft, near the tail
+  for (let i = 0; i < 3; i++) {
+    const fin = new THREE.Mesh(finGeo, finMat);
+    fin.rotation.y = (i * Math.PI * 2) / 3;
+    group.add(fin);
+  }
+
+  // Shrink the big-arrow build down to a small ground dart (~7 units long)
+  group.scale.setScalar(0.175);
+
+  // Plant the tip exactly ON the corner point: the group origin sits half the
+  // arrow's true length back along the tail direction, and +Y (the tip
+  // direction) aims straight at the corner.
+  const halfLen = 20 * 0.175;
+  const tailUnit = nwArrowTailDir.clone().normalize();
+  group.position.copy(nwCornerAim).addScaledVector(tailUnit, halfLen);
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tailUnit.clone().negate());
+  scene.add(group);
+  return group;
+}
+const nwArrow = createNwCornerArrow();
+function updateNwCornerArrow(delta) {
+  // Spin on its own long axis (local Y after the aim tilt)
+  nwArrow.rotateY(delta * 2.4);
+}
 
 // The map is a full torus — there are NO invisible edge walls bumping you back;
 // drive off any side and you wrap around to the opposite edge. Ghost building
@@ -465,25 +525,32 @@ let currentRamp = null; // ramp the car is ON right now (for body tilt)
 // car rising flat and level). Recomputed every frame on grounded terrain.
 let terrainPitch = 0;
 
-// ===== Building levitation (ring building at 56,12) =====
-// 2 seconds after driving inside, the car levitates upward, then teleports
-// to the ramp world once it clears the roof.
+// ===== Building levitation (portal building at 56,20) =====
+// 1.2 seconds after driving inside the big open-front hall, the car levitates
+// upward through the roof, then teleports to the ramp world once it has
+// floated well clear — long enough for the ground-level camera to watch it go.
 const buildingLevitate = {
   active: false,
   timer: 0,          // counts up from 0 once car enters the building
-  levitating: false,  // true once the 2s delay is over and the car rises
-  levitateTime: 0,    // time since levitation started (0 -> 4 seconds)
-  x: 56, z: 12,       // building centre
-  w: 8, d: 8, h: 10,  // building dimensions
+  levitating: false,  // true once the 1.2s delay is over and the car rises
+  levitateTime: 0,    // time since levitation started
+  x: 56, z: 20,       // building centre (open side faces EAST, away from town — a surprise)
+  w: 14, d: 14, h: 10, // building dimensions — roomy, no wall-scraping
 };
 
 // ===== Mine shaft portal (entrance at -55,50, tunnel faces north) =====
-// Driving deep into the mine tunnel triggers a dive animation: the car's
-// nose tips down as if descending into the earth, then it teleports to
-// the underground world.
+// Driving deep into the mine tunnel triggers a dive animation: first the
+// car's nose tips forward/down as if descending into the earth, then the
+// rest of the car follows it under — about 4 seconds end to end — before
+// it teleports to the underground world.
 const minePortal = {
   active: false,       // true when the car is inside the trigger zone
-  timer: 0,            // counts up once active — teleport at 2.5s
+  timer: 0,            // counts up once active — teleport at diveTotal
+  baseY: 0,            // car's ground height when the dive started
+  tiltTime: 1.6,       // seconds spent just dipping the nose (phase 1)
+  diveTotal: 4.0,      // total seconds of dive before the underground swap
+  maxTilt: 0.6,        // nose-down angle at the end of phase 1 (~34°)
+  rearAxle: 1.0,       // pivot centre → rear axle distance (tilt pivot)
   triggerX: -55,       // X centre of the tunnel
   triggerXHalf: 2.2,   // half-width of the trigger zone in X
   triggerZ: 42,        // Z threshold — deep in tunnel near the crystals (south)
@@ -604,14 +671,11 @@ const undergroundWorld = addUnderground(undergroundScene);
 const ugColliders = undergroundWorld.colliders;
 
 // ===== Portals =====
-// The ring building at (56,12) is the city's gateway to the ramp world.
+// The big open-front portal building at (56,20) is the city's gateway to the
+// ramp world: its glowing ring doorway faces EAST (away from town), so you
+// have to round the building to discover it — then roll in heading west,
+// pause a moment, and the car levitates up through the roof into the sky.
 // Returning from the ramp world is done by driving UNDER the vortex.
-// -X) — just past its high end, on the launch line — so driving up the ramp
-// and off it carries you straight into the ring. The easy way into the ramp
-// world. The trigger stays generous (radius*1.9) so almost any approach
-// catches, and the ring is turned to face the car flying west off the ramp.
-// The ring building at (56,12) replaces the old city portal — driving into it
-// triggers a levitation sequence that teleports to the ramp world.
 
 // ===== Ramp physics =====
 // Find the ramp whose footprint contains (px, pz); returns { runX, runZ, s,
@@ -917,9 +981,27 @@ function drawMinimap() {
     ctx.fillRect(0, 0, 160, 160);
   }
 
+  // ===== Orientation: rotate 180° — north up, NON-mirrored =====
+  // Everything below draws with the original "+x right, +z down" maths, then
+  // the whole layout is rotated 180° about the centre: +z (north) ends up at
+  // the TOP and +x (east) on the LEFT.
+  // Why 180° instead of a vertical mirror? This world labels +z as north,
+  // which makes "north up AND east right" a MIRRORED map (the view from
+  // below) — positions all looked right but every turn read backwards. A
+  // 180° turn keeps the map a true view-from-above, so right turns are
+  // clockwise on the map, exactly like the driving feels. Trade-off: east is
+  // on the LEFT, so the SE corner sits bottom-left and NW top-right.
+  // Net mapping: (x, y) -> (160 - x, 160 - y) — a 180° rotation about the
+  // canvas centre (NOT translate-then-rotate, which would swing the whole
+  // map off the top-left corner).
+  ctx.save();
+  ctx.translate(160, 160);
+  ctx.scale(-1, -1);
+
   // ===== Debug coordinate grid: faint lines every 20 world units =====
-  // x runs -90..90 (left..right), z runs -90..123 (south..north; north is the
-  // BOTTOM of the minimap, where the grass field / mega ramp is).
+  // x runs -90..90 (right..left after the rotation), z runs -90..123
+  // (south..north; north is the TOP of the minimap, where the grass field /
+  // mega ramp is).
   ctx.strokeStyle = 'rgba(150,175,215,0.13)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -929,19 +1011,6 @@ function drawMinimap() {
     ctx.moveTo(0, p); ctx.lineTo(160, p);   // constant z
   }
   ctx.stroke();
-  // Axis numbers: x values along the top edge, z values down the left edge
-  ctx.font = '7px sans-serif';
-  ctx.fillStyle = 'rgba(160,180,220,0.55)';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(g), mmCenter + g * mmScale, 1);
-  ctx.textAlign = 'right';
-  ctx.textBaseline = 'middle';
-  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(g), 4, mmCenter + g * mmScale);
-  ctx.fillStyle = 'rgba(160,180,220,0.65)';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('N', 80, 158);   // north = +z = bottom of the minimap
 
   ctx.strokeStyle = 'rgba(120,120,130,0.65)';
   ctx.lineWidth = 4;
@@ -1071,8 +1140,10 @@ function drawMinimap() {
   ctx.fillStyle = '#ff4444';   // player — elongated triangle pointing the way it's driving
   ctx.save();
   ctx.translate(mmCenter + car.position.x * mmScale, mmCenter + car.position.z * mmScale);
-  // The car's front faces -X (car.rotation.y=0 -> -X). World +z maps to canvas +y,
-  // so the canvas forward vector is (-cos(ry), sin(ry)) and we rotate the nose onto it.
+  // The car's front faces -X (car.rotation.y=0 -> -X). The 180° rotation is a
+  // pure rotation (no mirroring), so the same nose angle that was correct in
+  // the original unrotated maths still points the triangle along the car's
+  // true screen motion after the rotate.
   ctx.rotate(Math.atan2(Math.sin(car.rotation.y), -Math.cos(car.rotation.y)));
   ctx.beginPath();
   ctx.moveTo(5.5, 0);    // nose
@@ -1082,14 +1153,46 @@ function drawMinimap() {
   ctx.fill();
   ctx.restore();
 
-  // ===== Debug: player's live world coordinates, next to the car marker =====
-  // Lets you read off exactly where you are (e.g. "I'm at x=12 z=34") so we
-  // can place new things at specific spots. Drawn last so it stays on top.
-  const label = `x=${Math.round(car.position.x)} z=${Math.round(car.position.z)}`;
+  // Leave the mirrored space — everything from here on is TEXT, which must
+  // not be drawn through the scale(1,-1) or the letters would be flipped.
+  ctx.restore();
+
+  // Axis numbers: x values along the top edge, z values down the left edge
+  // (both shown in MAP coordinates: x=0 at the left edge, z=0 at the top
+  // edge — the arrow's corner — counting up away from it). Ticks sit every 20
+  // world units, so the numbers are offset by the corner's world position.
+  // The x row counts UP left-to-right, matching screen-pixel habits.
+  ctx.font = '7px sans-serif';
+  ctx.fillStyle = 'rgba(160,180,220,0.55)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(worldXHi - g), mmCenter - g * mmScale, 1);
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(worldZHi - g), 4, mmCenter - g * mmScale);
+  ctx.fillStyle = 'rgba(160,180,220,0.65)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('N', 80, 1);   // north = +z = top of the minimap
+
+  // ===== Map coordinates: (0,0) at the arrow corner (minimap top-left) =====
+  // Shown as x/z to match Three.js axes: Y is UP (height) and stays reserved
+  // for that, so the ground plane is x/z. Displayed map-style so it reads
+  // like screen pixels: x counts UP from 0 at the LEFT edge of the minimap as
+  // you drive right; z counts UP from 0 at the TOP edge as you drive down.
+  // Origin = the arrow's corner, world (worldXHi, worldZHi). (Displayed x
+  // grows as world x DEcreases because the minimap is a true view-from-above
+  // — east renders left.) Physics, spawn and teleports keep using real world
+  // coords; this is display-only.
+  //   mapX = worldXHi - worldX   (0..180)
+  //   mapZ = worldZHi - worldZ   (0..213)
+  const mapX = Math.round(worldXHi - car.position.x);
+  const mapZ = Math.round(worldZHi - car.position.z);
+  const label = `x=${mapX} z=${mapZ}`;
   ctx.font = '9px sans-serif';
   const lw = ctx.measureText(label).width;
-  const px0 = mmCenter + car.position.x * mmScale;
-  const pz0 = mmCenter + car.position.z * mmScale;
+  const px0 = mmCenter - car.position.x * mmScale;
+  const pz0 = mmCenter - car.position.z * mmScale;
   let lx = px0 + 7;
   if (lx + lw + 4 > 160) lx = px0 - lw - 7;   // flip to the left near the right edge
   let ly = pz0 + 10;
@@ -1574,13 +1677,27 @@ function updateCamera(delta) {
   // When the dive starts, bypass the entire chase cam and smoothly ease the
   // camera to a fixed ground-level position outside the mine entrance.
   if (minePortal.active) {
-    const t = Math.min(minePortal.timer / 2.5, 1);
+    const t = Math.min(minePortal.timer / minePortal.diveTotal, 1);
     const camY = THREE.MathUtils.lerp(camera.position.y, 1.2, t);  // ease Y down
     _mineCamTarget.set(-55, camY, 29);
     _mineLookTarget.set(-55, 0, 42);
     const blend = 1 - Math.pow(0.004, delta);
     camera.position.lerp(_mineCamTarget, blend);
     _lookTarget.lerp(_mineLookTarget, blend);
+    camera.lookAt(_lookTarget);
+    return;   // skip chase cam entirely — nothing else touches the camera
+  }
+
+  // ===== Levitation camera override =====
+  // Same smooth technique as the mine dive: bypass the chase cam and ease the
+  // camera to a fixed ground-level vantage just outside the portal building's
+  // open (east) side, tilting up to follow the car as it floats away.
+  if (buildingLevitate.active && buildingLevitate.levitating) {
+    _levCamTarget.set(buildingLevitate.x + buildingLevitate.w / 2 + 9, 1.6, buildingLevitate.z);
+    _levLookTarget.set(buildingLevitate.x, Math.max(1.5, car.position.y), buildingLevitate.z);
+    const blend = 1 - Math.pow(0.004, delta);
+    camera.position.lerp(_levCamTarget, blend);
+    _lookTarget.lerp(_levLookTarget, blend);
     camera.lookAt(_lookTarget);
     return;   // skip chase cam entirely — nothing else touches the camera
   }
@@ -1659,19 +1776,8 @@ function updateCamera(delta) {
     shake.intensity *= 0.88;
   }
 
-  // ===== Levitation camera override =====
-  // When the car is levitating out of the ring building, the camera stays
-  // on the ground nearby and tilts up to watch the car rise.
   camOffset.lerp(desiredOffset, 0.12);
   camera.position.copy(cameraTarget).add(camOffset);
-  if (buildingLevitate.active && buildingLevitate.levitating) {
-    camera.position.set(
-      buildingLevitate.x + buildingLevitate.w / 2 + 6,
-      2,
-      buildingLevitate.z
-    );
-    _lookTarget.copy(car.position);
-  }
 
   camera.lookAt(_lookTarget);
 }
@@ -2297,6 +2403,9 @@ function animate() {
   // Animate hovering rings in the open building
   updateHoveringRings(clock.elapsedTime);
 
+  // Small NW-corner marker arrow: spin on its axis, planted on the ground
+  updateNwCornerArrow(delta);
+
   // Walk the pedestrians (they scream and scatter when you or the robot get close)
   updatePeople(delta, { player: car.position, robot: robot.mesh.position });
   }  // end city ambience
@@ -2331,26 +2440,32 @@ function animate() {
     }
   }
 
-  // ===== Building levitation trigger (ring building 56,12) =====
+  // ===== Building levitation trigger (portal building 56,20) =====
   if (portalGrace <= 0 && worldState === 'city') {
     const bx = car.position.x - buildingLevitate.x;
     const bz = car.position.z - buildingLevitate.z;
+    // Anywhere inside the walls starts the countdown — the roomy hall means
+    // there is no needle to thread, just roll in through the glowing ring.
     const insideBuilding = Math.abs(bx) < buildingLevitate.w / 2 - 0.5 &&
                            Math.abs(bz) < buildingLevitate.d / 2 - 0.5;
+    // Once started, only clearly LEAVING the building cancels it — bumping a
+    // doorway wall or drifting just outside no longer wipes your progress.
+    const stillInArea = Math.abs(bx) < buildingLevitate.w / 2 + 1.5 &&
+                        Math.abs(bz) < buildingLevitate.d / 2 + 1.5;
     if (insideBuilding && car.position.y < buildingLevitate.h) {
       if (!buildingLevitate.active) {
         buildingLevitate.active = true;
         buildingLevitate.timer = 0;
         buildingLevitate.levitating = false;
       }
-    } else if (!buildingLevitate.levitating) {
-      // Car left before levitation started — reset
+    } else if (!buildingLevitate.levitating && !stillInArea) {
+      // Car drove well clear before levitation started — reset
       buildingLevitate.active = false;
       buildingLevitate.timer = 0;
     }
     if (buildingLevitate.active) {
       buildingLevitate.timer += delta;
-      if (buildingLevitate.timer >= 2 && !buildingLevitate.levitating) {
+      if (buildingLevitate.timer >= 1.2 && !buildingLevitate.levitating) {
         // Start levitation
         buildingLevitate.levitating = true;
         velocity.value = 0;
@@ -2366,8 +2481,9 @@ function animate() {
         car.position.y += speed * delta;
         // Slowly fade horizontal velocity to zero
         velocity.value *= 0.95;
-        // Once past the roof, teleport to ramp world
-        if (car.position.y > buildingLevitate.h + 2) {
+        // Keep floating well past the roof so the ground-level camera gets a
+        // long look at the car drifting up into the sky before the swap.
+        if (car.position.y > buildingLevitate.h + 8) {
           enterRampWorld();
           buildingLevitate.active = false;
           buildingLevitate.levitating = false;
@@ -2380,8 +2496,8 @@ function animate() {
 
   // ===== Mine shaft portal (-55,50 → underground) =====
   // When the car drives deep into the mine tunnel (south past z=42), the nose
-  // tips downward as if descending into the earth, then after 2.5 seconds
-  // it teleports to the underground world.
+  // tips forward/down first, then the rest of the car sinks in after it —
+  // about 4 seconds total — before it teleports to the underground world.
   if (portalGrace <= 0 && worldState === 'city') {
     const inTunnel = Math.abs(car.position.x - minePortal.triggerX) < minePortal.triggerXHalf &&
                      car.position.z > minePortal.triggerZ &&
@@ -2390,6 +2506,7 @@ function animate() {
       if (!minePortal.active) {
         minePortal.active = true;
         minePortal.timer = 0;
+        minePortal.baseY = car.position.y;   // remember the surface height
         // Don't freeze velocity — let the car coast toward the crystals
       }
     } else if (minePortal.active) {
@@ -2403,21 +2520,40 @@ function animate() {
       // Gradually slow down as the nose dips — the car coasts deeper toward
       // the crystals but eases to a stop before the teleport fires.
       velocity.value *= (1 - 1.5 * delta);
-      // Tilt the nose down over time (max ~35°) — pivot around the rear
-      // axle so the back wheels stay on the ground while the front dips.
-      const tiltProgress = Math.min(minePortal.timer / 2.0, 1);
-      const tiltAngle = tiltProgress * 0.6;
+
+      // Two-phase dive, ~4 seconds end to end:
+      //   Phase 1 (0–tiltTime): ONLY the nose tips forward/down, pivoting
+      //     around the rear axle so the back wheels stay planted while the
+      //     hood dips toward the dirt.
+      //   Phase 2 (tiltTime–diveTotal): the REST of the car follows the nose
+      //     under, sinking below the surface while holding the tilted pose.
+      const tiltT = Math.min(minePortal.timer / minePortal.tiltTime, 1);
+      // Smoothstep ease so the nose dip starts gently and settles smoothly.
+      const tiltEase = tiltT * tiltT * (3 - 2 * tiltT);
+      const tiltAngle = tiltEase * minePortal.maxTilt;
       car.rotation.z = tiltAngle;  // positive rotation.z = hood/nose dips DOWN
-      // Lower the car so the rear wheels stay grounded during the tilt
-      // (rear axle is ~1.0 unit behind the pivot centre)
-      car.position.y -= Math.sin(tiltAngle) * 1.0;
-      // Sink the entire car into the earth
-      const sinkProgress = Math.min(minePortal.timer / 2.5, 1);
-      car.position.y -= sinkProgress * 3 * delta;
+
+      if (tiltT < 1) {
+        // Phase 1: keep the rear wheels grounded by dropping the body exactly
+        // as far as the pivot geometry demands for the current tilt angle.
+        car.position.y = minePortal.baseY - Math.sin(tiltAngle) * minePortal.rearAxle;
+      } else {
+        // Phase 2: sink the whole car, easing in so the hand-off from tilt
+        // to sink reads as one continuous motion. Depth covers the full body
+        // length by the time the teleport fires.
+        const sinkT = Math.min(
+          (minePortal.timer - minePortal.tiltTime) / (minePortal.diveTotal - minePortal.tiltTime), 1);
+        const sinkDepth = sinkT * sinkT * 3.5;   // quadratic ease-in
+        car.position.y = minePortal.baseY -
+          Math.sin(minePortal.maxTilt) * minePortal.rearAxle - sinkDepth;
+        // Keep tipping a touch further as it goes under for extra drama.
+        car.rotation.z = minePortal.maxTilt + sinkT * 0.15;
+      }
+
       // Camera shake builds as the dive deepens
-      shake.intensity = Math.max(shake.intensity, 0.15 + tiltProgress * 0.4);
-      // Teleport after 2.5 seconds
-      if (minePortal.timer >= 2.5) {
+      shake.intensity = Math.max(shake.intensity, 0.15 + tiltT * 0.4);
+      // Teleport once the full dive completes (~4 seconds)
+      if (minePortal.timer >= minePortal.diveTotal) {
         enterUndergroundWorld();
       }
     }
@@ -2465,6 +2601,23 @@ function animate() {
 }
 
 animate();
+
+// ===== Dev hook (?debug in the URL) =====
+// Exposes a minimal read/teleport API on window for automated testing.
+// Inert during normal play.
+if (location.search.includes('debug')) {
+  window.__game = {
+    car: () => ({ x: car.position.x, y: car.position.y, z: car.position.z, rz: car.rotation.z, world: worldState }),
+    // Small NW-corner marker arrow (read-only): live position
+    nwArrow: () => ({ x: nwArrow.position.x, y: nwArrow.position.y, z: nwArrow.position.z }),
+    teleport(x, z, heading = 0) {
+      car.position.set(x, groundHeight, z);
+      car.rotation.set(0, heading, 0);
+      velocity.value = 0;
+      steering.value = 0;
+    },
+  };
+}
 
 
 // ===== Camera drag / orbit =====

@@ -225,12 +225,13 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
   southWall.receiveShadow = true;
   group.add(southWall);
 
-  // Floor (raised slightly so it doesn't z-fight with the ground)
+  // Floor (top sits flush with the car's ground height (0.15) so the wheels
+  // don't sink into a raised slab when you drive in)
   const floor = new THREE.Mesh(
     new THREE.BoxGeometry(w, 0.3, d),
     new THREE.MeshStandardMaterial({ color: 0x3a3a3a, roughness: 0.8 })
   );
-  floor.position.y = 0.3;
+  floor.position.y = 0;
   floor.receiveShadow = true;
   group.add(floor);
 
@@ -301,6 +302,28 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
     });
   }
 
+  // Giant glowing portal ring standing in the open doorway — once you round
+  // the building and spot it there's no missing the way in. It bobs gently and
+  // pulses with the same animation that drives the interior rings. The car
+  // drives straight through its opening (the hole is far taller than the car).
+  const doorRing = new THREE.Mesh(
+    new THREE.TorusGeometry(3.2, 0.28, 14, 48),
+    ringMaterial.clone()
+  );
+  doorRing.position.set(w / 2 + 0.6, 4.0, 0);
+  doorRing.rotation.y = Math.PI / 2;   // stand upright, facing the open side
+  doorRing.castShadow = true;
+  group.add(doorRing);
+  hoveringRings.push({ mesh: doorRing, baseY: 4.0, speed: 0.35, phase: Math.random() * Math.PI * 2 });
+
+  // Glowing threshold strip across the doorway floor — lights the entrance
+  const threshold = new THREE.Mesh(
+    new THREE.BoxGeometry(1.2, 0.08, d - 2),
+    new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 1.6, roughness: 0.4 })
+  );
+  threshold.position.set(w / 2 - 0.9, 0.2, 0);
+  group.add(threshold);
+
   group.position.set(x, 0, z);
 
   // Rotate based on open side
@@ -348,15 +371,19 @@ function addBuildings(scene, buildingColliders) {
     buildingColliders.push({ x: spec.x, z: spec.z, halfW: spec.w / 2, halfD: spec.d / 2, h: spec.h });
   });
 
-  // Special building at east edge with open side facing east (toward map edge)
-  const openBuildingSpec = { x: 56, z: 12, w: 8, d: 8, h: 10, color: 0x6d4f3f };
+  // Special portal building just north of the main road's east end. The OPEN
+  // SIDE FACES EAST (away from town — you have to round the building to find
+  // it, which keeps the portal a surprise), and at 14×14 the doorway is wide
+  // enough to roll through without scraping a jamb. A giant glowing ring marks
+  // the entrance (see makeOpenBuilding).
+  const openBuildingSpec = { x: 56, z: 20, w: 14, d: 14, h: 10, color: 0x6d4f3f };
   makeOpenBuilding(scene, openBuildingSpec.x, openBuildingSpec.z, openBuildingSpec.w, openBuildingSpec.d, openBuildingSpec.h, openBuildingSpec.color, 'east');
   // Instead of a full rectangle (which blocks the open east side), add 3 wall
   // colliders: back (west), north, and south — leaving the east side open.
   const wt = 0.4; // wall thickness for collider half-width
   const ow = openBuildingSpec.x, oz = openBuildingSpec.z;
   const obw = openBuildingSpec.w, obd = openBuildingSpec.d, obh = openBuildingSpec.h;
-  // West wall collider (full depth)
+  // West wall collider (full depth) — the solid back wall behind the portal
   buildingColliders.push({ x: ow - obw / 2 + wt / 2, z: oz, halfW: wt / 2, halfD: obd / 2, h: obh });
   // North wall collider (full width)
   buildingColliders.push({ x: ow, z: oz + obd / 2 - wt / 2, halfW: obw / 2, halfD: wt / 2, h: obh });

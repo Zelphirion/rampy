@@ -621,7 +621,7 @@ function makePhoneBooth(scene, x, z, rotY) {
 // The entrance faces -X (west, toward the road) so the car can drive in.
 // Returns { colliders } so main.js can block the car from driving through walls.
 function makeMineShaftEntrance(scene) {
-  // Build the mine in a group, then rotate to face north (-Z = top of minimap).
+  // Build the mine in a group, then rotate to face north (+Z = top of minimap).
   // Local coords: tunnel runs +X, width along Z (same as original layout).
   // Rotation.y = π/2 maps local +X → world -Z (north) and local +Z → world +X.
   const mineGroup = new THREE.Group();
@@ -962,9 +962,9 @@ function makeMineShaftEntrance(scene) {
   }
 
   // --- Position & orient the mine group ---
-  // Rotate π/2 around Y so the tunnel faces north (-Z = top of minimap).
+  // Rotate π/2 around Y so the tunnel faces north (+Z = top of minimap).
   mineGroup.position.set(-55, 0, 34);
-  mineGroup.rotation.y = -Math.PI / 2;  // face south (+Z = bottom of minimap)
+  mineGroup.rotation.y = -Math.PI / 2;  // face south (-Z = bottom of minimap)
   _realScene.add(mineGroup);
 
   return { colliders: mineColliders };
@@ -1100,7 +1100,7 @@ function addParkingLot(scene) {
   }
 }
 
-// ===== Market stalls (little fruit shops around the edge of town) =====
+// ===== Market stalls (little fruit stands on the shops-row sidewalk) =====
 const stallWoodMat = new THREE.MeshStandardMaterial({ color: 0x8a6b43, roughness: 0.85 });
 const umbrellaPoleMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.8 });
 
@@ -1193,17 +1193,20 @@ function makeFruitStall(scene, x, z, rotY) {
   addKnockable(umbrella, 0.8, { mode: 'wobble', fallTime: 0.45 });
 }
 
-// A ring of fruit stalls around the edge of town, on the perimeter sidewalks.
+// All eight fruit stands lined up along the sidewalk strip that runs across
+// from the shops row (shops face south at z=64, sidewalk spans x -75..-19 at
+// z=59). They stand opposite the shop fronts, facing the town centre just
+// like the shops do, so the whole row reads as one little market street.
 function addMarketStalls(scene) {
   const stalls = [
-    [-33, 42, 0],
-    [33, 42, 0],
-    [-33, -42, Math.PI],
-    [33, -42, Math.PI],
-    [42, -33, Math.PI / 2],
-    [42, 33, Math.PI / 2],
-    [-42, -33, -Math.PI / 2],
-    [-42, 33, -Math.PI / 2],
+    [-72, 59, Math.PI],
+    [-65, 59, Math.PI],
+    [-58, 59, Math.PI],
+    [-51, 59, Math.PI],
+    [-44, 59, Math.PI],
+    [-37, 59, Math.PI],
+    [-30, 59, Math.PI],
+    [-23, 59, Math.PI],
   ];
   stalls.forEach(([x, z, r]) => makeFruitStall(scene, x, z, r));
 }
@@ -1490,7 +1493,7 @@ export function addProps(scene) {
   makeStopSign(scene, 0, -12.8, Math.PI);
 
   for (let x = -70; x <= 70; x += 14) {
-    makeLampPost(scene, x, 17);
+    if (x !== 56) makeLampPost(scene, x, 17);   // skip 56 — the portal building stands there now
     makeLampPost(scene, x, -17);
   }
   for (let z = -70; z <= 70; z += 14) {
@@ -1514,7 +1517,7 @@ export function addProps(scene) {
   makeFireHydrant(scene, -34, 18);    // near north building (-28,12)
   makeFireHydrant(scene, 16, 18);     // near north building (6,12)
   makeFireHydrant(scene, 42, 18);     // near north-east building (36,12)
-  makeFireHydrant(scene, 62, 18);     // near north-east building (56,12)
+  makeFireHydrant(scene, 68, 14);     // beside the portal building (56,20), clear of its walls
   makeFireHydrant(scene, -20, 58);    // near rightmost shop
   makeFireHydrant(scene, 60, 48);     // near park edge
 
