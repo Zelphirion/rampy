@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { addGlassCity } from './glasscity.js';
 
 // ===== The Underworld =====
 // A secret cavern beneath the WHOLE map, reached ONLY through the old mine
@@ -56,8 +57,10 @@ export function tunnelPoint(s) {
 // ---- Build the underworld (UNDERGROUND world) ----
 // The cavern floor, the spiral tunnel tube that rises from the floor (the
 // visual "way back up" — its foot, s=1, is where the portal drops the car),
-// the glowing guide markers along it, and two big rock pillars. Built into the
-// underworld root, which sits at UNDERGROUND_Y, so LOCAL y = world y + 30.
+// glowing guide markers along it, two big rock pillars, and the GLASS CITY —
+// the old northern skyline, which moved down here when the surface map shrank
+// to its wrapped bounds. Built into the underworld root, which sits at
+// UNDERGROUND_Y, so LOCAL y = world y + 30.
 export function addUnderground(parent) {
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -118,12 +121,29 @@ export function addUnderground(parent) {
     pillarColliders.push({ x: p.x, z: p.z, halfW: w / 2, halfD: w / 2, h });
   }
 
-  // Colliders: only the decorative pillars (the tube is purely visual now —
-  // the portal teleports the car, it never drives along the spiral).
-  const colliders = [...pillarColliders];
+  // ---- The Glass City, preserved beneath the world ----
+  // The old northern skyline (z 132–173, full map width) no longer fit on the
+  // surface after the map was fixed to its wrapped bounds — so it stands down
+  // here instead. Its coordinates still work as-is: the cavern slab spans
+  // x ±146 / z -96..179, which swallows the whole city (x ±142, z 130..175),
+  // and the region stays clear of the tunnel tube (z <= 125) and the return
+  // portal at its foot (-55, 83).
+  const glassCity = addGlassCity(parent);
+
+  // A cool glow pooled over the city so the towers read through the cavern
+  // dark — the shared cavern lights barely reach this far north.
+  const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
+  cityGlow.position.set(0, 26, 152);
+  parent.add(cityGlow);
+
+  // Colliders: the decorative pillars + the Glass City's three little shops
+  // (the tube is purely visual now — the portal teleports the car, it never
+  // drives along the spiral). The towers themselves are knockable wobble
+  // props (see glasscity.js): the car passes straight through them.
+  const colliders = [...pillarColliders, ...glassCity.colliders];
 
   return {
     colliders,
-    update() { /* the cavern is static */ },
+    update(delta, player) { glassCity.update(delta, player); },
   };
 }

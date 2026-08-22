@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { addKnockable } from './physics.js';
 
 // ===== The Glass City (north of the world) =====
 // A grid of silent, monolithic skyscrapers made of coloured translucent glass,
@@ -7,6 +8,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // floors, and figures locked in motionless tableaux.
 //
 // Region: z in [132, 173], spanning the whole world width x in [-140, 140].
+// Built for the old, larger surface map; since the map shrank to its wrapped
+// bounds it stands in the UNDERWORLD instead (see underground.js), whose
+// cavern floor is big enough to hold it unchanged.
 
 const Z0 = 132;
 const Z1 = 173;
@@ -50,6 +54,17 @@ function makeTower(scene, x, z, w, h, colorIdx) {
   g.add(cap);
   g.position.set(x, 0, z);
   scene.add(g);
+  // Knockable like the market shops: the car drives straight through, the
+  // tower rocks on its base away from the impact, then springs back upright.
+  // The pivot is the group origin (ground level), so the whole tower sways
+  // like a reed. Taller towers are heavier: they sway slower and shallower
+  // (the peak tilt shrinks with height so the rooftop swing stays ~2 units).
+  addKnockable(g, w / 2 + 2.4, {
+    mode: 'wobble',
+    wobbleAmp: Math.min(0.32, 2.4 / h),
+    wobbleFreq: 7,
+    wobbleDamping: 2.6,
+  });
   return { x, z, halfW: w / 2, halfD: w / 2, h };
 }
 
@@ -249,7 +264,9 @@ export function addGlassCity(scene) {
       if (!towerSkipped(x, z)) {
         const h = 13 + ((ci * 7 + ri * 11) % 13);
         const w = 6 + ((ci + ri) % 3);
-        colliders.push(makeTower(scene, x, z, w, h, ci + ri));
+        // Towers are knockable (see makeTower), not solid — the car drives
+        // straight through them, so they contribute no collider.
+        makeTower(scene, x, z, w, h, ci + ri);
       }
       ri++;
     }

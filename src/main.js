@@ -2418,6 +2418,12 @@ function animate() {
   // drives but settles lower to the ground and eventually rebounds taller.
   updateFlatCarState(delta);
 
+  // Underworld animation: the Glass City's mechanical birds flap and its blue
+  // trees slowly turn (the update early-outs unless you're near the city).
+  if (worldState === 'underground') {
+    undergroundWorld.update(delta, car.position);
+  }
+
   // Tier 3 moving dangers (hammers, trebuchet, boulder, wheel rim) — ramp
   // world only. Runs every frame; it does its own worldState gate.
   updateRampWorldDanger(delta);
