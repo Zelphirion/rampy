@@ -45,12 +45,12 @@ scores, or timers — pure kinetic playground.
 27. [x] Add per-step retract animation: each step slides horizontally into the wall and back out on a timed cycle, with neighboring steps offset in phase so there's always a climbable path.
 28. [x] Sync step colliders with animation: disable/skip a step's collider while retracted so the car falls through to the tier below (or blocks progress) instead of ghost-clipping.
 29. [x] Extract the stair timing math into a small pure module (e.g., `src/modules/stairCycle.js`) with unit tests runnable via `node --test` (step position + collider-active state as functions of time).
-30. [ ] Build the massive launch ramp at the pyramid peak: steep upward ramp aimed at the padded pole, using the same slope approach as existing surface ramps.
-31. [ ] Build the padded vertical pole: tall cushioned column at the landing point with a trigger volume around it.
-32. [ ] Pole impact event: when the car hits the pole region above a speed threshold, trigger the reward sequence (see next items); below threshold, just bounce the car off softly.
-33. [ ] Explosive light show on impact: burst of flashing colored PointLights + expanding ring/shockwave mesh that fades over ~1 second.
-34. [ ] Impact sound effect: short synthesized boom/chime via WebAudio (no asset files), triggered on pole impact and optionally on foam-collectible bumps.
-35. [ ] Add a respawn convenience: if the car ends up somewhere unrecoverable (pit corner, behind stairs), make sure the debug `.teleport()` hook still works and consider a gentle auto-nudge back to open floor.
+30. [x] Build the massive launch ramp at the pyramid peak: steep upward ramp aimed at the padded pole, using the same slope approach as existing surface ramps.
+31. [x] Build the padded vertical pole: tall cushioned column at the landing point with a trigger volume around it.
+32. [x] Pole impact event: when the car hits the pole region above a speed threshold, trigger the reward sequence (see next items); below threshold, just bounce the car off softly.
+33. [x] Explosive light show on impact: burst of flashing colored PointLights + expanding ring/shockwave mesh that fades over ~1 second.
+34. [x] Impact sound effect: short synthesized boom/chime via WebAudio (no asset files), triggered on pole impact and optionally on foam-collectible bumps.
+35. [x] Add a respawn convenience: if the car ends up somewhere unrecoverable (pit corner, behind stairs), make sure the debug `.teleport()` hook still works and consider a gentle auto-nudge back to open floor.
 
 ## Polish & Verification
 

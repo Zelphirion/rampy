@@ -656,16 +656,90 @@ const ugFill = new THREE.PointLight(0x7755cc, 1.0, 160, 1);
 ugFill.position.set(30, 20, 10);
 undergroundScene.add(ugFill);
 
+// ===== Tiny WebAudio synth (task #34) — synthesized, no asset files =====
+// Lazily created/resumed on first use; every play is wrapped so a blocked
+// or unsupported AudioContext can never break gameplay.
+let ugAudio = null;
+function ugAudioCtx() {
+  try {
+    if (!ugAudio) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ugAudio = new AC();
+    }
+    if (ugAudio.state === 'suspended') ugAudio.resume().catch(() => {});
+    return ugAudio;
+  } catch (e) { return null; }
+}
+// Pole impact: low sine drop + noise splash. Big slams hit harder/longer.
+function playPoleBoom(big) {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(big ? 130 : 90, t);
+  o.frequency.exponentialRampToValueAtTime(big ? 36 : 50, t + 0.5);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(big ? 0.5 : 0.22, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+  o.connect(g).connect(ctx.destination);
+  o.start(t); o.stop(t + 0.65);
+  const len = Math.floor(ctx.sampleRate * 0.3);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(big ? 0.32 : 0.13, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  src.connect(ng).connect(ctx.destination);
+  src.start(t);
+}
+// Foam-collectible bump: short soft triangle blip.
+function playFoamChime() {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(660, t);
+  o.frequency.exponentialRampToValueAtTime(990, t + 0.09);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  o.connect(g).connect(ctx.destination);
+  o.start(t); o.stop(t + 0.18);
+}
+
 const undergroundWorld = addUnderground(undergroundScene, {
+  // Task #6/#34: foam pops get a little synthesized chime.
+  onBlockBump: () => playFoamChime(),
   // Task #13: sliding conduits shove the car along their travel direction
   // (hammer-strength slide + spin + small hop). dirX/dirZ is a unit axis.
   onPipeShove: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 120, 2.2, 3.2),
   // Task #23: sweeper arms launch the car radially off the balance beams —
   // stronger than the pipes so the hit always clears the 1.6-wide plank.
   onSweeperHit: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 150, 3.4, 3.8),
+  // Tasks #32/#34: padded pole. Above the level's speed threshold this is a
+  // reward slam — boom + big celebratory bounce; below it, a soft dampened
+  // bounce off the cushions. The light show itself fires inside the level.
+  onPoleHit: (nx, nz, speed) => {
+    const big = speed >= 8;
+    playPoleBoom(big);
+    knockPlayerAway(nx, nz, big ? 110 : 45, big ? 2.6 : 1.2, big ? 3.4 : 1.6);
+  },
 });
 const ugColliders = undergroundWorld.colliders;
 const ugRamps = undergroundWorld.ramps || [];
+// Task #35: how long the car has been ghosting inside an extended pyramid
+// tier at floor level (reset whenever it isn't), plus a counter of cars
+// recovered after being knocked clean OFF the cavern slab (there's no wall
+// at the slab edge — a big pipe/sweeter/pole hit can hurl the car past it
+// onto invisible floor).
+let stairGhostTimer = 0;
+let ugRecoveries = 0;
 
 // ===== Portals =====
 // The big open-front portal building at (56,20) is the city's gateway to the
@@ -756,7 +830,9 @@ function ugRampInfoAt(px, pz) {
     const perp = -dx * r.runZ + dz * r.runX;
     if (along >= -r.len / 2 && along <= r.len / 2 && Math.abs(perp) < r.width / 2) {
       const s = (along + r.len / 2) / r.len;
-      return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, def: r };
+      // baseY lets a ramp stand on raised ground (e.g. the pyramid peak pad)
+      // instead of always rising from the cavern floor.
+      return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, baseY: r.baseY || 0, def: r };
     }
   }
   return null;
@@ -765,7 +841,7 @@ function ugRampInfoAt(px, pz) {
 // slope mid-air). -Infinity off a ramp so a max() with the floor picks y=0.
 function ugRampSurfaceY(px, pz) {
   const info = ugRampInfoAt(px, pz);
-  return info ? info.height * info.s : -Infinity;
+  return info ? info.baseY + info.height * info.s : -Infinity;
 }
 
 // Current top of the underground elevator deck if (x,z) is inside its
@@ -1993,7 +2069,7 @@ function animate() {
       const r = ugRampInfoAt(car.position.x, car.position.z);
       currentRamp = r;
       if (r) {
-        car.position.y = r.height * r.s;
+        car.position.y = r.baseY + r.height * r.s;
         wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
       } else {
         // Drive off the far (high) edge of the ramp we were just riding:
@@ -2498,8 +2574,39 @@ function animate() {
 
   // Underworld animation: the Glass City's mechanical birds flap and its blue
   // trees slowly turn (the update early-outs unless you're near the city).
+  // Task #35: while we're down here, also watch for the car ghosting at floor
+  // level inside an extended pyramid tier (soft colliders never block, and a
+  // car that entered too low to snap up just sits in the boxes). After a
+  // moment it gets a gentle nudge back north out onto open floor.
   if (worldState === 'underground') {
     undergroundWorld.update(delta, car.position);
+    // Task #35a: off-slab recovery — the cavern floor mesh spans the slab
+    // (292×276 centered at (0,41.5)) but nothing walls its edges, so a huge
+    // knock can throw the car past the rim onto invisible floor. Settle it
+    // back on open course ground instead of letting it drive in the void.
+    if (car.position.x < -148 || car.position.x > 148 || car.position.z < -98.5 || car.position.z > 181.5) {
+      car.position.set(60, 0, -15);
+      car.rotation.set(0, Math.PI / 2, 0);
+      velocity.value = 0;
+      steering.value = 0;
+      playerKnock = null;
+      jumpState.inAir = false;
+      jumpState.yVelocity = 0;
+      wasOnRamp = null;
+      stairGhostTimer = 0;
+      ugRecoveries += 1;
+      shake.intensity = Math.max(shake.intensity, 0.3);
+    }
+    // Task #35b: ghost-in-the-pyramid nudge — see stairGhostAt in the level.
+    if (undergroundWorld.stairGhostAt && undergroundWorld.stairGhostAt(car.position.x, car.position.y, car.position.z)) {
+      stairGhostTimer += delta;
+      if (stairGhostTimer > 1.5) {
+        stairGhostTimer = 0;
+        knockPlayerAway(0, 1, 80, 1.6, 2.6);   // nudge away from the wall (+z)
+      }
+    } else {
+      stairGhostTimer = 0;
+    }
   }
 
   // Tier 3 moving dangers (hammers, trebuchet, boulder, wheel rim) — ramp
@@ -2683,6 +2790,7 @@ if (location.search.includes('debug')) {
       car.rotation.set(0, heading, 0);
       velocity.value = 0;
       steering.value = 0;
+      playerKnock = null;   // don't carry a stale slide into the new spot
     },
     // Surface-aware teleport (?debug only): drops the car onto whatever
     // collider top occupies (x,z) — ledges, planks, platforms, roofs — so
@@ -2697,6 +2805,7 @@ if (location.search.includes('debug')) {
       jumpState.inAir = false;
       jumpState.yVelocity = 0;
       wasOnRamp = null;
+      playerKnock = null;   // don't carry a stale slide into the new spot
     },
     // Underground prompt-block bump state (tasks #6–#7) for automated testing.
     ugBumps: () => ({
@@ -2752,6 +2861,13 @@ if (location.search.includes('debug')) {
         z: +st.mesh.position.z.toFixed(2),
       })),
     }),
+    // Padded-pole impact state (tasks #31–#32) for automated testing.
+    ugPole: () => ({
+      hits: undergroundWorld.poleState.hits,
+      last: undergroundWorld.poleState.last,
+    }),
+    // Task #35 off-slab recovery counter for automated testing.
+    ugRecoveries: () => ugRecoveries,
   };
 }
 

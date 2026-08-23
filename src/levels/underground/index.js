@@ -102,13 +102,16 @@ export function tunnelPoint(s) {
 export function addUnderground(parent, opts = {}) {
   // Optional callbacks fired from update(): onBlockBump when an airborne car
   // bumps a prompt-block (task #6), onPipeShove(dirX) when a sliding conduit
-  // sweeps through the car (task #13, dirX = ±1 travel direction), and
+  // sweeps through the car (task #13, dirX = ±1 travel direction),
   // onSweeperHit(dirX,dirZ) when a rotating sweeper arm clips the car
-  // (task #23, unit vector pointing radially away from the arm's pivot).
-  // Lets the callers own the physics response without the level knowing how.
+  // (task #23, unit vector pointing radially away from the arm's pivot), and
+  // onPoleHit(nx,nz,speed) when a fast-enough car slams the padded pole
+  // (task #32; nx/nz point from the pole toward the car). Lets the callers
+  // own the physics/audio response without the level knowing how.
   const onBlockBump = typeof opts.onBlockBump === 'function' ? opts.onBlockBump : null;
   const onPipeShove = typeof opts.onPipeShove === 'function' ? opts.onPipeShove : null;
   const onSweeperHit = typeof opts.onSweeperHit === 'function' ? opts.onSweeperHit : null;
+  const onPoleHit = typeof opts.onPoleHit === 'function' ? opts.onPoleHit : null;
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -222,7 +225,7 @@ export function addUnderground(parent, opts = {}) {
     geo.translate(-def.len / 2, 0, -def.width / 2);   // center wedge on its midpoint
     const m = new THREE.Mesh(geo, rampMaterial);
     m.rotation.y = Math.atan2(-def.runZ, def.runX);   // +X (base→top) lines up with run direction
-    m.position.set(def.x, 0, def.z);
+    m.position.set(def.x, def.baseY || 0, def.z);     // baseY: stand on raised ground (peak pad)
     m.castShadow = true;
     m.receiveShadow = true;
     parent.add(m);
@@ -611,12 +614,12 @@ export function addUnderground(parent, opts = {}) {
     cx: 100,            // footprint centre x
     width: 24,          // x span of every tier (x ∈ [88, 112])
     wallZ: SLAB.minZ,   // south cavern wall the pyramid backs onto (−96.5)
-    peakDepth: 3,       // z depth of the static peak platform at the wall
-    tiers: 9,           // one step each → peak top at 9 == LEDGE_Y
+    padDepth: 7,        // z depth of the flat peak platform (U-turn + launch ramp)
+    tiers: 7,           // risers; the flat pad on top is one more step (h = 8)
     stepH: 1,           // riser height per tier
     stepD: 2.2,         // tread depth per tier
   };
-  const PEAK_Y = STAIRS.tiers * STAIRS.stepH;
+  const PEAK_Y = (STAIRS.tiers + 1) * STAIRS.stepH;   // 8 — pad sits one riser above the top tier
   // Task #27: per-tier retract cycle. Neighbouring tiers are offset by 1/9
   // of a cycle, so extension travels along the pyramid as a wave and some
   // band of tiers is always climbable (asserted in stairCycle.test.mjs).
@@ -635,13 +638,14 @@ export function addUnderground(parent, opts = {}) {
   const stairs = [];
 
   // Static peak platform against the wall — always-present ground at the top
-  // so a timed wave of retracting tiers always has a summit to aim for.
+  // so a timed wave of retracting tiers always has a summit to aim for. Deep
+  // enough to U-turn on before charging back north up the launch ramp.
   const peakHalfW = STAIRS.width / 2 + 1;
   const peakSlab = new THREE.Mesh(
-    new THREE.BoxGeometry(peakHalfW * 2, PEAK_Y, STAIRS.peakDepth),
+    new THREE.BoxGeometry(peakHalfW * 2, PEAK_Y, STAIRS.padDepth),
     stairMat
   );
-  peakSlab.position.set(STAIRS.cx, PEAK_Y / 2, STAIRS.wallZ + STAIRS.peakDepth / 2);
+  peakSlab.position.set(STAIRS.cx, PEAK_Y / 2, STAIRS.wallZ + STAIRS.padDepth / 2);
   peakSlab.castShadow = true;
   peakSlab.receiveShadow = true;
   parent.add(peakSlab);
@@ -649,12 +653,13 @@ export function addUnderground(parent, opts = {}) {
     new THREE.BoxGeometry(peakHalfW * 2 + 0.16, 0.16, 0.2),
     makeGlowMat(NEON.amber)
   );
-  peakStripe.position.set(STAIRS.cx, PEAK_Y - 0.06, STAIRS.wallZ + STAIRS.peakDepth - 0.02);
+  peakStripe.position.set(STAIRS.cx, PEAK_Y - 0.06, STAIRS.wallZ + STAIRS.padDepth - 0.02);
   parent.add(peakStripe);
-  stairColliders.push({
-    x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.peakDepth / 2,
-    halfW: peakHalfW, halfD: STAIRS.peakDepth / 2, h: PEAK_Y, soft: true,
-  });
+  const padCollider = {
+    x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.padDepth / 2,
+    halfW: peakHalfW, halfD: STAIRS.padDepth / 2, h: PEAK_Y, soft: true,
+  };
+  stairColliders.push(padCollider);
 
   // The tiers themselves (task #26): full-height boxes so the silhouette is
   // a proper stepped pyramid. Colliders are `soft` like the ledges — they
@@ -662,7 +667,7 @@ export function addUnderground(parent, opts = {}) {
   // task #28 will splice them out of this array while a tier is retracted.
   for (let k = 0; k < STAIRS.tiers; k++) {
     const h = (k + 1) * STAIRS.stepH;
-    const cz = STAIRS.wallZ + STAIRS.peakDepth + (STAIRS.tiers - k - 0.5) * STAIRS.stepD;
+    const cz = STAIRS.wallZ + STAIRS.padDepth + (STAIRS.tiers - k - 0.5) * STAIRS.stepD;
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(STAIRS.width, h, STAIRS.stepD), stairMat);
     mesh.position.set(STAIRS.cx, h / 2, cz);
     mesh.castShadow = true;
@@ -702,13 +707,115 @@ export function addUnderground(parent, opts = {}) {
   // reports a phantom roof strip, and `elevated` cars on the tiers ignore
   // them entirely.
   const skirtHalfD = (STAIRS.tiers * STAIRS.stepD) / 2;
-  const skirtZ = STAIRS.wallZ + STAIRS.peakDepth + skirtHalfD;
+  const skirtZ = STAIRS.wallZ + STAIRS.padDepth + skirtHalfD;
   for (const side of [-1, 1]) {
     const sx = STAIRS.cx + side * (STAIRS.width / 2 + 0.6);
     const skirt = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, skirtHalfD * 2), pillarMat);
     skirt.position.set(sx, 0.5, skirtZ);
     parent.add(skirt);
     stairColliders.push({ x: sx, z: skirtZ, halfW: 0.6, halfD: skirtHalfD, h: 0.5 });
+  }
+
+  // ---- Massive launch ramp off the pyramid peak (task #30) ----
+  // Steep wedge sitting ON the peak pad (baseY = PEAK_Y), rising NORTH so a
+  // driver U-turns on the pad then charges back and flies over the course.
+  // Same slope approach as every other surface ramp — main.js rides it via
+  // ugRampInfoAt and launches off the lip with the def's boost kicker.
+  // Flight numbers at full throttle (v=14): vy = 14·(3.5/5)·1.25 ≈ 12.3,
+  // apex ≈ y 15.7 about 9 units past the lip, touchdown ≈ 22 units north.
+  const LAUNCH = { x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.padDepth + 2.5, len: 5, width: 10, height: 3.5, boost: 1.25 };
+  addUgRamp({ x: LAUNCH.x, z: LAUNCH.z, runX: 0, runZ: 1, len: LAUNCH.len, width: LAUNCH.width, height: LAUNCH.height, boost: LAUNCH.boost, baseY: PEAK_Y });
+  // Glowing lip bar marks the launch edge.
+  const lipBar = new THREE.Mesh(
+    new THREE.BoxGeometry(LAUNCH.width + 0.2, 0.16, 0.22),
+    makeGlowMat(NEON.magenta)
+  );
+  lipBar.position.set(LAUNCH.x, PEAK_Y + LAUNCH.height - 0.08, LAUNCH.z + LAUNCH.len / 2);
+  parent.add(lipBar);
+  // Decorative diagonal struts bracing the cantilevered half back to the pad
+  // face (visual only — they sit above every tier top, no colliders needed).
+  for (const sx of [LAUNCH.x - 4, LAUNCH.x + 4]) {
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 4.2), pillarMat);
+    strut.rotation.x = Math.atan2(PEAK_Y - 1.6 - (PEAK_Y - 0.4), 3.7);   // gentle upward tilt toward the pad
+    strut.position.set(sx, PEAK_Y - 0.9, STAIRS.wallZ + STAIRS.padDepth + 1.6);
+    parent.add(strut);
+  }
+
+  // ---- Padded vertical pole (tasks #31–#34) ----
+  // Tall cushioned column standing at the launch's touchdown point. A solid
+  // small collider makes ground bonks physical, while a larger pass-through
+  // TRIGGER volume catches flights: slam it above POLE_BIG_SPEED and you get
+  // the reward sequence (light burst here + boom/bounce via onPoleHit);
+  // below that it just soft-bounces you off (main.js damps the knock).
+  const POLE = { x: 95, z: -64, r: 1.6, h: 16, trigR: 5.5, bigSpeed: 8 };
+  const poleBodyMat = new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.9 });
+  const poleBody = new THREE.Mesh(
+    new THREE.CylinderGeometry(POLE.r, POLE.r + 0.35, POLE.h, 14),
+    poleBodyMat
+  );
+  poleBody.position.set(POLE.x, POLE.h / 2, POLE.z);
+  poleBody.castShadow = true;
+  parent.add(poleBody);
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1, 4.4), pillarMat);
+  plinth.position.set(POLE.x, 0.5, POLE.z);
+  plinth.castShadow = true;
+  parent.add(plinth);
+  // Cushion rings up the column — reads as padding, glows in the dark.
+  [3.5, 7, 10.5, 14].forEach((ry, i) => {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(POLE.r + 0.18, 0.24, 10, 26),
+      makeGlowMat(i % 2 ? NEON.magenta : NEON.cyan)
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(POLE.x, ry, POLE.z);
+    parent.add(ring);
+  });
+  // Solid core collider (h < visual height so big flights clear the tip;
+  // buildingTopAt's min() cap stops it snapping cars UP from below anyway).
+  stairColliders.push({ x: POLE.x, z: POLE.z, halfW: POLE.r, halfD: POLE.r, h: 14 });
+  const poleState = { hits: 0, last: null };
+  let poleCd = 0;
+
+  // Task #33: explosive light show — a ring of colored PointLights flashing
+  // out plus two expanding shockwave rings, all fading over ~1 second.
+  const fxBursts = [];
+  function spawnPoleBurst(x, y, z) {
+    const cols = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime, NEON.cyan, NEON.magenta];
+    const lights = [];
+    for (let i = 0; i < 6; i++) {
+      const L = new THREE.PointLight(cols[i], 5.5, 30, 2);
+      const a = (i / 6) * Math.PI * 2;
+      L.position.set(x + Math.cos(a) * 2.2, y + 1.2, z + Math.sin(a) * 2.2);
+      parent.add(L);
+      lights.push({ light: L, delay: i * 0.06 });
+    }
+    const mkRing = (rx, rz) => {
+      const m = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1.15, 42),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
+      );
+      m.rotation.set(rx, 0, rz);
+      m.position.set(x, y + 0.3, z);
+      parent.add(m);
+      return m;
+    };
+    fxBursts.push({ age: 0, life: 1.0, lights, rings: [mkRing(-Math.PI / 2, 0), mkRing(0, Math.PI / 2)] });
+  }
+
+  // Task #35 helper: is the car ghosting at floor level inside an EXTENDED
+  // tier/pad footprint? (Soft colliders never block, so a car that enters a
+  // slot too low to snap up can sit inside the boxes.) main.js nudges it
+  // back out to open floor after a moment.
+  function stairGhostAt(x, y, z) {
+    if (y > 0.45) return false;
+    if (Math.abs(x - padCollider.x) <= padCollider.halfW && Math.abs(z - padCollider.z) <= padCollider.halfD
+      && y < padCollider.h - 1.2) return true;
+    for (const st of stairs) {
+      if (!st.active) continue;
+      const c = st.collider;
+      if (Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD && y < c.h - 1.2) return true;
+    }
+    return false;
   }
 
   const glassCity = addGlassCity(parent);
@@ -736,6 +843,8 @@ export function addUnderground(parent, opts = {}) {
     sweepers,
     stairs,      // live retracting-stair tier state (tasks #25–#28)
     STAIRS,      // footprint constants (peak platform, tier count/sizes)
+    poleState,   // padded-pole hit counter + last hit info (tasks #31–#32)
+    stairGhostAt, // task #35: floor-level ghost detection inside the pyramid
     get bumpCount() { return bumpCount; },
     get lastBump() { return lastBump; },
     update(delta, player) {
@@ -823,6 +932,50 @@ export function addUnderground(parent, opts = {}) {
             const nl = Math.hypot(nx, nz) || 1;
             onSweeperHit(nx / nl, nz / nl);
           }
+        }
+      }
+      // Tasks #31–#32: padded-pole trigger. Swept segment check (previous →
+      // current position) against the pole axis so a slow frame can't tunnel
+      // through the trigger volume; airborne gate keeps ground drivers near
+      // the base from firing it. Speed (measured over the frame) decides
+      // reward slam vs soft bounce — main.js owns that response.
+      if (player && onPoleHit) {
+        if (poleCd > 0) poleCd -= delta;
+        if (poleCd <= 0 && player.y > 0.8 && player.y < POLE.h + 2 && havePrev) {
+          const midY = (prevY + player.y) / 2;
+          const d2 = segDistSq(prevX, prevY, prevZ, player.x, player.y, player.z, POLE.x, midY, POLE.z);
+          if (d2 <= POLE.trigR * POLE.trigR) {
+            const speed = Math.hypot(player.x - prevX, player.y - prevY, player.z - prevZ) / Math.max(delta, 1e-4);
+            poleCd = 1.2;
+            poleState.hits += 1;
+            poleState.last = { speed: +speed.toFixed(1), big: speed >= POLE.bigSpeed, at: performance.now() / 1000 };
+            spawnPoleBurst(POLE.x, Math.max(2, Math.min(player.y, POLE.h - 2)), POLE.z);
+            let nx = player.x - POLE.x;
+            let nz = player.z - POLE.z;
+            const nl = Math.hypot(nx, nz) || 1;
+            onPoleHit(nx / nl, nz / nl, speed);
+          }
+        }
+      }
+      // Task #33: animate any active impact bursts — lights flash out
+      // staggered, shockwave rings expand and fade, then everything disposes.
+      for (let i = fxBursts.length - 1; i >= 0; i--) {
+        const b = fxBursts[i];
+        b.age += delta;
+        const t = b.age / b.life;
+        if (t >= 1) {
+          for (const L of b.lights) parent.remove(L.light);
+          for (const r of b.rings) { parent.remove(r); r.geometry.dispose(); r.material.dispose(); }
+          fxBursts.splice(i, 1);
+          continue;
+        }
+        for (const { light, delay } of b.lights) {
+          light.intensity = 5.5 * Math.max(0, 1 - Math.max(0, t - delay) * 1.6);
+        }
+        const s = 1 + 12 * (1 - (1 - t) * (1 - t));
+        for (const r of b.rings) {
+          r.scale.setScalar(s);
+          r.material.opacity = 0.95 * (1 - t);
         }
       }
       // Task #6: pass-through bump detection on the suspended prompt-blocks.
