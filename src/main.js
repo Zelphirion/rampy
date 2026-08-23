@@ -660,6 +660,9 @@ const undergroundWorld = addUnderground(undergroundScene, {
   // Task #13: sliding conduits shove the car along their travel direction
   // (hammer-strength slide + spin + small hop). dirX/dirZ is a unit axis.
   onPipeShove: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 120, 2.2, 3.2),
+  // Task #23: sweeper arms launch the car radially off the balance beams —
+  // stronger than the pipes so the hit always clears the 1.6-wide plank.
+  onSweeperHit: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 150, 3.4, 3.8),
 });
 const ugColliders = undergroundWorld.colliders;
 const ugRamps = undergroundWorld.ramps || [];
@@ -2681,6 +2684,20 @@ if (location.search.includes('debug')) {
       velocity.value = 0;
       steering.value = 0;
     },
+    // Surface-aware teleport (?debug only): drops the car onto whatever
+    // collider top occupies (x,z) — ledges, planks, platforms, roofs — so
+    // automated tests can stage directly on raised course geometry instead
+    // of fighting keyboard precision.
+    tp2(x, z, heading = 0) {
+      const top = buildingTopAt(x, z);
+      car.position.set(x, top > 0 ? top : groundHeight, z);
+      car.rotation.set(0, heading, 0);
+      velocity.value = 0;
+      steering.value = 0;
+      jumpState.inAir = false;
+      jumpState.yVelocity = 0;
+      wasOnRamp = null;
+    },
     // Underground prompt-block bump state (tasks #6–#7) for automated testing.
     ugBumps: () => ({
       count: undergroundWorld.bumpCount,
@@ -2717,6 +2734,12 @@ if (location.search.includes('debug')) {
       const c = undergroundWorld.colliders.find((k) => k.soft);
       return c ? { x: c.x, z: c.z, h: +c.h.toFixed(2) } : null;
     },
+    // Sweeper-arm state (tasks #22–#24) for automated testing.
+    ugSweepers: () => undergroundWorld.sweepers.map((s) => ({
+      deg: +(((s.angle * 180 / Math.PI) % 360 + 360) % 360).toFixed(0),
+      hits: s.hits,
+      cd: +Math.max(0, s.cd).toFixed(2),
+    })),
   };
 }
 

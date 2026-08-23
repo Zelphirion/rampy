@@ -33,10 +33,10 @@ scores, or timers — pure kinetic playground.
 18. [x] Give the elevator a dynamic collider so `buildingTopAt` can report its current top height (extend the collider entry or update its `h` each frame in `update`).
 19. [x] Build upper ledges/tiers: static walkway platforms at elevator-top height around the pit, with colliders, so drivers can drive off the elevator onto ledges.
 20. [x] Tune elevator speed/range so the ride is smooth and the car doesn't clip through at the top or bottom turnaround.
-21. [ ] Build a high balance beam: narrow long walkway at ledge height connecting two tiers, with a thin collider strip.
-22. [ ] Build a spinning sweeper arm: glowing horizontal arm rotating around a central post at bumper height above the beam, animated in `update`.
-23. [ ] Add sweeper hit response: when the rotating arm sweeps through the car's position on the beam, apply a strong outward impulse to knock the car off into the foam pit below.
-24. [ ] Place 2 beams with sweepers at different heights/speeds and add glow lights to the arms.
+21. [x] Build a high balance beam: narrow long walkway at ledge height connecting two tiers, with a thin collider strip.
+22. [x] Build a spinning sweeper arm: glowing horizontal arm rotating around a central post at bumper height above the beam, animated in `update`.
+23. [x] Add sweeper hit response: when the rotating arm sweeps through the car's position on the beam, apply a strong outward impulse to knock the car off into the foam pit below.
+24. [x] Place 2 beams with sweepers at different heights/speeds and add glow lights to the arms.
 
 ## Retracting Pyramid Stairs & Finish Ramp
 

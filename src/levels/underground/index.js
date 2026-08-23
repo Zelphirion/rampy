@@ -99,10 +99,13 @@ export function tunnelPoint(s) {
 export function addUnderground(parent, opts = {}) {
   // Optional callbacks fired from update(): onBlockBump when an airborne car
   // bumps a prompt-block (task #6), onPipeShove(dirX) when a sliding conduit
-  // sweeps through the car (task #13, dirX = ±1 travel direction). Lets the
-  // callers own the physics response without the level knowing how.
+  // sweeps through the car (task #13, dirX = ±1 travel direction), and
+  // onSweeperHit(dirX,dirZ) when a rotating sweeper arm clips the car
+  // (task #23, unit vector pointing radially away from the arm's pivot).
+  // Lets the callers own the physics response without the level knowing how.
   const onBlockBump = typeof opts.onBlockBump === 'function' ? opts.onBlockBump : null;
   const onPipeShove = typeof opts.onPipeShove === 'function' ? opts.onPipeShove : null;
+  const onSweeperHit = typeof opts.onSweeperHit === 'function' ? opts.onSweeperHit : null;
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -475,12 +478,129 @@ export function addUnderground(parent, opts = {}) {
     }
   }
 
+  // ---- High balance beams + spinning sweeper arms (tasks #21–#24) ----
+  // Two narrow planks at ledge height bridge the tiers over the foam pit:
+  //   A: a west landing platform (flush with the north tier's west end)
+  //      runs south to the south tier, straight across the pit's west strip.
+  //   B: the south tier's east end runs east to a lone platform over open
+  //      floor, clipping the pit's south-east corner.
+  // Each plank is a thin `soft` collider strip (ride it like the ledges),
+  // and each crossing is guarded by a glowing sweeper arm spinning around a
+  // post at bumper height above the deck — get clipped and you're launched
+  // radially off into the foam below (knockback wired via onSweeperHit).
+  const BEAM_Y = LEDGE_Y;
+  const beamColliders = [];
+
+  // Landing platforms at the free ends of the two beams (same slab + lime
+  // stripe styling as the task-#19 tiers so the whole upper ring reads as
+  // one structure).
+  const addTierSlab = (cx, cz, halfW, halfD) => {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2, 0.5, halfD * 2), elevMat);
+    slab.position.set(cx, BEAM_Y - 0.25, cz);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    parent.add(slab);
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(halfW * 2 + 0.24, 0.18, halfD * 2 + 0.24),
+      makeGlowMat(NEON.lime)
+    );
+    stripe.position.set(cx, BEAM_Y - 0.41, cz);
+    parent.add(stripe);
+    beamColliders.push({ x: cx, z: cz, halfW, halfD, h: BEAM_Y, soft: true });
+  };
+  addTierSlab(33, -23.5, 4, 4);    // west of the north tier (shares its x=37 edge)
+  addTierSlab(63, -38.5, 4, 3.5);  // east of the south tier's east end
+
+  // Support pylons under the new platforms (solid, like the task-#19 ones).
+  for (const [px, pz] of [[30, -21], [36, -21], [60.5, -40.5], [65.5, -36.5]]) {
+    const pylon = new THREE.Mesh(pylonGeo, pillarMat);
+    pylon.position.set(px, BEAM_Y / 2, pz);
+    pylon.castShadow = true;
+    parent.add(pylon);
+    beamColliders.push({ x: px, z: pz, halfW: 0.5, halfD: 0.5, h: BEAM_Y });
+  }
+
+  // The planks themselves: 1.6 wide, thin, lime glow rim, soft strip collider.
+  const addBeamPlank = (cx, cz, alongX, length) => {
+    const plankGeo = alongX
+      ? new THREE.BoxGeometry(length, 0.3, 1.6)
+      : new THREE.BoxGeometry(1.6, 0.3, length);
+    const plank = new THREE.Mesh(plankGeo, elevMat);
+    plank.position.set(cx, BEAM_Y - 0.15, cz);
+    plank.castShadow = true;
+    plank.receiveShadow = true;
+    parent.add(plank);
+    const rimGeo = alongX
+      ? new THREE.BoxGeometry(length + 0.2, 0.14, 1.84)
+      : new THREE.BoxGeometry(1.84, 0.14, length + 0.2);
+    const rim = new THREE.Mesh(rimGeo, makeGlowMat(NEON.lime));
+    rim.position.set(cx, BEAM_Y - 0.34, cz);
+    parent.add(rim);
+    beamColliders.push(alongX
+      ? { x: cx, z: cz, halfW: length / 2, halfD: 0.8, h: BEAM_Y, soft: true }
+      : { x: cx, z: cz, halfW: 0.8, halfD: length / 2, h: BEAM_Y, soft: true });
+  };
+  addBeamPlank(33, -31, false, 7);   // A: landing platform (z -27.5) -> south tier (z -34.5)
+  addBeamPlank(55, -38.5, true, 8);  // B: south tier (x 51) -> lone platform (x 59)
+
+  // Sweeper arms: post + hub + glowing arm spinning in the XZ plane at
+  // `armY`. Two modes (task #24):
+  //   - full circle: angle = phase + elapsed·speed (sweeper B).
+  //   - sector swing: angle oscillates ±amp around center (sweeper A) so the
+  //     arm rakes ONLY its plank — a full circle here would also rake the
+  //     elevator deck / north tier sitting a few units from the pivot.
+  const sweepers = [];
+  function addSweeper(spec) {
+    const postH = spec.armY - spec.baseY + 1.4;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, postH, 10), pillarMat);
+    post.position.set(spec.px, spec.baseY + postH / 2, spec.pz);
+    post.castShadow = true;
+    parent.add(post);
+    const grp = new THREE.Group();
+    grp.position.set(spec.px, spec.armY, spec.pz);
+    parent.add(grp);
+    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 10), makeGlowMat(spec.color));
+    grp.add(hub);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(spec.len, 0.55, 0.85), makeGlowMat(spec.color));
+    arm.position.x = spec.len / 2;
+    grp.add(arm);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), makeGlowMat(spec.color));
+    tip.position.x = spec.len;
+    grp.add(tip);
+    // Task #24: glow light riding with the arm so the sweep paints light.
+    const glow = new THREE.PointLight(spec.color, 1.3, 20, 2);
+    glow.position.set(spec.len * 0.6, 0.8, 0);
+    grp.add(glow);
+    sweepers.push({
+      px: spec.px, pz: spec.pz, armY: spec.armY, len: spec.len,
+      speed: spec.speed, phase: spec.phase,
+      swing: spec.swing || null,   // { center, amp } in radians, or null
+      grp,
+      angle: spec.phase, cd: 0, hits: 0,
+    });
+    // Solid post collider so the pivot can't be driven through.
+    beamColliders.push({ x: spec.px, z: spec.pz, halfW: 0.6, halfD: 0.6, h: spec.armY + 0.8 });
+  }
+  const degToRad = (d) => (d * Math.PI) / 180;
+  // A: pivot on the landing platform's west side, swinging across the plank
+  // like a windscreen wiper. Sector (50°…80°) aims straight down the plank;
+  // the elevator deck bears ≈28° from here and the north tier ≈0°, so with
+  // a 9.5-long arm neither is ever touched (closest pass ≈4 units clear).
+  addSweeper({
+    px: 29.5, pz: -22.5, baseY: BEAM_Y, armY: BEAM_Y + 1.6, len: 9.5,
+    speed: 1.6, phase: 0, color: NEON.magenta,
+    swing: { center: degToRad(65), amp: degToRad(15) },
+  });
+  // B: floor-mounted post south of the plank; faster, opposite spin, higher
+  // arm, full rotation.
+  addSweeper({ px: 55, pz: -43.5, baseY: 0, armY: BEAM_Y + 2.4, len: 6.5, speed: -2.0, phase: Math.PI / 2, color: NEON.cyan });
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
@@ -494,6 +614,7 @@ export function addUnderground(parent, opts = {}) {
     foamPieces,
     spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
     conduitPipes,
+    sweepers,
     get bumpCount() { return bumpCount; },
     get lastBump() { return lastBump; },
     update(delta, player) {
@@ -535,6 +656,33 @@ export function addUnderground(parent, opts = {}) {
       const elevH = ELEV_MID + ELEV_AMP * Math.sin(elapsed * ELEV.speed);
       elevGroup.position.y = elevH - 0.25;
       elevatorCollider.h = elevH;
+      // Tasks #22–#23: spin each sweeper arm around its post and, when the
+      // arm's segment sweeps through a car riding at beam height, fire
+      // onSweeperHit with a radial unit vector (away from the pivot) so the
+      // caller can launch the car off the plank. Vertical gate keeps floor
+      // drivers safe; per-arm cooldown keeps one clip from firing per frame.
+      for (const s of sweepers) {
+        s.angle = s.swing
+          ? s.swing.center + s.swing.amp * Math.sin(elapsed * s.speed + s.phase)
+          : s.phase + elapsed * s.speed;
+        s.grp.rotation.y = s.angle;
+        if (s.cd > 0) s.cd -= delta;
+        if (player && onSweeperHit && s.cd <= 0
+          && player.y > s.armY - 2.6 && player.y < s.armY + 0.9) {
+          // rotation.y = a maps local +X to world (cos a, 0, -sin a).
+          const ex = s.px + Math.cos(s.angle) * s.len;
+          const ez = s.pz - Math.sin(s.angle) * s.len;
+          const d2 = segDistSq(s.px, s.armY, s.pz, ex, s.armY, ez, player.x, player.y, player.z);
+          if (d2 <= 2.6 * 2.6) {
+            s.cd = 0.9;
+            s.hits += 1;
+            let nx = player.x - s.px;
+            let nz = player.z - s.pz;
+            const nl = Math.hypot(nx, nz) || 1;
+            onSweeperHit(nx / nl, nz / nl);
+          }
+        }
+      }
       // Task #6: pass-through bump detection on the suspended prompt-blocks.
       // Swept check (previous → current position) so a slow frame rate can't
       // step over a block's trigger radius between updates. Airborne gate:
