@@ -132,16 +132,48 @@ export function addUnderground(parent, opts = {}) {
   parent.add(tube);
 
   const markerR = tubeR - 1.6;
-  for (let i = 1; i <= 30; i++) {
-    const s = i / 30;
-    const p = tunnelPoint(s);
-    const th = TUNNEL.theta0 + TUNNEL.sweep * s;
-    const nx = Math.cos(th), nz = Math.sin(th);
-    for (const side of [-1, 1]) {
-      const m = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), makeGlowMat(NEON.amber));
-      m.position.set(p.x + nx * markerR * side, localY(p.y) + 0.12, p.z + nz * markerR * side);
-      parent.add(m);
+  // Perf pass (task #36): the 60 marker dots used to be 60 separate meshes
+  // (60 draw calls for a handful of pixels each). Bake them into ONE static
+  // geometry instead — same look, one draw call. Plain three.js merge:
+  // clone a non-indexed template sphere, translate each copy into place,
+  // then concatenate position/normal/uv arrays.
+  const mergeGeoms = (geos) => {
+    let count = 0;
+    for (const g of geos) count += g.attributes.position.count;
+    const pos = new Float32Array(count * 3);
+    const nor = new Float32Array(count * 3);
+    const uv = new Float32Array(count * 2);
+    let off = 0;
+    for (const g of geos) {
+      pos.set(g.attributes.position.array, off * 3);
+      nor.set(g.attributes.normal.array, off * 3);
+      uv.set(g.attributes.uv.array, off * 2);
+      off += g.attributes.position.count;
     }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    return out;
+  };
+  {
+    const markerProto = new THREE.SphereGeometry(0.18, 8, 8).toNonIndexed();
+    const markerParts = [];
+    for (let i = 1; i <= 30; i++) {
+      const s = i / 30;
+      const p = tunnelPoint(s);
+      const th = TUNNEL.theta0 + TUNNEL.sweep * s;
+      const nx = Math.cos(th), nz = Math.sin(th);
+      for (const side of [-1, 1]) {
+        const g = markerProto.clone();
+        g.translate(p.x + nx * markerR * side, localY(p.y) + 0.12, p.z + nz * markerR * side);
+        markerParts.push(g);
+      }
+    }
+    markerProto.dispose();
+    const markers = new THREE.Mesh(mergeGeoms(markerParts), makeGlowMat(NEON.amber));
+    parent.add(markers);
+    for (const g of markerParts) g.dispose();
   }
 
   const pillars = [

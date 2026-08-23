@@ -741,6 +741,27 @@ const ugRamps = undergroundWorld.ramps || [];
 let stairGhostTimer = 0;
 let ugRecoveries = 0;
 
+// ===== Perf pass (task #36): cap shadow casting to key props =====
+// Every mesh that casts a shadow costs shadow-map fill rate, but tiny props
+// (glow bulbs, marker dots, edge stripes, debris) produce shadows nobody can
+// see. After all scenes are built, strip castShadow from any mesh whose
+// bounding sphere is smaller than the car's smallest visible part — big
+// scenery (buildings, trees, ramps, pillars, the car itself) keeps its
+// shadow, sub-unit decorations stop paying for one.
+const MIN_SHADOW_RADIUS = 1.1;
+function capShadowCasters(root) {
+  root.traverse((o) => {
+    if (!o.isMesh || !o.castShadow || !o.geometry) return;
+    if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+    if (o.geometry.boundingSphere && o.geometry.boundingSphere.radius < MIN_SHADOW_RADIUS) {
+      o.castShadow = false;
+    }
+  });
+}
+capShadowCasters(scene);
+capShadowCasters(rampScene);
+capShadowCasters(undergroundScene);
+
 // ===== Portals =====
 // The big open-front portal building at (56,20) is the city's gateway to the
 // ramp world: its glowing ring doorway faces EAST (away from town), so you
@@ -2868,6 +2889,32 @@ if (location.search.includes('debug')) {
     }),
     // Task #35 off-slab recovery counter for automated testing.
     ugRecoveries: () => ugRecoveries,
+    // Task #36 perf probe: last frame's draw calls / triangles from the
+    // renderer info struct (values reset each frame by three.js).
+    perf: () => ({
+      calls: renderer.info.render.calls,
+      tris: renderer.info.render.triangles,
+      geometries: renderer.info.memory.geometries,
+    }),
+    // Task #36 audit: mesh/shadow-caster counts per world. `smallCasters`
+    // counts sub-unit-radius meshes that STILL cast shadows — should stay 0
+    // after capShadowCasters() runs.
+    sceneStats: () => {
+      const stats = {};
+      for (const [name, s] of [['city', scene], ['ramp', rampScene], ['underground', undergroundScene]]) {
+        let meshes = 0, casters = 0, smallCasters = 0;
+        s.traverse((o) => {
+          if (!o.isMesh || !o.geometry) return;
+          meshes += 1;
+          if (!o.castShadow) return;
+          casters += 1;
+          if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+          if (o.geometry.boundingSphere && o.geometry.boundingSphere.radius < MIN_SHADOW_RADIUS) smallCasters += 1;
+        });
+        stats[name] = { meshes, casters, smallCasters };
+      }
+      return stats;
+    },
   };
 }
 
