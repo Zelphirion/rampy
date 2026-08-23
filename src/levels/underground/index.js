@@ -1,5 +1,8 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { addGlassCity } from '../../glasscity.js';
+// Task #29: stair retract timing lives in a pure module so node --test can
+// verify the wave math (step position + collider-active state vs time).
+import { stepTau, stepExtension, stepColliderActive } from '../../modules/stairCycle.js';
 
 export const UNDERGROUND_Y = -30;
 
@@ -595,12 +598,128 @@ export function addUnderground(parent, opts = {}) {
   // arm, full rotation.
   addSweeper({ px: 55, pz: -43.5, baseY: 0, armY: BEAM_Y + 2.4, len: 6.5, speed: -2.0, phase: Math.PI / 2, color: NEON.cyan });
 
+  // ---- Retracting pyramid stairs (tasks #25–#28) ----
+  // A stepped pyramid backing onto the SOUTH cavern wall (z = SLAB.minZ),
+  // built in the open east half of the zone so it clears everything already
+  // placed: conduit lane #2 (posts x 95.5–128.5 at z −60), lane #3 (x ≤ 54),
+  // the corner columns (30,−80)/(130,−80) and the test ramp (80,−35).
+  // Footprint: tiers climb SOUTH toward the wall — you approach across open
+  // floor heading −Z, each tier one riser higher, until the peak platform
+  // sits flush against the rock face. Retraction (task #27) slides each tier
+  // horizontally INTO that wall (−Z).
+  const STAIRS = {
+    cx: 100,            // footprint centre x
+    width: 24,          // x span of every tier (x ∈ [88, 112])
+    wallZ: SLAB.minZ,   // south cavern wall the pyramid backs onto (−96.5)
+    peakDepth: 3,       // z depth of the static peak platform at the wall
+    tiers: 9,           // one step each → peak top at 9 == LEDGE_Y
+    stepH: 1,           // riser height per tier
+    stepD: 2.2,         // tread depth per tier
+  };
+  const PEAK_Y = STAIRS.tiers * STAIRS.stepH;
+  // Task #27: per-tier retract cycle. Neighbouring tiers are offset by 1/9
+  // of a cycle, so extension travels along the pyramid as a wave and some
+  // band of tiers is always climbable (asserted in stairCycle.test.mjs).
+  const STAIR_TIMING = {
+    period: 7.5,
+    outFrac: 0.8,
+    transFrac: 0.12,
+    phaseStep: 1 / STAIRS.tiers,
+  };
+  // Far enough that a retracted tier's footprint fully clears its slot and
+  // disappears into the rock face behind the pyramid.
+  const STAIR_RETRACT_DIST = STAIRS.stepD + 1.0;
+  const stairMat = new THREE.MeshStandardMaterial({ color: 0x453f52, roughness: 0.85 });
+  const stairColliders = [];      // static: peak platform + side skirts
+  const stairTierColliders = [];  // animated tiers — synced into `colliders`
+  const stairs = [];
+
+  // Static peak platform against the wall — always-present ground at the top
+  // so a timed wave of retracting tiers always has a summit to aim for.
+  const peakHalfW = STAIRS.width / 2 + 1;
+  const peakSlab = new THREE.Mesh(
+    new THREE.BoxGeometry(peakHalfW * 2, PEAK_Y, STAIRS.peakDepth),
+    stairMat
+  );
+  peakSlab.position.set(STAIRS.cx, PEAK_Y / 2, STAIRS.wallZ + STAIRS.peakDepth / 2);
+  peakSlab.castShadow = true;
+  peakSlab.receiveShadow = true;
+  parent.add(peakSlab);
+  const peakStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(peakHalfW * 2 + 0.16, 0.16, 0.2),
+    makeGlowMat(NEON.amber)
+  );
+  peakStripe.position.set(STAIRS.cx, PEAK_Y - 0.06, STAIRS.wallZ + STAIRS.peakDepth - 0.02);
+  parent.add(peakStripe);
+  stairColliders.push({
+    x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.peakDepth / 2,
+    halfW: peakHalfW, halfD: STAIRS.peakDepth / 2, h: PEAK_Y, soft: true,
+  });
+
+  // The tiers themselves (task #26): full-height boxes so the silhouette is
+  // a proper stepped pyramid. Colliders are `soft` like the ledges — they
+  // feed buildingTopAt (stand/climb on them) but never wall off driving, and
+  // task #28 will splice them out of this array while a tier is retracted.
+  for (let k = 0; k < STAIRS.tiers; k++) {
+    const h = (k + 1) * STAIRS.stepH;
+    const cz = STAIRS.wallZ + STAIRS.peakDepth + (STAIRS.tiers - k - 0.5) * STAIRS.stepD;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(STAIRS.width, h, STAIRS.stepD), stairMat);
+    mesh.position.set(STAIRS.cx, h / 2, cz);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    // Glow stripe along each tread's front (north) edge — reads as edge
+    // lighting and marks the climbable face.
+    const stripeColor = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime][k % 4];
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(STAIRS.width + 0.16, 0.16, 0.2),
+      makeGlowMat(stripeColor)
+    );
+    stripe.position.set(STAIRS.cx, h - 0.06, cz - STAIRS.stepD / 2 - 0.02);
+    parent.add(stripe);
+    // Collider extends ½ a tread into the band IN FRONT of this tier (z is
+    // shifted north, footprint deepened): while this tier is out it owns the
+    // strip (buildingTopAt takes the max), but when it RETRACTS the tier
+    // below's overlap keeps supporting the strip — so a car standing on a
+    // dropping tier falls exactly ONE tier (task #28) instead of to the
+    // floor. Only when a tier AND its front neighbour are both down does
+    // the strip open to the floor (brief co-down sliver of the wave).
+    const collider = {
+      x: STAIRS.cx, z: cz - STAIRS.stepD * 0.25,
+      halfW: STAIRS.width / 2, halfD: STAIRS.stepD * 0.75, h, soft: true,
+    };
+    // Task #28: tier colliders live in their own list — main.js took a
+    // one-time COPY of stairColliders via spread, so retract-sync has to
+    // splice from / push back to the level's returned `colliders` array
+    // itself (done below, once it exists) for removals to reach ugColliders.
+    stairTierColliders.push(collider);
+    stairs.push({ index: k, mesh, collider, baseZ: cz, ext: 0, active: true });
+  }
+
+  // Solid curb skirts down the east/west faces: without them a grounded car
+  // could clip straight through the pyramid's side (soft colliders never
+  // block). They sit JUST outside the tier footprints so buildingTopAt never
+  // reports a phantom roof strip, and `elevated` cars on the tiers ignore
+  // them entirely.
+  const skirtHalfD = (STAIRS.tiers * STAIRS.stepD) / 2;
+  const skirtZ = STAIRS.wallZ + STAIRS.peakDepth + skirtHalfD;
+  for (const side of [-1, 1]) {
+    const sx = STAIRS.cx + side * (STAIRS.width / 2 + 0.6);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, skirtHalfD * 2), pillarMat);
+    skirt.position.set(sx, 0.5, skirtZ);
+    parent.add(skirt);
+    stairColliders.push({ x: sx, z: skirtZ, halfW: 0.6, halfD: skirtHalfD, h: 0.5 });
+  }
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...stairColliders, ...glassCity.colliders];
+  // Register the animated tier colliders directly in the returned array so
+  // the task-#28 splice/push sync below actually reaches ugColliders.
+  for (const c of stairTierColliders) colliders.push(c);
 
   let bumpCount = 0;
   let lastBump = null;
@@ -615,6 +734,8 @@ export function addUnderground(parent, opts = {}) {
     spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
     conduitPipes,
     sweepers,
+    stairs,      // live retracting-stair tier state (tasks #25–#28)
+    STAIRS,      // footprint constants (peak platform, tier count/sizes)
     get bumpCount() { return bumpCount; },
     get lastBump() { return lastBump; },
     update(delta, player) {
@@ -656,6 +777,27 @@ export function addUnderground(parent, opts = {}) {
       const elevH = ELEV_MID + ELEV_AMP * Math.sin(elapsed * ELEV.speed);
       elevGroup.position.y = elevH - 0.25;
       elevatorCollider.h = elevH;
+      // Tasks #27–#28: run each pyramid tier through its retract cycle —
+      // slide the mesh horizontally into the cavern wall (−Z) and back, then
+      // sync its collider: spliced OUT of the collider list while retracted
+      // so buildingTopAt stops reporting a surface there and a car standing
+      // on that tier falls through to the tier below instead of riding a
+      // ghost step. Membership only changes on state flips, so this is
+      // splice-churn-free while a tier holds its plateau.
+      for (const st of stairs) {
+        st.ext = stepExtension(stepTau(elapsed, st.index, STAIR_TIMING), STAIR_TIMING);
+        st.mesh.position.z = st.baseZ - st.ext * STAIR_RETRACT_DIST;
+        const active = stepColliderActive(st.ext);
+        if (active !== st.active) {
+          st.active = active;
+          if (active) {
+            colliders.push(st.collider);
+          } else {
+            const idx = colliders.indexOf(st.collider);
+            if (idx !== -1) colliders.splice(idx, 1);
+          }
+        }
+      }
       // Tasks #22–#23: spin each sweeper arm around its post and, when the
       // arm's segment sweeps through a car riding at beam height, fire
       // onSweeperHit with a radial unit vector (away from the pivot) so the

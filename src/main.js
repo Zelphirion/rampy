@@ -2740,6 +2740,18 @@ if (location.search.includes('debug')) {
       hits: s.hits,
       cd: +Math.max(0, s.cd).toFixed(2),
     })),
+    // Retracting pyramid-stair state (tasks #25–#28) for automated testing:
+    // per-tier extension (0 = retracted into the wall, 1 = fully out),
+    // collider-active flag and live z, plus the static footprint constants.
+    ugStairs: () => ({
+      cfg: undergroundWorld.STAIRS,
+      tiers: undergroundWorld.stairs.map((st) => ({
+        i: st.index,
+        ext: +st.ext.toFixed(2),
+        active: st.active,
+        z: +st.mesh.position.z.toFixed(2),
+      })),
+    }),
   };
 }
 

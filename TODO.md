@@ -40,11 +40,11 @@ scores, or timers — pure kinetic playground.
 
 ## Retracting Pyramid Stairs & Finish Ramp
 
-25. [ ] Design the pyramid staircase footprint against the cavern wall: N tiers (e.g., 8–10), each tier one step high, leading up to a peak platform.
-26. [ ] Build the staircase statically first: all steps present as boxes with colliders, verify the car can climb it tier by tier.
-27. [ ] Add per-step retract animation: each step slides horizontally into the wall and back out on a timed cycle, with neighboring steps offset in phase so there's always a climbable path.
-28. [ ] Sync step colliders with animation: disable/skip a step's collider while retracted so the car falls through to the tier below (or blocks progress) instead of ghost-clipping.
-29. [ ] Extract the stair timing math into a small pure module (e.g., `src/modules/stairCycle.js`) with unit tests runnable via `node --test` (step position + collider-active state as functions of time).
+25. [x] Design the pyramid staircase footprint against the cavern wall: N tiers (e.g., 8–10), each tier one step high, leading up to a peak platform.
+26. [x] Build the staircase statically first: all steps present as boxes with colliders, verify the car can climb it tier by tier.
+27. [x] Add per-step retract animation: each step slides horizontally into the wall and back out on a timed cycle, with neighboring steps offset in phase so there's always a climbable path.
+28. [x] Sync step colliders with animation: disable/skip a step's collider while retracted so the car falls through to the tier below (or blocks progress) instead of ghost-clipping.
+29. [x] Extract the stair timing math into a small pure module (e.g., `src/modules/stairCycle.js`) with unit tests runnable via `node --test` (step position + collider-active state as functions of time).
 30. [ ] Build the massive launch ramp at the pyramid peak: steep upward ramp aimed at the padded pole, using the same slope approach as existing surface ramps.
 31. [ ] Build the padded vertical pole: tall cushioned column at the landing point with a trigger volume around it.
 32. [ ] Pole impact event: when the car hits the pole region above a speed threshold, trigger the reward sequence (see next items); below threshold, just bounce the car off softly.
