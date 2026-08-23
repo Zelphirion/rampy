@@ -648,7 +648,11 @@ const ugFill = new THREE.PointLight(0x7755cc, 1.0, 160, 1);
 ugFill.position.set(30, 20, 10);
 undergroundScene.add(ugFill);
 
-const undergroundWorld = addUnderground(undergroundScene);
+const undergroundWorld = addUnderground(undergroundScene, {
+  // Task #13: sliding conduits shove the car along their travel direction
+  // (hammer-strength slide + spin + small hop). dirX/dirZ is a unit axis.
+  onPipeShove: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 120, 2.2, 3.2),
+});
 const ugColliders = undergroundWorld.colliders;
 const ugRamps = undergroundWorld.ramps || [];
 
@@ -2654,6 +2658,15 @@ if (location.search.includes('debug')) {
     // Debug-only foam spawner (task #9): lets tests drive the FOAM_MAX
     // recycle path instantly instead of waiting on real bump rates.
     ugSpawnFoam: (x, y, z) => undergroundWorld.spawnFoam(x, y, z),
+    // Conduit-pipe state (tasks #11–#14) for automated testing.
+    ugPipes: () => undergroundWorld.conduitPipes.map((p) => ({
+      x: +p.mesh.position.x.toFixed(2),
+      y: +p.mesh.position.y.toFixed(1),
+      z: +p.mesh.position.z.toFixed(1),
+      axis: p.axis,
+      hits: p.hitCount,
+      cd: +Math.max(0, p.hitCooldown).toFixed(2),
+    })),
   };
 }
 

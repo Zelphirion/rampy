@@ -20,10 +20,10 @@ scores, or timers — pure kinetic playground.
 8. [x] Spawn a giant foam collectible on bump: big soft-colored sphere/cube that pops out with an upward+random velocity, falls, bounces once or twice, then shrinks and disappears after a few seconds.
 9. [x] Cap active foam collectibles (e.g., max ~12) and reuse/recycle oldest to keep the scene cheap.
 10. [x] Lay out a row of 5–8 prompt-blocks across the open zone at varied heights so different jumps hit different blocks.
-11. [ ] Build one oversized glowing conduit pipe prototype: long emissive cylinder spanning a track lane, mounted just above bumper height on end posts.
-12. [ ] Animate the conduit pipe sliding back and forth across the lane in `update(delta)` using a sine of elapsed time (store phase/speed per pipe).
-13. [ ] Add pipe-vs-car knockback: when the moving pipe overlaps the car's position, apply a sideways impulse matching the pipe's travel direction so cars get shoved.
-14. [ ] Place 3–4 conduit pipes across separate lanes with different speeds/phases/directions and register their end-post colliders in the returned `colliders` array.
+11. [x] Build one oversized glowing conduit pipe prototype: long emissive cylinder spanning a track lane, mounted just above bumper height on end posts.
+12. [x] Animate the conduit pipe sliding back and forth across the lane in `update(delta)` using a sine of elapsed time (store phase/speed per pipe).
+13. [x] Add pipe-vs-car knockback: when the moving pipe overlaps the car's position, apply a sideways impulse matching the pipe's travel direction so cars get shoved.
+14. [x] Place 3–4 conduit pipes across separate lanes with different speeds/phases/directions and register their end-post colliders in the returned `colliders` array.
 
 ## Industrial Car Elevators & Sweeper Arms
 

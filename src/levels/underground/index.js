@@ -97,9 +97,12 @@ export function tunnelPoint(s) {
 }
 
 export function addUnderground(parent, opts = {}) {
-  // Optional callback fired when an airborne car bumps a prompt-block
-  // (task #6). Lets callers react without the level knowing how.
+  // Optional callbacks fired from update(): onBlockBump when an airborne car
+  // bumps a prompt-block (task #6), onPipeShove(dirX) when a sliding conduit
+  // sweeps through the car (task #13, dirX = ±1 travel direction). Lets the
+  // callers own the physics response without the level knowing how.
   const onBlockBump = typeof opts.onBlockBump === 'function' ? opts.onBlockBump : null;
+  const onPipeShove = typeof opts.onPipeShove === 'function' ? opts.onPipeShove : null;
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -323,15 +326,61 @@ export function addUnderground(parent, opts = {}) {
   ];
   for (const spec of BLOCK_ROW) addPromptBlock(spec.x, spec.y, spec.z, spec.color);
 
+  // ---- Conduit pipes (tasks #11–#14) ----
+  // An oversized glowing conduit spans a narrow lane at bumper height on two
+  // end posts. The pipe shuttles side-to-side across its lane (animated in
+  // task #12) and shoves any car it sweeps through (knockback in task #13).
+  // Geometry: the pipe axis lies along Z; it slides along X. Posts stand at
+  // the slide extremes so a pipe end lands flush on a post at each turn-
+  // around; at mid-slide there's an `amp`-wide gap on either side to thread.
+  const PIPE_R = 1.2;
+  const PIPE_Y = 2.4;         // centre height — underside ≈ bumper height
+  const POST_W = 1.6;
+  const POST_H = 4;
+  const conduitPipes = [];
+  const pipePostColliders = [];
+  function addConduitPipe({ cx, cz, len, amp, axis = 'z', color = NEON.cyan, phase = 0, speed = 1 }) {
+    // axis 'z': pipe lies along Z, slides along X (north-south lane).
+    // axis 'x': pipe lies along X, slides along Z (east-west lane).
+    const postOff = amp + len / 2;   // post distance from lane centre
+    for (const side of [-1, 1]) {
+      const px = axis === 'x' ? cx : cx + side * postOff;
+      const pz = axis === 'x' ? cz + side * postOff : cz;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(POST_W, POST_H, POST_W), pillarMat);
+      post.position.set(px, POST_H / 2, pz);
+      post.castShadow = true;
+      parent.add(post);
+      pipePostColliders.push({ x: px, z: pz, halfW: POST_W / 2, halfD: POST_W / 2, h: POST_H });
+    }
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(PIPE_R, PIPE_R, len, 14), makeGlowMat(color));
+    if (axis === 'x') mesh.rotation.z = Math.PI / 2;   // cylinder Y-axis → lie along X
+    else mesh.rotation.x = Math.PI / 2;                // cylinder Y-axis → lie along Z
+    mesh.position.set(cx, PIPE_Y, cz);
+    mesh.castShadow = true;
+    parent.add(mesh);
+    const pipe = { mesh, cx, cz, len, amp, axis, phase, speed, hitCooldown: 0, hitCount: 0 };
+    conduitPipes.push(pipe);
+    return pipe;
+  }
+
+  // Task #14: four conduits across separate lanes, each with its own speed,
+  // phase and colour; lane #4 runs the perpendicular direction. Lanes are
+  // spaced so no two pipes' sweep volumes can ever intersect.
+  addConduitPipe({ cx: 70, cz: -60, len: 26, amp: 10, speed: 1.2, phase: 0 });                        // N-S, cyan
+  addConduitPipe({ cx: 112, cz: -60, len: 24, amp: 9, speed: 1.5, phase: 4.2, color: NEON.lime });     // N-S, lime
+  addConduitPipe({ cx: 40, cz: -78, len: 20, amp: 8, speed: 0.9, phase: 2.1, color: NEON.magenta });   // N-S, magenta
+  addConduitPipe({ cx: 115, cz: -30, len: 26, amp: 8, speed: 1.1, phase: 1.0, color: NEON.amber, axis: 'x' }); // E-W, amber
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
+  let elapsed = 0;   // course clock for sine-animated props (conduits, …)
   let prevX = 0, prevY = 0, prevZ = 0, havePrev = false;
 
   return {
@@ -340,10 +389,42 @@ export function addUnderground(parent, opts = {}) {
     promptBlocks,
     foamPieces,
     spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
+    conduitPipes,
     get bumpCount() { return bumpCount; },
     get lastBump() { return lastBump; },
     update(delta, player) {
       glassCity.update(delta, player);
+      elapsed += delta;
+      // Task #12: slide each conduit back and forth across its lane on a
+      // sine of elapsed time — phase/speed are stored per pipe so placed
+      // pipes run out of sync with each other.
+      // Task #13: when a conduit overlaps the car near bumper height, fire
+      // onPipeShove with the pipe's current travel direction (analytic
+      // derivative of the sine slide). A short per-pipe cooldown keeps one
+      // sweep from firing every frame while the car sits in the overlap.
+      for (const p of conduitPipes) {
+        const off = Math.sin(elapsed * p.speed + p.phase) * p.amp;
+        const vel = Math.cos(elapsed * p.speed + p.phase) * p.amp * p.speed;
+        if (p.axis === 'x') p.mesh.position.z = p.cz + off;
+        else p.mesh.position.x = p.cx + off;
+        if (p.hitCooldown > 0) p.hitCooldown -= delta;
+        if (player && onPipeShove && p.hitCooldown <= 0
+          && Math.abs(vel) > 0.5   // ignore the turn-around crawl
+          && player.y < PIPE_Y + PIPE_R) {
+          // Split the overlap test into the slide axis (thin) and the fixed
+          // axis (long side of the pipe).
+          const carS = p.axis === 'x' ? player.z : player.x;
+          const pipeS = p.axis === 'x' ? p.mesh.position.z : p.mesh.position.x;
+          const carF = p.axis === 'x' ? player.x : player.z;
+          const pipeF = p.axis === 'x' ? p.cx : p.cz;
+          if (Math.abs(carS - pipeS) < PIPE_R + 2.2 && Math.abs(carF - pipeF) < p.len / 2 + 2.2) {
+            p.hitCooldown = 0.8;
+            p.hitCount += 1;
+            if (p.axis === 'x') onPipeShove(0, Math.sign(vel));
+            else onPipeShove(Math.sign(vel), 0);
+          }
+        }
+      }
       // Task #6: pass-through bump detection on the suspended prompt-blocks.
       // Swept check (previous → current position) so a slow frame rate can't
       // step over a block's trigger radius between updates. Airborne gate:
