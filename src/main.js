@@ -214,6 +214,10 @@ function isPositionBlockedByTraffic(x, z, radius) {
 // The autonomous fire engine is a big moving obstacle for the player too.
 const firetruckColliderR = 2.0;
 function isPositionBlockedByFiretruck(x, z, radius) {
+  // City prop — only exists in the city world. Without this gate its street
+  // position leaks into the underground and invisibly walls off course props
+  // that share the same x/z.
+  if (worldState !== 'city') return false;
   const dx = wrappedDeltaX(x, firetruck.truck.position.x);
   const dz = wrappedDeltaZ(z, firetruck.truck.position.z);
   return dx * dx + dz * dz <= (radius + firetruckColliderR) * (radius + firetruckColliderR);
@@ -222,6 +226,8 @@ function isPositionBlockedByFiretruck(x, z, radius) {
 // And the giant robot is a colossal moving obstacle — you can't drive through
 // its legs (unless it's currently holding you in its claw).
 function isPositionBlockedByRobot(x, z, radius) {
+  // City prop — same world-gate as the firetruck above.
+  if (worldState !== 'city') return false;
   const dx = wrappedDeltaX(x, robot.mesh.position.x);
   const dz = wrappedDeltaZ(z, robot.mesh.position.z);
   return dx * dx + dz * dz <= (radius + robot.radius) * (radius + robot.radius);
@@ -1879,13 +1885,17 @@ function animate() {
   // NOTE: traffic cars are deliberately NOT in this block list — the player
   // plows straight through them and the car-vs-car collision system shoves
   // them out of the way (they slide aside, then ease back to their lane).
-  // While airborne (or up on a rooftop) the car flies OVER buildings, the
-  // fire engine and the robot instead of being stopped by them — that's what
-  // lets the mega ramp hurl you across the whole town.
+  // While airborne (or up on a rooftop / any collider top) the car flies OVER
+  // buildings, the fire engine and the robot instead of being stopped by
+  // them — that's what lets the mega ramp hurl you across the whole town.
   // In the city you can't drive through buildings, the fire engine or the
   // robot (unless you're airborne / up on a rooftop). The ramp world is wide
   // open rolling terrain — nothing to block you.
-  const elevated = jumpState.inAir || (worldState === 'city' && buildingTopAt(car.position.x, car.position.z) > 0);
+  // buildingTopAt is world-aware, so this also covers underground surfaces
+  // (elevator deck, ledge tiers, pit rims): standing on one lifts the wall
+  // blocking exactly like a city roof, so low rim colliders can't invisibly
+  // fence off the ledges floating above them.
+  const elevated = jumpState.inAir || buildingTopAt(car.position.x, car.position.z) > 0;
   const canMove =
     !buildingLevitate.levitating && (
     worldState === 'ramp' ||

@@ -439,12 +439,48 @@ export function addUnderground(parent, opts = {}) {
   const elevatorCollider = { x: ELEV.cx, z: ELEV.cz, halfW: ELEV.halfW, halfD: ELEV.halfD, h: ELEV.low, soft: true };
   const elevatorColliders = [elevatorCollider];
 
+  // ---- Upper ledges / tiers (task #19) ----
+  // Static walkways at the elevator's top height ringing the pit, so driving
+  // off the lift at apex carries you onto a tier instead of a long fall.
+  // Slabs use `soft` colliders: they feed buildingTopAt / the soft-surface
+  // ride logic (land on them, roll across deck→ledge seamlessly) but never
+  // wall off grounded driving underneath. Support pylons are solid.
+  const LEDGE_Y = ELEV.high;
+  const LEDGES = [
+    { cx: 46, cz: -23.5, halfW: 9, halfD: 4, pylons: [[37, -19.5], [55, -19.5]] },  // north of the deck
+    { cx: 55, cz: -31,   halfW: 6, halfD: 7, pylons: [[61, -24], [61, -38]] },      // east of the deck
+    { cx: 42, cz: -38.5, halfW: 9, halfD: 4, pylons: [[33, -42.5], [51, -42.5]] },  // south of the deck
+  ];
+  const ledgeColliders = [];
+  const pylonGeo = new THREE.CylinderGeometry(0.5, 0.6, LEDGE_Y, 10);
+  for (const L of LEDGES) {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(L.halfW * 2, 0.5, L.halfD * 2), elevMat);
+    slab.position.set(L.cx, LEDGE_Y - 0.25, L.cz);
+    slab.castShadow = true;
+    slab.receiveShadow = true;
+    parent.add(slab);
+    const stripe = new THREE.Mesh(
+      new THREE.BoxGeometry(L.halfW * 2 + 0.24, 0.18, L.halfD * 2 + 0.24),
+      makeGlowMat(NEON.lime)
+    );
+    stripe.position.set(L.cx, LEDGE_Y - 0.41, L.cz);
+    parent.add(stripe);
+    ledgeColliders.push({ x: L.cx, z: L.cz, halfW: L.halfW, halfD: L.halfD, h: LEDGE_Y, soft: true });
+    for (const [px, pz] of L.pylons) {
+      const pylon = new THREE.Mesh(pylonGeo, pillarMat);
+      pylon.position.set(px, LEDGE_Y / 2, pz);
+      pylon.castShadow = true;
+      parent.add(pylon);
+      ledgeColliders.push({ x: px, z: pz, halfW: 0.5, halfD: 0.5, h: LEDGE_Y });
+    }
+  }
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
