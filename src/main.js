@@ -194,7 +194,9 @@ const bumperBaseSpeed = 5;
 
 function isPositionBlocked(x, z, radius) {
   const list = worldState === 'underground' ? ugColliders : colliders;
-  return list.some((collider) => rectCircleIntersect(x, z, collider, radius));
+  // `soft` colliders (the underground elevator deck) never block driving —
+  // they only feed buildingTopAt so you can land on / ride the moving deck.
+  return list.some((collider) => !collider.soft && rectCircleIntersect(x, z, collider, radius));
 }
 
 // Traffic cars are moving obstacles: check a position against every car on the
@@ -755,6 +757,19 @@ function ugRampInfoAt(px, pz) {
 function ugRampSurfaceY(px, pz) {
   const info = ugRampInfoAt(px, pz);
   return info ? info.height * info.s : -Infinity;
+}
+
+// Current top of the underground elevator deck if (x,z) is inside its
+// footprint, else 0. The level rewrites the deck collider's `h` every frame,
+// so this tracks the moving platform exactly (task #17).
+function ugElevatorTopAt(px, pz) {
+  let top = 0;
+  for (const c of ugColliders) {
+    if (c.soft && Math.abs(px - c.x) <= c.halfW && Math.abs(pz - c.z) <= c.halfD) {
+      top = Math.max(top, c.h);
+    }
+  }
+  return top;
 }
 const bumperState = { speed: bumperBaseSpeed, stopped: false };
 let bumperKnock = null;   // set when the player smashes the blue car aside
@@ -1942,12 +1957,16 @@ function animate() {
   } else if (worldState === 'underground') {
     if (jumpState.inAir) {
       // Airborne in the underground: fall under gravity, land on the cavern
-      // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02) or back
-      // on a course ramp's slope if we're coming down over one.
+      // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02), back on
+      // a course ramp's slope, or on top of anything with a collider footprint
+      // (pit rims, Glass City roofs, the moving elevator deck — task #18).
+      // The min() cap stops a high surface from snapping the car UP to it
+      // when flying through its footprint below deck level.
       currentRamp = null;
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
-      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z));
+      const bTop = buildingTopAt(car.position.x, car.position.z);
+      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z), Math.min(bTop, car.position.y + 0.4));
       if (car.position.y <= surface) {
         car.position.y = surface;
         const impact = Math.abs(jumpState.yVelocity);
@@ -1975,7 +1994,23 @@ function animate() {
           jumpState.yVelocity = velocity.value * (wasOnRamp.height / wasOnRamp.len) * wasOnRamp.boost;
           shake.intensity = Math.max(shake.intensity, 0.08);
         } else {
-          car.position.y = 0;
+          // Task #17: ride the elevator deck while the car stands in its
+          // footprint — y snaps to the deck's live top each frame, so the
+          // car is carried up AND down with it. Mounting is proximity-gated
+          // so a deck passing overhead never yo-yos the car off the floor.
+          const eTop = ugElevatorTopAt(car.position.x, car.position.z);
+          if (eTop > 0.05 && Math.abs(car.position.y - eTop) < 1.4) {
+            car.position.y = eTop;
+          } else if (eTop > 0.05) {
+            car.position.y = 0;   // deck is overhead — stay on the floor
+          } else if (car.position.y > 0.3) {
+            // Drove off a raised surface (deck edge, pit rim): become gently
+            // airborne instead of teleporting down, keeping momentum.
+            jumpState.inAir = true;
+            jumpState.yVelocity = 0;
+          } else {
+            car.position.y = 0;
+          }
         }
         wasOnRamp = null;
       }
@@ -2667,6 +2702,11 @@ if (location.search.includes('debug')) {
       hits: p.hitCount,
       cd: +Math.max(0, p.hitCooldown).toFixed(2),
     })),
+    // Elevator deck state (tasks #16–#18) for automated testing.
+    ugElev: () => {
+      const c = undergroundWorld.colliders.find((k) => k.soft);
+      return c ? { x: c.x, z: c.z, h: +c.h.toFixed(2) } : null;
+    },
   };
 }
 

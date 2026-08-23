@@ -27,10 +27,10 @@ scores, or timers — pure kinetic playground.
 
 ## Industrial Car Elevators & Sweeper Arms
 
-15. [ ] Dig a deep foam pit: recessed padded zone (visual only — dark soft-looking floor patch with raised rim walls that have colliders).
-16. [ ] Build one elevator platform prototype: flat industrial platform (metal box + hazard-stripe edge) that moves vertically in a smooth up/down loop over the pit.
-17. [ ] Make the elevator drivable: while the car is on the platform, carry the car with it (track platform delta-Y per frame and offset car.position.y when the car's x/z is within the platform footprint).
-18. [ ] Give the elevator a dynamic collider so `buildingTopAt` can report its current top height (extend the collider entry or update its `h` each frame in `update`).
+15. [x] Dig a deep foam pit: recessed padded zone (visual only — dark soft-looking floor patch with raised rim walls that have colliders).
+16. [x] Build one elevator platform prototype: flat industrial platform (metal box + hazard-stripe edge) that moves vertically in a smooth up/down loop over the pit.
+17. [x] Make the elevator drivable: while the car is on the platform, carry the car with it (track platform delta-Y per frame and offset car.position.y when the car's x/z is within the platform footprint).
+18. [x] Give the elevator a dynamic collider so `buildingTopAt` can report its current top height (extend the collider entry or update its `h` each frame in `update`).
 19. [ ] Build upper ledges/tiers: static walkway platforms at elevator-top height around the pit, with colliders, so drivers can drive off the elevator onto ledges.
 20. [ ] Tune elevator speed/range so the ride is smooth and the car doesn't clip through at the top or bottom turnaround.
 21. [ ] Build a high balance beam: narrow long walkway at ledge height connecting two tiers, with a thin collider strip.

@@ -371,12 +371,80 @@ export function addUnderground(parent, opts = {}) {
   addConduitPipe({ cx: 40, cz: -78, len: 20, amp: 8, speed: 0.9, phase: 2.1, color: NEON.magenta });   // N-S, magenta
   addConduitPipe({ cx: 115, cz: -30, len: 26, amp: 8, speed: 1.1, phase: 1.0, color: NEON.amber, axis: 'x' }); // E-W, amber
 
+  // ---- Foam pit (task #15) ----
+  // A recessed, padded landing zone the later elevator/beams tasks play
+  // into. Visual only: a dark soft-looking floor patch ringed by raised
+  // padded rim walls. Rims carry colliders (their h also feeds
+  // buildingTopAt, so a falling car can land ON a rim); the interior stays
+  // clear so knocked cars drop through to the floor inside. A gap in the
+  // west rim lets drivers roll in and reverse back out.
+  const PIT = { cx: 44, cz: -33, halfW: 13, halfD: 7, rimT: 1.2, rimH: 1.6, gapW: 6 };
+  const pitSegLen = (PIT.halfD * 2 - PIT.gapW) / 2;   // west-rim segment length
+  const pitPadMat = new THREE.MeshStandardMaterial({ color: 0x191228, roughness: 1 });
+  const pitRimMat = new THREE.MeshStandardMaterial({ color: 0x3c2b52, roughness: 1 });
+  const pitPatch = new THREE.Mesh(new THREE.BoxGeometry(PIT.halfW * 2, 0.12, PIT.halfD * 2), pitPadMat);
+  pitPatch.position.set(PIT.cx, 0.06, PIT.cz);
+  pitPatch.receiveShadow = true;
+  parent.add(pitPatch);
+  const pitRimY = PIT.rimH / 2;
+  for (const s of [-1, 1]) {
+    // North / south rims (full width so they cap the corners)
+    const nsRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.halfW * 2 + PIT.rimT * 2, PIT.rimH, PIT.rimT), pitRimMat);
+    nsRim.position.set(PIT.cx, pitRimY, PIT.cz + s * (PIT.halfD + PIT.rimT / 2));
+    nsRim.castShadow = true;
+    parent.add(nsRim);
+    // West rim, split around the drive-through gap centred on cz
+    const wRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.rimT, PIT.rimH, pitSegLen), pitRimMat);
+    wRim.position.set(PIT.cx - PIT.halfW - PIT.rimT / 2, pitRimY, PIT.cz + s * (PIT.gapW / 2 + pitSegLen / 2));
+    wRim.castShadow = true;
+    parent.add(wRim);
+  }
+  const pitEastRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.rimT, PIT.rimH, PIT.halfD * 2), pitRimMat);
+  pitEastRim.position.set(PIT.cx + PIT.halfW + PIT.rimT / 2, pitRimY, PIT.cz);
+  pitEastRim.castShadow = true;
+  parent.add(pitEastRim);
+  const pitRimColliders = [
+    { x: PIT.cx, z: PIT.cz + PIT.halfD + PIT.rimT / 2, halfW: PIT.halfW + PIT.rimT / 2, halfD: PIT.rimT / 2, h: PIT.rimH },
+    { x: PIT.cx, z: PIT.cz - PIT.halfD - PIT.rimT / 2, halfW: PIT.halfW + PIT.rimT / 2, halfD: PIT.rimT / 2, h: PIT.rimH },
+    { x: PIT.cx + PIT.halfW + PIT.rimT / 2, z: PIT.cz, halfW: PIT.rimT / 2, halfD: PIT.halfD, h: PIT.rimH },
+    { x: PIT.cx - PIT.halfW - PIT.rimT / 2, z: PIT.cz - PIT.gapW / 2 - pitSegLen / 2, halfW: PIT.rimT / 2, halfD: pitSegLen / 2, h: PIT.rimH },
+    { x: PIT.cx - PIT.halfW - PIT.rimT / 2, z: PIT.cz + PIT.gapW / 2 + pitSegLen / 2, halfW: PIT.rimT / 2, halfD: pitSegLen / 2, h: PIT.rimH },
+  ];
+
+  // ---- Industrial car elevator (tasks #16–#18) ----
+  // A flat metal deck with a glowing hazard-stripe skirt, looping smoothly
+  // up and down over the pit. Its collider entry is marked `soft`: skipped
+  // by isPositionBlocked (so you can drive under/onto the deck) but read by
+  // buildingTopAt, whose `h` we rewrite every frame (task #18) so landings
+  // and the main.js ground-ride logic always see the live deck height.
+  const ELEV = { cx: 44, cz: -31, halfW: 5, halfD: 3.5, low: 0.55, high: 9, speed: 0.5 };
+  const ELEV_MID = (ELEV.low + ELEV.high) / 2;
+  const ELEV_AMP = (ELEV.high - ELEV.low) / 2;
+  const elevMat = new THREE.MeshStandardMaterial({ color: 0x8a8f98, metalness: 0.6, roughness: 0.4 });
+  const elevGroup = new THREE.Group();
+  elevGroup.position.set(ELEV.cx, ELEV.low - 0.25, ELEV.cz);
+  parent.add(elevGroup);
+  const elevDeck = new THREE.Mesh(new THREE.BoxGeometry(ELEV.halfW * 2, 0.5, ELEV.halfD * 2), elevMat);
+  elevDeck.castShadow = true;
+  elevDeck.receiveShadow = true;
+  elevGroup.add(elevDeck);
+  // Hazard-stripe edge: a thin amber-glow box ringing the deck just below
+  // its top surface, so the lift reads industrial from every side.
+  const elevStripe = new THREE.Mesh(
+    new THREE.BoxGeometry(ELEV.halfW * 2 + 0.24, 0.18, ELEV.halfD * 2 + 0.24),
+    makeGlowMat(NEON.amber)
+  );
+  elevStripe.position.y = -0.16;
+  elevGroup.add(elevStripe);
+  const elevatorCollider = { x: ELEV.cx, z: ELEV.cz, halfW: ELEV.halfW, halfD: ELEV.halfD, h: ELEV.low, soft: true };
+  const elevatorColliders = [elevatorCollider];
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
@@ -425,6 +493,12 @@ export function addUnderground(parent, opts = {}) {
           }
         }
       }
+      // Tasks #16–#18: loop the elevator deck vertically over the pit on a
+      // sine (smooth turnarounds at both ends) and keep its collider `h`
+      // synced to the live deck-top height.
+      const elevH = ELEV_MID + ELEV_AMP * Math.sin(elapsed * ELEV.speed);
+      elevGroup.position.y = elevH - 0.25;
+      elevatorCollider.h = elevH;
       // Task #6: pass-through bump detection on the suspended prompt-blocks.
       // Swept check (previous → current position) so a slow frame rate can't
       // step over a block's trigger radius between updates. Airborne gate:
