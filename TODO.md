@@ -55,6 +55,6 @@ scores, or timers — pure kinetic playground.
 ## Polish & Verification
 
 36. [x] Performance pass: merge static geometry where easy, confirm light count stays reasonable, and cap shadow-casting to key props only.
-37. [ ] Full playthrough test in-browser (`?debug`): drive the mine shaft in, hit every feature — blocks, pipes, elevator, beam sweepers, stairs, ramp, pole — and fix anything that traps or flings the car badly.
-38. [ ] Remember stale-module gotcha: changed submodules aren't cache-busted, so hard-reload modules before judging behavior.
+37. [x] Full playthrough test in-browser (`?debug`): drive the mine shaft in, hit every feature — blocks, pipes, elevator, beam sweepers, stairs, ramp, pole — and fix anything that traps or flings the car badly.
+38. [x] Remember stale-module gotcha: changed submodules aren't cache-busted, so hard-reload modules before judging behavior.
 39. [ ] Run `node --test src/carFlatMode.test.mjs src/modules/portalRules.test.mjs` (plus any new tests) and commit the level in small, working increments per section above.
