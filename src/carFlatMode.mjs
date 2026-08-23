@@ -56,8 +56,9 @@ export function stepFlatCarState(state, delta, isDriving = false) {
 
   if (state.phase === 'flat') {
     if (isDriving) {
-      state.timer += delta;
-      if (state.timer >= FLAT_DRIVE_BOUNCE_TIME) {
+      const nextTimer = state.timer + delta;
+      state.timer = nextTimer;
+      if (nextTimer >= FLAT_DRIVE_BOUNCE_TIME - 1e-9) {
         state.phase = 'bounce';
         state.timer = 0;
       }

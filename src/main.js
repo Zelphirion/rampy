@@ -9,54 +9,39 @@ import { addTrain } from './train.js';
 import { addLizard } from './lizard.js';
 import { updateKnockables, knockAt, resetKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
-import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './rampworld.js';
-import { addUnderground, UNDERGROUND_Y, tunnelPoint } from './underground.js';
+import {
+  worldXLo,
+  worldXHi,
+  worldZLo,
+  worldZHi,
+  worldXHalf,
+  worldZHalf,
+  worldSizeX,
+  worldSizeZ,
+  worldXSpan,
+  worldZSpan,
+  wrapCoordX,
+  wrapCoordZ,
+  wrappedDeltaX,
+  wrappedDeltaZ,
+  ROAD_SPAN,
+  ROAD_HALF,
+  wrapRoad,
+  rectCircleIntersect,
+} from './modules/world.js';
+import {
+  isInVortexReturnZone,
+  isInsideLevitationHall,
+  isStillWithinLevitationHall,
+  isInMineDiveTrigger,
+  isInUndergroundReturnZone,
+} from './modules/portalRules.js';
+import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
+import { addUnderground, UNDERGROUND_Y, tunnelPoint } from './levels/underground/index.js';
 
-// ===== World bounds (full torus on all four sides) =====
-// The whole map wraps like a torus — driving off ANY edge puts you on the
-// opposite edge, there are no invisible walls to bump you back. The town sits
-// in a world that wraps at ±90 on every side. The NORTH side has the mega-ramp
-// grass field, so the world extends north to z=123 (the ramp base is at z=80,
-// so that's ~10 car lengths of approach field). x wraps at ±90 (span 180): off
-// the east edge -> west edge. z wraps -90..123 (span 213): off the field's far
-// end -> south edge, off the south edge -> the field's far end.
-const worldXLo = -90;
-const worldXHi = 90;
-const worldXSpan = worldXHi - worldXLo;   // 180
-const worldXHalf = worldXSpan / 2;        // 90 (shortest-distance half-span)
-const worldZLo = -90;
-const worldZHi = 123;
-const worldZSpan = worldZHi - worldZLo;   // 213
-const worldZHalf = worldZSpan / 2;        // 106.5 (shortest-distance half-span)
-// Wrap a coordinate into its playable band ([-90, 90] for x, [-90, 123] for z).
-const worldSizeX = worldXSpan;   // x span for the knock / ghost-collider seam math
-const worldSizeZ = worldZSpan;   // z span for the knock / ghost-collider seam math
-function wrapCoordX(v) {
-  return ((v - worldXLo) % worldXSpan + worldXSpan) % worldXSpan + worldXLo;
-}
-function wrapCoordZ(v) {
-  return ((v - worldZLo) % worldZSpan + worldZSpan) % worldZSpan + worldZLo;
-}
-// Shortest signed distance from a to b, across the wrap seam (torus math).
-function wrappedDeltaX(a, b) {
-  let d = b - a;
-  d = ((d + worldXHalf) % worldXSpan + worldXSpan) % worldXSpan - worldXHalf;
-  return d;
-}
-function wrappedDeltaZ(a, b) {
-  let d = b - a;
-  d = ((d + worldZHalf) % worldZSpan + worldZSpan) % worldZSpan - worldZHalf;
-  return d;
-}
-
-// Traffic never leaves the town's roads (each road is 160 long, ±80). It wraps
-// at the ROAD extent instead of the world edge so it never drives off the road
-// and out into the grass.
-const ROAD_HALF = 80;
-const ROAD_SPAN = ROAD_HALF * 2;
-function wrapRoad(v) {
-  return ((v + ROAD_HALF) % ROAD_SPAN + ROAD_SPAN) % ROAD_SPAN - ROAD_HALF;
-}
+// ===== World bounds / wrap helpers =====
+// Shared torus-map math lives in modules/world.js so main.js stays focused on
+// gameplay and scene wiring.
 
 // ===== Scene, camera, renderer =====
 const scene = new THREE.Scene();
@@ -205,11 +190,7 @@ const playerCarRadius = 2.2;
 const aiCarRadius = 1.15;
 const bumperBaseSpeed = 5;
 
-function rectCircleIntersect(px, pz, collider, radius) {
-  const dx = Math.max(Math.abs(px - collider.x) - collider.halfW, 0);
-  const dz = Math.max(Math.abs(pz - collider.z) - collider.halfD, 0);
-  return dx * dx + dz * dz <= radius * radius;
-}
+// rectCircleIntersect is shared torus/world math — imported from modules/world.js.
 
 function isPositionBlocked(x, z, radius) {
   const list = worldState === 'underground' ? ugColliders : colliders;
@@ -669,6 +650,7 @@ undergroundScene.add(ugFill);
 
 const undergroundWorld = addUnderground(undergroundScene);
 const ugColliders = undergroundWorld.colliders;
+const ugRamps = undergroundWorld.ramps || [];
 
 // ===== Portals =====
 // The big open-front portal building at (56,20) is the city's gateway to the
@@ -747,6 +729,28 @@ function buildingTopAt(x, z) {
     }
   }
   return top;
+}
+
+// Underground course ramps: same footprint/surface math as the other ramp
+// sets, but they sit on the flat cavern floor, so their base is y=0.
+function ugRampInfoAt(px, pz) {
+  for (const r of ugRamps) {
+    const dx = px - r.x;
+    const dz = pz - r.z;
+    const along = dx * r.runX + dz * r.runZ;
+    const perp = -dx * r.runZ + dz * r.runX;
+    if (along >= -r.len / 2 && along <= r.len / 2 && Math.abs(perp) < r.width / 2) {
+      const s = (along + r.len / 2) / r.len;
+      return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, def: r };
+    }
+  }
+  return null;
+}
+// Surface height of an underground ramp under a point (for landing on the
+// slope mid-air). -Infinity off a ramp so a max() with the floor picks y=0.
+function ugRampSurfaceY(px, pz) {
+  const info = ugRampInfoAt(px, pz);
+  return info ? info.height * info.s : -Infinity;
 }
 const bumperState = { speed: bumperBaseSpeed, stopped: false };
 let bumperKnock = null;   // set when the player smashes the blue car aside
@@ -1932,23 +1936,45 @@ function animate() {
       }
     }
   } else if (worldState === 'underground') {
-    currentRamp = null;
-    wasOnRamp = null;
     if (jumpState.inAir) {
       // Airborne in the underground: fall under gravity, land on the cavern
-      // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02).
+      // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02) or back
+      // on a course ramp's slope if we're coming down over one.
+      currentRamp = null;
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
-      if (car.position.y <= 0) {
-        car.position.y = 0;
+      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z));
+      if (car.position.y <= surface) {
+        car.position.y = surface;
         const impact = Math.abs(jumpState.yVelocity);
         jumpState.yVelocity = 0;
         jumpState.inAir = false;
         shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
       }
     } else {
-      // On the ground in the underground: stay on the cavern floor
-      car.position.y = 0;
+      // On the ground in the underground: ride a course ramp slope if the car
+      // is on one, otherwise stay on the cavern floor.
+      const r = ugRampInfoAt(car.position.x, car.position.z);
+      currentRamp = r;
+      if (r) {
+        car.position.y = r.height * r.s;
+        wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+      } else {
+        // Drive off the far (high) edge of the ramp we were just riding:
+        // launch off it, same as the city/ramp-world ramps.
+        const launched =
+          wasOnRamp &&
+          velocity.value > 2 &&
+          (direction.x * wasOnRamp.runX + direction.z * wasOnRamp.runZ) > 0.3;
+        if (launched) {
+          jumpState.inAir = true;
+          jumpState.yVelocity = velocity.value * (wasOnRamp.height / wasOnRamp.len) * wasOnRamp.boost;
+          shake.intensity = Math.max(shake.intensity, 0.08);
+        } else {
+          car.position.y = 0;
+        }
+        wasOnRamp = null;
+      }
     }
   } else if (jumpState.inAir) {
     currentRamp = null;   // airborne — level back out
@@ -2439,26 +2465,16 @@ function animate() {
   if (portalGrace <= 0 && worldState === 'ramp') {
     // Driving UNDER the vortex (grounded, near its centre) warps you back to
     // the city — dropping you in mid-air above the town centre.
-    const vdx = car.position.x - vortex.x;
-    const vdz = car.position.z - vortex.z;
-    if (!jumpState.inAir && vdx * vdx + vdz * vdz < vortexReturnRadius * vortexReturnRadius) {
+    if (!jumpState.inAir && isInVortexReturnZone(car.position.x, car.position.z, vortex.x, vortex.z, vortexReturnRadius)) {
       enterCityWorld();
     }
   }
 
   // ===== Building levitation trigger (portal building 56,20) =====
   if (portalGrace <= 0 && worldState === 'city') {
-    const bx = car.position.x - buildingLevitate.x;
-    const bz = car.position.z - buildingLevitate.z;
-    // Anywhere inside the walls starts the countdown — the roomy hall means
-    // there is no needle to thread, just roll in through the glowing ring.
-    const insideBuilding = Math.abs(bx) < buildingLevitate.w / 2 - 0.5 &&
-                           Math.abs(bz) < buildingLevitate.d / 2 - 0.5;
-    // Once started, only clearly LEAVING the building cancels it — bumping a
-    // doorway wall or drifting just outside no longer wipes your progress.
-    const stillInArea = Math.abs(bx) < buildingLevitate.w / 2 + 1.5 &&
-                        Math.abs(bz) < buildingLevitate.d / 2 + 1.5;
-    if (insideBuilding && car.position.y < buildingLevitate.h) {
+    const insideBuilding = isInsideLevitationHall(car.position.x, car.position.z, buildingLevitate, car.position.y);
+    const stillInArea = isStillWithinLevitationHall(car.position.x, car.position.z, buildingLevitate);
+    if (insideBuilding) {
       if (!buildingLevitate.active) {
         buildingLevitate.active = true;
         buildingLevitate.timer = 0;
@@ -2505,9 +2521,7 @@ function animate() {
   // tips forward/down first, then the rest of the car sinks in after it —
   // about 4 seconds total — before it teleports to the underground world.
   if (portalGrace <= 0 && worldState === 'city') {
-    const inTunnel = Math.abs(car.position.x - minePortal.triggerX) < minePortal.triggerXHalf &&
-                     car.position.z > minePortal.triggerZ &&
-                     !jumpState.inAir;
+    const inTunnel = isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir;
     if (inTunnel) {
       if (!minePortal.active) {
         minePortal.active = true;
@@ -2568,12 +2582,8 @@ function animate() {
   // Underground world: return portal (tunnel foot → city)
   // Driving into the tunnel foot area in the underground teleports back.
   if (portalGrace <= 0 && worldState === 'underground') {
-    // The tunnel foot is at s=1 of the helix: approximately (-38, -29.85, 90)
-    // based on the tunnel definition.  Check proximity to that area.
     const tEnd = tunnelPoint(1);
-    const dx = car.position.x - tEnd.x;
-    const dz = car.position.z - tEnd.z;
-    if (!jumpState.inAir && dx * dx + dz * dz < 8 * 8) {
+    if (!jumpState.inAir && isInUndergroundReturnZone(car.position.x, car.position.z, tEnd.x, tEnd.z, 8)) {
       leaveUndergroundWorld();
     }
   }
@@ -2622,6 +2632,28 @@ if (location.search.includes('debug')) {
       velocity.value = 0;
       steering.value = 0;
     },
+    // Underground prompt-block bump state (tasks #6–#7) for automated testing.
+    ugBumps: () => ({
+      count: undergroundWorld.bumpCount,
+      last: undergroundWorld.lastBump,
+      blocks: undergroundWorld.promptBlocks.map((b) => ({
+        x: b.x, y: b.y, z: b.z, armed: b.armed,
+        cooldown: +b.cooldown.toFixed(2), flash: +b.flash.toFixed(2),
+        emissive: +b.mat.emissiveIntensity.toFixed(2),
+      })),
+    }),
+    // Live foam-collectible state (task #8) for automated testing.
+    ugFoam: () => undergroundWorld.foamPieces.map((f) => ({
+      x: +f.mesh.position.x.toFixed(1),
+      y: +f.mesh.position.y.toFixed(1),
+      z: +f.mesh.position.z.toFixed(1),
+      bounces: f.bounces,
+      age: +f.age.toFixed(2),
+      scale: +f.mesh.scale.x.toFixed(2),
+    })),
+    // Debug-only foam spawner (task #9): lets tests drive the FOAM_MAX
+    // recycle path instantly instead of waiting on real bump rates.
+    ugSpawnFoam: (x, y, z) => undergroundWorld.spawnFoam(x, y, z),
   };
 }
 

@@ -1,0 +1,60 @@
+# TODO — Massive Subterranean Obstacle Course
+
+Implementation plan for the underground sandbox level described in `Ideas.md`.
+All work happens inside the existing underworld (`src/levels/underground/index.js`,
+wired through `addUnderground(undergroundScene)` in `src/main.js`). No goals,
+scores, or timers — pure kinetic playground.
+
+## Foundation
+
+1. [x] Pick a build zone: choose coordinates on the 292×276 cavern slab that avoid the Glass City footprint (z ≈ 132–173), the two pillars (-72,98) and (-40,66), and the tunnel foot near (-55,83). Write the chosen zone bounds as constants at the top of `index.js`.
+2. [x] Add a shared neon material helper (e.g., `makeGlowMat(color)`) returning emissive `MeshStandardMaterial` variants so all glowing props share one palette and intensity.
+3. [x] Add a cavern ceiling mesh above the course zone (dark rock plane at a fixed height, e.g., y ≈ 30 local) plus a few vertical support columns from floor to ceiling, with colliders for the columns.
+4. [x] Add dim colored PointLights along the course zone so glowing props read well without washing out the Glass City light.
+
+## Glowing Overhead & Track Hazards
+
+5. [x] Build one suspended neon prompt-block prototype: glowing box mesh hanging from the ceiling by a thin rod, positioned at jump-apex height over a test ramp.
+6. [x] Add bump detection for prompt-blocks: when the car is airborne and its position enters a block's trigger radius, fire a callback (no collider — pass-through bump).
+7. [x] On bump: flash the block's emissive intensity briefly and mark it on cooldown so it can't retrigger every frame.
+8. [x] Spawn a giant foam collectible on bump: big soft-colored sphere/cube that pops out with an upward+random velocity, falls, bounces once or twice, then shrinks and disappears after a few seconds.
+9. [x] Cap active foam collectibles (e.g., max ~12) and reuse/recycle oldest to keep the scene cheap.
+10. [x] Lay out a row of 5–8 prompt-blocks across the open zone at varied heights so different jumps hit different blocks.
+11. [ ] Build one oversized glowing conduit pipe prototype: long emissive cylinder spanning a track lane, mounted just above bumper height on end posts.
+12. [ ] Animate the conduit pipe sliding back and forth across the lane in `update(delta)` using a sine of elapsed time (store phase/speed per pipe).
+13. [ ] Add pipe-vs-car knockback: when the moving pipe overlaps the car's position, apply a sideways impulse matching the pipe's travel direction so cars get shoved.
+14. [ ] Place 3–4 conduit pipes across separate lanes with different speeds/phases/directions and register their end-post colliders in the returned `colliders` array.
+
+## Industrial Car Elevators & Sweeper Arms
+
+15. [ ] Dig a deep foam pit: recessed padded zone (visual only — dark soft-looking floor patch with raised rim walls that have colliders).
+16. [ ] Build one elevator platform prototype: flat industrial platform (metal box + hazard-stripe edge) that moves vertically in a smooth up/down loop over the pit.
+17. [ ] Make the elevator drivable: while the car is on the platform, carry the car with it (track platform delta-Y per frame and offset car.position.y when the car's x/z is within the platform footprint).
+18. [ ] Give the elevator a dynamic collider so `buildingTopAt` can report its current top height (extend the collider entry or update its `h` each frame in `update`).
+19. [ ] Build upper ledges/tiers: static walkway platforms at elevator-top height around the pit, with colliders, so drivers can drive off the elevator onto ledges.
+20. [ ] Tune elevator speed/range so the ride is smooth and the car doesn't clip through at the top or bottom turnaround.
+21. [ ] Build a high balance beam: narrow long walkway at ledge height connecting two tiers, with a thin collider strip.
+22. [ ] Build a spinning sweeper arm: glowing horizontal arm rotating around a central post at bumper height above the beam, animated in `update`.
+23. [ ] Add sweeper hit response: when the rotating arm sweeps through the car's position on the beam, apply a strong outward impulse to knock the car off into the foam pit below.
+24. [ ] Place 2 beams with sweepers at different heights/speeds and add glow lights to the arms.
+
+## Retracting Pyramid Stairs & Finish Ramp
+
+25. [ ] Design the pyramid staircase footprint against the cavern wall: N tiers (e.g., 8–10), each tier one step high, leading up to a peak platform.
+26. [ ] Build the staircase statically first: all steps present as boxes with colliders, verify the car can climb it tier by tier.
+27. [ ] Add per-step retract animation: each step slides horizontally into the wall and back out on a timed cycle, with neighboring steps offset in phase so there's always a climbable path.
+28. [ ] Sync step colliders with animation: disable/skip a step's collider while retracted so the car falls through to the tier below (or blocks progress) instead of ghost-clipping.
+29. [ ] Extract the stair timing math into a small pure module (e.g., `src/modules/stairCycle.js`) with unit tests runnable via `node --test` (step position + collider-active state as functions of time).
+30. [ ] Build the massive launch ramp at the pyramid peak: steep upward ramp aimed at the padded pole, using the same slope approach as existing surface ramps.
+31. [ ] Build the padded vertical pole: tall cushioned column at the landing point with a trigger volume around it.
+32. [ ] Pole impact event: when the car hits the pole region above a speed threshold, trigger the reward sequence (see next items); below threshold, just bounce the car off softly.
+33. [ ] Explosive light show on impact: burst of flashing colored PointLights + expanding ring/shockwave mesh that fades over ~1 second.
+34. [ ] Impact sound effect: short synthesized boom/chime via WebAudio (no asset files), triggered on pole impact and optionally on foam-collectible bumps.
+35. [ ] Add a respawn convenience: if the car ends up somewhere unrecoverable (pit corner, behind stairs), make sure the debug `.teleport()` hook still works and consider a gentle auto-nudge back to open floor.
+
+## Polish & Verification
+
+36. [ ] Performance pass: merge static geometry where easy, confirm light count stays reasonable, and cap shadow-casting to key props only.
+37. [ ] Full playthrough test in-browser (`?debug`): drive the mine shaft in, hit every feature — blocks, pipes, elevator, beam sweepers, stairs, ramp, pole — and fix anything that traps or flings the car badly.
+38. [ ] Remember stale-module gotcha: changed submodules aren't cache-busted, so hard-reload modules before judging behavior.
+39. [ ] Run `node --test src/carFlatMode.test.mjs src/modules/portalRules.test.mjs` (plus any new tests) and commit the level in small, working increments per section above.
