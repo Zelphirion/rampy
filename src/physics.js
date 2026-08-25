@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { tireRollOmega } from './modules/tireStack.js';
 
 // Simple knock-over physics for props (lampposts, signs, trees, parked cars, ...).
 // Props register themselves via addKnockable(); main.js calls knockAt() whenever
@@ -21,7 +22,8 @@ export function addKnockable(group, radius, opts = {}) {
     group,
     radius,
     mode: opts.mode || 'fall',
-    state: 'standing',           // standing | falling | fallen | wobbling | sliding
+    state: 'standing',           // standing | falling | fallen | wobbling | sliding | rocking | waitingDrop
+    dropWait: 0,
     t: 0,
     basePos: group.position.clone(),
     baseQuat: group.quaternion.clone(),
@@ -62,6 +64,8 @@ export function addKnockable(group, radius, opts = {}) {
     // matching rolling rate, so the log visibly rolls away a good distance.
     rollVx: 0,
     rollVz: 0,
+    rollT: 0,
+    rollDuration: opts.rollDuration ?? 4,
     rollRadius: opts.rollRadius || 2.1,
     rollPower: opts.rollPower ?? 24,        // initial roll speed
     rollDecay: opts.rollDecay ?? 1.0,       // per-second exponential damping
@@ -69,6 +73,28 @@ export function addKnockable(group, radius, opts = {}) {
     spinGroup: opts.spinGroup || null,
     spinBaseRotZ: opts.spinGroup ? opts.spinGroup.rotation.z : 0,
     rollAxis: opts.rollAxis ? opts.rollAxis.clone() : new THREE.Vector3(0, 0, 1), // world-space unit axis of the log's long axis
+    rollSpinAxis: opts.rollSpinAxis || 'z', // local spin axis: logs use Z, flat tires use Y
+    rockT: 0,
+    rockStartQuat: null,
+    rockAxis: new THREE.Vector3(1, 0, 0),
+    rockDuration: opts.rockDuration ?? 0.12,
+    rockFallTime: opts.rockFallTime ?? 0.18,
+    rockAmplitude: opts.rockAmplitude ?? 0.2,
+    rockFrequency: opts.rockFrequency ?? 9,
+    // 'tire' mode (ramp-world tire pyramid): a tire lying flat in a stack.
+    // A hit pops it off in a low arc — most tires tip onto their rim and ROLL
+    // away (rollAxis captured at knock time), the rest tumble onto their
+    // SIDE, yaw-spinning through the air before skidding to a stop face-up.
+    // Stacked tires also watch `supporters`: when nothing beneath them is
+    // still standing in place they drop with gravity, sometimes skidding
+    // away on impact.
+    rimLift: opts.rimLift || 0,       // centre-height gain flat→on-rim (= ring radius)
+    tireStyle: 'rim',                 // chosen per knock: 'rim' | 'side'
+    sideChance: opts.sideChance ?? 0,
+    dropDelay: opts.dropDelay ?? 0,
+    groundY: opts.groundY ?? 0,       // flat-rest centre height at the home spot
+    vy: 0,                            // vertical speed while 'dropping'
+    supporters: opts.supporters || null, // knockables this stacked tire rests on
     // Optional per-knockable predicate(pos: Vector3) -> bool: when true the
     // prop is considered off the playable world and should drop away to
     // invisibility. Useful for ramp-world items that can be pushed off cliffs.
@@ -100,6 +126,54 @@ export function updateKnockables(delta) {
       }
       continue;
     }
+    // Stack support: a stacked tire drops the moment nothing beneath it is
+    // still standing near its slot — knock out a bottom tire's neighbours
+    // and the column above collapses tier by tier (a dropped tire stops
+    // counting as support, so the fall cascades downward).
+    if (k.state === 'standing' && k.supporters) {
+      let supported = false;
+      for (const s of k.supporters) {
+        if ((s.state === 'standing' || s.state === 'wobbling') && !s.removed &&
+            Math.hypot(s.group.position.x - s.basePos.x, s.group.position.z - s.basePos.z) < 0.75) {
+          supported = true;
+          break;
+        }
+      }
+      if (!supported) {
+        k.state = 'waitingDrop';
+        k.dropWait = k.dropDelay;
+        continue;
+      }
+    }
+    if (k.state === 'waitingDrop') {
+      k.dropWait -= delta;
+      if (k.dropWait <= 0) {
+        k.state = 'dropping';
+        k.vy = 0;
+      }
+      continue;
+    }
+    if (k.state === 'dropping') {
+      // Gravity fall straight down (with a lazy yaw), then either settle
+      // flat on the ground or — on a hard landing — skid away spinning on
+      // its side like a coin spun out across the floor.
+      k.vy -= 26 * delta;
+      k.group.position.y += k.vy * delta;
+      k.group.rotation.y += delta * 1.6;
+      if (k.group.position.y <= k.groundY) {
+        k.group.position.y = k.groundY;
+        if (k.vy < -9 && Math.random() < 0.55) {
+          const dir = k.pushDir.lengthSq() > 1e-4 ? k.pushDir : k.perp;
+          k.shoveVx = dir.x * k.shovePower * 1.5;
+          k.shoveVz = dir.z * k.shovePower * 1.5;
+          k.shoveSpin = (Math.random() < 0.5 ? 1 : -1) * (4 + Math.random() * 3);
+          k.state = 'sliding';
+        } else {
+          k.state = 'fallen';
+        }
+      }
+      continue;
+    }
     if (k.state === 'wobbling') {
       k.wobbleT += delta;
       const decay = Math.exp(-k.wobbleDamping * k.wobbleT);
@@ -123,16 +197,17 @@ export function updateKnockables(delta) {
       // whole way, then settles where it stops.
       k.group.position.x += k.rollVx * delta;
       k.group.position.z += k.rollVz * delta;
+      k.rollT += delta;
       if (k.spinGroup) {
         const speed = Math.hypot(k.rollVx, k.rollVz);
         if (speed > 0.05) {
-          // Rolling rate about the log's long axis (k.rollAxis, set at build
-          // time from the yaw) for a no-slip cylinder (v = w x r).
-          const ax = k.rollAxis.x, az = k.rollAxis.z;
-          let omega;
-          if (Math.abs(az) > 0.01) omega = -k.rollVx / (k.rollRadius * az);
-          else omega = k.rollVz / (k.rollRadius * ax);
-          k.spinGroup.rotation.z += omega * delta;
+          // Rolling rate about the long axis (k.rollAxis — set at build time
+          // for logs, at knock time for tires) for a no-slip wheel: project
+          // the velocity onto the ground axis perpendicular to the axle and
+          // divide by the roll radius (v = ω × r).
+          k.spinGroup.rotation[k.rollSpinAxis] += tireRollOmega(
+            k.rollVx, k.rollVz, k.rollAxis.x, k.rollAxis.z, k.rollRadius,
+          ) * delta;
         }
       }
       const decay = Math.exp(-k.rollDecay * delta);
@@ -150,7 +225,38 @@ export function updateKnockables(delta) {
         k.offscreen = true;
         continue;
       }
-      if (Math.hypot(k.rollVx, k.rollVz) < 0.08) k.state = 'fallen';
+      if ((Math.hypot(k.rollVx, k.rollVz) < 0.08 ||
+          (k.mode === 'tire' && k.rollT >= k.rollDuration)) && k.mode === 'tire') {
+        k.state = 'rocking';
+        k.rockT = 0;
+        k.rockStartQuat = k.group.quaternion.clone();
+        k.rockAxis.copy(k.rollAxis);
+      }
+      if (Math.hypot(k.rollVx, k.rollVz) < 0.08 && k.mode !== 'tire') k.state = 'fallen';
+      continue;
+    }
+    if (k.state === 'rocking') {
+      k.rockT += delta;
+      // Keep the tire moving through the tip so it rolls into its side-fall
+      // instead of visibly freezing at the end of the roll.
+      if (k.mode === 'tire') {
+        k.group.position.x += k.rollVx * delta;
+        k.group.position.z += k.rollVz * delta;
+        const decay = Math.exp(-k.rollDecay * delta);
+        k.rollVx *= decay;
+        k.rollVz *= decay;
+      }
+      if (k.rockT <= k.rockDuration) {
+        const angle = Math.sin(k.rockT * k.rockFrequency)
+          * k.rockAmplitude * Math.exp(-k.rockT * 1.1);
+        k.group.quaternion.copy(k.rockStartQuat).premultiply(
+          new THREE.Quaternion().setFromAxisAngle(k.rockAxis, angle),
+        );
+      } else {
+        const t = Math.min((k.rockT - k.rockDuration) / k.rockFallTime, 1);
+        k.group.quaternion.copy(k.rockStartQuat).slerp(k.baseQuat, easeOut(t));
+        if (t >= 1) k.state = 'fallen';
+      }
       continue;
     }
     if (k.state === 'sliding') {
@@ -188,6 +294,20 @@ export function updateKnockables(delta) {
       k.group.position.y = k.basePos.y + (0.03 - k.basePos.y) * e + Math.sin(k.t * Math.PI) * k.flyHeight;
       k.group.rotation.x += delta * k.spin;
       k.group.rotation.z += delta * k.spin * 0.6;
+    } else if (k.mode === 'tire') {
+      // Pop off the stack: slide away from the hit in a low arc. Rim-style
+      // tires tip onto their tread mid-flight (the centre ends ring-radius
+      // higher, ready to roll); side-style tires stay flat and yaw-spin all
+      // the way down. Both land at the tire's own flat-ground height.
+      const landY = k.groundY + (k.tireStyle === 'side' ? 0 : k.rimLift);
+      k.group.position.copy(k.basePos)
+        .addScaledVector(k.pushDir, k.slideDistance * e);
+      k.group.position.y = k.basePos.y + (landY - k.basePos.y) * e + Math.sin(k.t * Math.PI) * k.flyHeight;
+      if (k.tireStyle === 'side') {
+        k.group.rotation.y += delta * k.spin;
+      } else if (k.finalQuat) {
+        k.group.quaternion.copy(k.baseQuat).slerp(k.finalQuat, e);
+      }
     } else {
       if (k.finalQuat) {
         k.group.quaternion.copy(k.baseQuat).slerp(k.finalQuat, e);
@@ -200,7 +320,22 @@ export function updateKnockables(delta) {
     // topples if this one actually *hits* it. A clean hit along the row
     // cascades; a careful side/angled hit that makes it miss never chains.
     if (k.mode === 'domino') chainKnock(k, delta);
-    if (k.t >= 1) k.state = 'fallen';
+    if (k.t >= 1) {
+      if (k.mode === 'tire' && k.tireStyle !== 'side') {
+        // Landed on its rim: keep the momentum going and ROLL away.
+        k.rollVx = k.pushDir.x * k.rollPower;
+        k.rollVz = k.pushDir.z * k.rollPower;
+        k.state = 'rolling';
+      } else if (k.mode === 'tire') {
+        // Landed face-up on its side: skid further with a lingering spin.
+        k.shoveVx = k.pushDir.x * k.shovePower * 1.6;
+        k.shoveVz = k.pushDir.z * k.shovePower * 1.6;
+        k.shoveSpin = k.spin * 0.35;
+        k.state = 'sliding';
+      } else {
+        k.state = 'fallen';
+      }
+    }
     if (k.isOffEdge && k.isOffEdge(k.group.position)) k.offscreen = true;
   }
 }
@@ -323,6 +458,23 @@ function startFall(k, d) {
     k.state = 'rolling';
     return;
   }
+  if (k.mode === 'tire') {
+    // Tip tires onto their rim with the axle perpendicular to the hit, so the
+    // tire rolls away from the car instead of tumbling over its side.
+    const fan = (Math.random() - 0.5) * 0.35;
+    const c = Math.cos(fan), s = Math.sin(fan);
+    k.pushDir.set(d.x * c - d.z * s, 0, d.x * s + d.z * c);
+    k.tireStyle = 'rim';
+    const axle = new THREE.Vector3(-k.pushDir.z, 0, k.pushDir.x);
+    k.rollAxis.copy(axle);
+    // Rotate the stacked "up" (the hole axis, vertical while the tire lies
+    // flat) onto the horizontal axle, exactly tipping it onto the tread.
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(k.baseQuat);
+    k.finalQuat = new THREE.Quaternion().setFromUnitVectors(up, axle)
+      .multiply(k.baseQuat.clone());
+    k.state = 'falling';
+    return;
+  }
   k.state = 'falling';
   if (k.mode === 'fall' || k.mode === 'domino') {
     // Rotate the prop's world "up" axis down onto pushDir (flat on the ground).
@@ -386,6 +538,20 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0) {
   }
 }
 
+// Debug/test snapshot: compact live state of every knockable, optionally
+// filtered to one mode (e.g. 'tire'). Consumed by the ?debug window.__game
+// hooks so automated tests can watch props move without touching meshes.
+export function snapKnockables(mode = null) {
+  return knockables
+    .filter((k) => !mode || k.mode === mode)
+    .map((k) => ({
+      x: +k.group.position.x.toFixed(2),
+      y: +k.group.position.y.toFixed(2),
+      z: +k.group.position.z.toFixed(2),
+      state: k.state,
+    }));
+}
+
 // Stand every knocked-over / slid / wobbled prop back up exactly where it
 // started. Called when the player leaves a world (city portal / ramp-world
 // vortex), so the city's lamp posts, benches, barrels, parked cars and the
@@ -394,6 +560,7 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0) {
 export function resetKnockables() {
   for (const k of knockables) {
     k.state = 'standing';
+    k.dropWait = 0;
     k.t = 0;
     k.wobbleT = 0;
     k.shoveVx = 0;
@@ -401,6 +568,8 @@ export function resetKnockables() {
     k.shoveSpin = 0;
     k.rollVx = 0;
     k.rollVz = 0;
+    k.rollT = 0;
+    k.vy = 0;
     if (k.spinGroup) k.spinGroup.rotation.z = k.spinBaseRotZ;
     k.group.position.copy(k.basePos);
     k.group.quaternion.copy(k.baseQuat);

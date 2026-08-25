@@ -21,11 +21,13 @@ const FLAME_GEO = {
 // Burning buildings next to the main road: x/z = building position, w/d =
 // footprint, h = roof height. Fire = roof plume + a few random windows + the
 // upper corners (no ground-floor fire). At most two buildings burn at once.
-// The truck parks on the road (z=0) and douses them.
+// The truck parks on the road (z=0) and douses them. Spot 3 IS the portal
+// building (see map.js openBuildingSpec) — same centre/footprint/height so
+// every flame sits exactly on that building.
 const FIRE_SPOTS = [
   { x: -28, z: 12, h: 8,  w: 8,  d: 8 },
   { x: 36,  z: 12, h: 7,  w: 8,  d: 7 },
-  { x: 56,  z: 12, h: 10, w: 8,  d: 8 },
+  { x: 56,  z: 27, h: 20, w: 28, d: 28 },   // the big portal levitation hall
   { x: 0,   z: -24, h: 13, w: 10, d: 8 },
 ];
 
@@ -68,11 +70,16 @@ function makeFire(scene, spot) {
   const { w, d, h } = spot;
   const flames = [];   // { mesh, phase, freq, amp, base, sway, rz }
 
+  // Big buildings get big flames: scale every cone up on huge footprints so
+  // the fire reads at distance (small buildings keep the original sizes).
+  const sizeK = Math.max(1, Math.max(w, d) / 12);
+
   const add = (geo, mat, x, y, z, opts = {}) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     m.rotation.x = opts.rx || 0;
     m.rotation.z = opts.rz || 0;
+    if (sizeK !== 1) m.scale.setScalar(sizeK);
     group.add(m);
     flames.push({
       mesh: m,
@@ -105,10 +112,11 @@ function makeFire(scene, spot) {
   const windowSpots = [];
   for (const face of faces) {
     const onX = face.rz !== 0;   // left/right faces vary along z
+    const span = onX ? d : w;    // how wide this face is — spread columns across it
     for (let row = 0; row < 3; row++) {
       const yRow = h / 2 + 0.7 + row * 0.9;
       for (let ci = 0; ci < cols.length; ci++) {
-        const c = cols[ci];
+        const c = cols[ci] * Math.max(1, span * 0.3);
         windowSpots.push({
           px: onX ? face.ox : c,
           pz: onX ? c : face.oz,
@@ -143,9 +151,12 @@ function makeFire(scene, spot) {
   }
 
   // Warm flickering glow so the building walls themselves read as "on fire"
-  const glow = new THREE.PointLight(0xff6a1f, 42, 46, 2);
+  // (bigger buildings get a stronger, wider-reaching glow)
+  const glow = new THREE.PointLight(0xff6a1f, 42 * sizeK, 46 * sizeK, 2);
   glow.position.set(0, h * 0.55, 0);
   group.add(glow);
+  const glowBase = 42 * sizeK;
+  const glowAmp = 18 * sizeK;
 
   // Semi-transparent smoke pluming up from the roof into the sky
   const smoke = [];
@@ -171,7 +182,7 @@ function makeFire(scene, spot) {
     x: spot.x, z: spot.z, h: spot.h,
     w: spot.w, d: spot.d,
     health: FIRE_HEALTH, active: true, respawn: 0,
-    group, flames, glow, smoke,
+    group, flames, glow, smoke, glowBase, glowAmp,
   };
 }
 
@@ -230,11 +241,14 @@ export function addFiretruck(scene) {
     const dirWorld = dirLocal.clone().applyQuaternion(truck.quaternion);
 
     const n = Math.floor(delta * 90);
+    // Long shots (the truck fights from the road, and the portal hall stands
+    // far back from it) need extra airtime or the water dies mid-flight.
+    const life = Math.min(2.4, dist / DROP_SPEED + 0.3);
     for (let i = 0; i < n && droplets.length < 220; i++) {
       const d = {
         mesh: new THREE.Mesh(dropGeo, dropMat),
         vel: dirWorld.clone().multiplyScalar(DROP_SPEED),
-        life: 1.15,
+        life,
       };
       d.mesh.position
         .copy(tipWorld)
@@ -265,9 +279,20 @@ export function addFiretruck(scene) {
 
     // Flicker the flames + flash the warning lights
     const blink = Math.floor(state.flash / 0.35) % 2 === 0;
-    if (truck.userData.warningLights) {
-      truck.userData.warningLights[0].material.emissiveIntensity = blink ? 2.4 : 0.05;
-      truck.userData.warningLights[1].material.emissiveIntensity = blink ? 0.05 : 2.4;
+    const wl = truck.userData.warningLights;
+    if (wl) {
+      const ON = 2.4, OFF = 0.05;
+      const setAll = (lights, on) => {
+        if (!Array.isArray(lights)) return;   // tolerate stale/mismatched builds
+        for (const l of lights) l.material.emissiveIntensity = on ? ON : OFF;
+      };
+      // Red: bar halves + rear strobes swap left/right every beat
+      setAll(wl.redLeft, blink);
+      setAll(wl.redRight, !blink);
+      // Yellow side markers take the off-beat so something is always lit
+      setAll(wl.yellow, !blink);
+      // White front flashers strobe twice as fast
+      setAll(wl.white, Math.floor(state.flash / 0.175) % 2 === 0);
     }
     for (const f of fires) {
       if (!f.active) continue;
@@ -282,7 +307,7 @@ export function addFiretruck(scene) {
         fl.mesh.scale.z = w;
         fl.mesh.rotation.z = fl.rz + Math.sin(state.flash * 2 + fl.phase) * fl.sway;
       }
-      f.glow.intensity = (42 + Math.sin(state.flash * 11 + f.x * 0.7) * 18) * healthScale;
+      f.glow.intensity = (f.glowBase + Math.sin(state.flash * 11 + f.x * 0.7) * f.glowAmp) * healthScale;
 
       // Smoke pluming into the sky: each puff rises, drifts, grows and fades
       // on its own loop.

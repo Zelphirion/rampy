@@ -14,10 +14,13 @@ test('vortex return triggers inside its radius', () => {
 });
 
 test('levitation hall logic matches the building trigger', () => {
-  const building = { x: 56, z: 20, w: 14, d: 14, h: 10 };
-  assert.equal(isInsideLevitationHall(56, 20, building, 9), true);
+  const building = { x: 56, z: 27, w: 28, d: 28, h: 20 };
+  assert.equal(isInsideLevitationHall(56, 27, building, 19), true);
+  // x=70 is past the inner hall box (|dx| 14 > 14-0.5) but still within the
+  // loose +1.5 margin; x=72 clears even the loose margin.
   assert.equal(isInsideLevitationHall(70, 20, building, 9), false);
-  assert.equal(isStillWithinLevitationHall(70, 20, building), false);
+  assert.equal(isStillWithinLevitationHall(70, 20, building), true);
+  assert.equal(isStillWithinLevitationHall(72, 20, building), false);
 });
 
 test('mine dive trigger works for the tunnel lip', () => {

@@ -1,5 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { addKnockable } from '../../physics.js';
+import { tirePyramidSlots, tirePyramidSupports } from '../../modules/tireStack.js';
 
 // Ramp-world safe playable band: extend a little beyond the visible edge so
 // nudging something past these bounds counts as "off the world" and it
@@ -132,8 +133,16 @@ function trebPadGround(x, z, base) {
   return (trebPad.flatY - base) * t;
 }
 
+const tireFlatArea = { cx: 8, cz: -18, hw: 7, hd: 4.5 };
+const tireFlatBase = rollingHills(tireFlatArea.cx, tireFlatArea.cz)
+  + bumpyObjectGround(tireFlatArea.cx, tireFlatArea.cz)
+  + velodromeGround(tireFlatArea.cx, tireFlatArea.cz)
+  + skateparkGround(tireFlatArea.cx, tireFlatArea.cz);
+
 export function terrainHeightAt(x, z) {
   const base = rollingHills(x, z) + bumpyObjectGround(x, z) + velodromeGround(x, z) + skateparkGround(x, z);
+  if (Math.abs(x - tireFlatArea.cx) <= tireFlatArea.hw &&
+      Math.abs(z - tireFlatArea.cz) <= tireFlatArea.hd) return tireFlatBase;
   return base + bowlingPadGround(x, z, base) + hammerPadGround(x, z, base) + trebPadGround(x, z, base);
 }
 
@@ -723,11 +732,84 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
     });
   }
 
+  // ===== Tire pyramid =====
+  // A junkyard pile of big old tires straight ahead of the ramp-world spawn:
+  // eight flat-stacked rows shrinking 8-1 (36 tires, ~8 tall). Tires are
+  // proper cylinders with an open hole through the middle — the car-wheel
+  // look scaled up, not rounded inner tubes. Every tire is its own knockable:
+  // plow into the stack and struck tires pop off (most roll away on their
+  // rims, some tumble flat onto their side and skid away spinning), and
+  // knocking out both tires under one makes it drop with gravity — sometimes
+  // skidding away on impact too (physics.js 'tire' mode).
+  const PYRAMID_POS = { x: 8, z: -18 };
+  const tireGroundY = at(PYRAMID_POS.x, PYRAMID_POS.z);
+  const TIRE_OUTER_R = 0.6;   // tread radius, close to the car wheel size
+  const TIRE_HOLE_R = 0.3;    // open hole through the middle
+  const TIRE_HALF_W = 0.15;   // half the sidewall-to-sidewall width
+  const tireShape = new THREE.Shape();
+  tireShape.absarc(0, 0, TIRE_OUTER_R, 0, Math.PI * 2, false);
+  const tireHole = new THREE.Path();
+  tireHole.absarc(0, 0, TIRE_HOLE_R, 0, Math.PI * 2, true);
+  tireShape.holes.push(tireHole);
+  const tireGeo = new THREE.ExtrudeGeometry(tireShape, {
+    depth: TIRE_HALF_W * 2,
+    bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2,
+    curveSegments: 30,
+  });
+  tireGeo.rotateX(-Math.PI / 2);            // extrude axis → vertical: lies flat
+  tireGeo.translate(0, -TIRE_HALF_W, 0);    // centre the ring on its origin
+  const tireMats = [
+    new THREE.MeshStandardMaterial({ color: 0x232326, roughness: 0.95 }),
+    new THREE.MeshStandardMaterial({ color: 0x3d3934, roughness: 0.9 }),  // sun-bleached worn ones
+  ];
+  const tireKs = [];
+  for (const s of tirePyramidSlots({
+    rows: 8,
+    spacing: TIRE_OUTER_R * 2 + 0.05,
+    nestStep: TIRE_HALF_W * 2 + 0.005,
+    tubeR: TIRE_HALF_W,
+  })) {
+    const px = PYRAMID_POS.x + s.x;
+    const pz = PYRAMID_POS.z;
+    const g = new THREE.Group();
+    const spin = new THREE.Group();       // spun around its axle while rolling
+    const tire = new THREE.Mesh(tireGeo, tireMats[s.row % 2]);
+    tire.castShadow = true;
+    spin.add(tire);
+    g.add(spin);
+    g.position.set(px, tireGroundY + s.y, pz);
+    scene.add(g);
+    tireKs.push(addKnockable(g, TIRE_OUTER_R, {
+      mode: 'tire',
+      fallTime: 0.55,
+      slideDistance: 4.5,
+      flyHeight: 1.2,
+      rimLift: TIRE_OUTER_R - TIRE_HALF_W,     // centre gain flat→on-rim
+      groundY: tireGroundY + TIRE_HALF_W,      // where it rests on the flat dirt
+      rollRadius: TIRE_OUTER_R,                // on-rim rolling radius
+      rollPower: 20,
+      rollDecay: 0.8,
+      rollDuration: 0.35 + ((s.row * 5 + s.i) % 5) * 0.06,
+      sideChance: 0.3,
+      dropDelay: 0.15 + s.row * 0.28 + ((s.row * 3 + s.i) % 3) * 0.1,
+      rollWrapX: 180,
+      spinGroup: spin,
+      rollSpinAxis: 'y',
+      isOffEdge: rampIsOffEdge,
+    }));
+  }
+  // Wire the stack: each tire rests on the two tires diagonally below it, so
+  // it only drops once BOTH have been knocked out of their slots.
+  for (const w of tirePyramidSupports(8)) {
+    tireKs[w.slot].supporters = [tireKs[w.a], tireKs[w.b]];
+  }
+
   return {
     bowlingAlley: { x: acx, z: acz, radius: 4 },
     dominoRun: { x: dStartX + ((dCount - 1) / 2) * dSpacing, z: dZ, length: dCount * dSpacing },
     barrelRun: { x: 36, z: bZ, w: 30 },
     timberYard: { x: -80, z: 42, w: 30 },
+    tirePyramid: { x: PYRAMID_POS.x, z: PYRAMID_POS.z },
   };
 }
 

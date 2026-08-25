@@ -1493,7 +1493,8 @@ export function addProps(scene) {
   makeStopSign(scene, 0, -12.8, Math.PI);
 
   for (let x = -70; x <= 70; x += 14) {
-    if (x !== 56) makeLampPost(scene, x, 17);   // skip 56 — the portal building stands there now
+    // Skip the portal building's stretch — it now spans x 42..70 at z=17
+    if (x < 40 || x > 72) makeLampPost(scene, x, 17);
     makeLampPost(scene, x, -17);
   }
   for (let z = -70; z <= 70; z += 14) {
@@ -1517,7 +1518,7 @@ export function addProps(scene) {
   makeFireHydrant(scene, -34, 18);    // near north building (-28,12)
   makeFireHydrant(scene, 16, 18);     // near north building (6,12)
   makeFireHydrant(scene, 42, 18);     // near north-east building (36,12)
-  makeFireHydrant(scene, 68, 14);     // beside the portal building (56,20), clear of its walls
+  makeFireHydrant(scene, 76, 20);     // beside the portal building's open east side (56,27), clear of its walls
   makeFireHydrant(scene, -20, 58);    // near rightmost shop
   makeFireHydrant(scene, 60, 48);     // near park edge
 

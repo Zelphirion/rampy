@@ -1,13 +1,13 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings } from './map.js?v=1787160950000';
 import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones } from './props.js?v=1787180000000';
-import { createCar, addTrafficCars } from './cars.js';
-import { addFiretruck } from './firetruck.js?v=1787162000000';
+import { createCar, addTrafficCars } from './cars.js?v=1787510500000';
+import { addFiretruck } from './firetruck.js?v=1787510500000';
 import { addPeople } from './people.js';
 import { addRobot } from './robot.js';
 import { addTrain } from './train.js';
 import { addLizard } from './lizard.js';
-import { updateKnockables, knockAt, resetKnockables } from './physics.js';
+import { updateKnockables, knockAt, resetKnockables, snapKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import {
   worldXLo,
@@ -36,8 +36,9 @@ import {
   isInMineDiveTrigger,
   isInUndergroundReturnZone,
 } from './modules/portalRules.js';
+import { resolveStuck, wallNormal } from './modules/unstick.js';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addUnderground, UNDERGROUND_Y, tunnelPoint } from './levels/underground/index.js';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint } from './levels/underground/index.js';
 
 // ===== World bounds / wrap helpers =====
 // Shared torus-map math lives in modules/world.js so main.js stays focused on
@@ -69,6 +70,8 @@ const _mineCamTarget = new THREE.Vector3();   // reused each frame during mine d
 const _mineLookTarget = new THREE.Vector3();
 const _levCamTarget = new THREE.Vector3();    // reused each frame during levitation
 const _levLookTarget = new THREE.Vector3();
+const _spiralCamTarget = new THREE.Vector3(); // reused each frame during the spiral-arrival shot
+const _spiralLookTarget = new THREE.Vector3();
 // Initial camera sits behind the car (car faces -X at spawn)
 const startX = cameraOrbit.radius * Math.sin(cameraOrbit.phi);
 const startY = cameraOrbit.radius * Math.cos(cameraOrbit.phi) + 2.2;
@@ -231,6 +234,43 @@ function isPositionBlockedByRobot(x, z, radius) {
   const dx = wrappedDeltaX(x, robot.mesh.position.x);
   const dz = wrappedDeltaZ(z, robot.mesh.position.z);
   return dx * dx + dz * dz <= (radius + robot.radius) * (radius + robot.radius);
+}
+
+// ===== Anti-stuck =====
+// Every solid thing the grounded car can be wedged against: the active
+// world's solid colliders (soft ones never block driving) plus the two city
+// obstacles that block movement (fire engine, robot). Circle centres are
+// pre-wrapped into the car's unwrapped space so the pure math sees them.
+function playerSolids() {
+  const list = worldState === 'underground' ? ugColliders : colliders;
+  const solids = [];
+  for (const c of list) {
+    if (!c.soft) solids.push({ kind: 'rect', x: c.x, z: c.z, hw: c.halfW, hd: c.halfD });
+  }
+  if (worldState === 'city') {
+    solids.push({
+      kind: 'circle',
+      x: car.position.x + wrappedDeltaX(car.position.x, firetruck.truck.position.x),
+      z: car.position.z + wrappedDeltaZ(car.position.z, firetruck.truck.position.z),
+      r: playerCarRadius + firetruckColliderR,
+    });
+    solids.push({
+      kind: 'circle',
+      x: car.position.x + wrappedDeltaX(car.position.x, robot.mesh.position.x),
+      z: car.position.z + wrappedDeltaZ(car.position.z, robot.mesh.position.z),
+      r: playerCarRadius + robot.radius,
+    });
+  }
+  return solids;
+}
+
+// True when the car body currently overlaps something solid (the same tests
+// that block driving — callers exempt airborne / rooftop / ramp-world cars,
+// which legitimately sit "inside" collider footprints from the map's view).
+function carIsOverlappingSolid() {
+  return isPositionBlocked(car.position.x, car.position.z, playerCarRadius) ||
+    isPositionBlockedByFiretruck(car.position.x, car.position.z, playerCarRadius) ||
+    isPositionBlockedByRobot(car.position.x, car.position.z, playerCarRadius);
 }
 
 // Car-following: target following gap and hard-stop gap behind the car ahead.
@@ -514,7 +554,7 @@ let currentRamp = null; // ramp the car is ON right now (for body tilt)
 // car rising flat and level). Recomputed every frame on grounded terrain.
 let terrainPitch = 0;
 
-// ===== Building levitation (portal building at 56,20) =====
+// ===== Building levitation (portal building at 56,27) =====
 // 1.2 seconds after driving inside the big open-front hall, the car levitates
 // upward through the roof, then teleports to the ramp world once it has
 // floated well clear — long enough for the ground-level camera to watch it go.
@@ -523,27 +563,65 @@ const buildingLevitate = {
   timer: 0,          // counts up from 0 once car enters the building
   levitating: false,  // true once the 1.2s delay is over and the car rises
   levitateTime: 0,    // time since levitation started
-  x: 56, z: 20,       // building centre (open side faces EAST, away from town — a surprise)
-  w: 14, d: 14, h: 10, // building dimensions — roomy, no wall-scraping
+  x: 56, z: 27,       // building centre (open side faces EAST, away from town — a surprise)
+  w: 28, d: 28, h: 20, // doubled dimensions — must match map.js openBuildingSpec
 };
 
 // ===== Mine shaft portal (entrance at -55,50, tunnel faces north) =====
 // Driving deep into the mine tunnel triggers a dive animation: first the
 // car's nose tips forward/down as if descending into the earth, then the
-// rest of the car follows it under — about 4 seconds end to end — before
-// it teleports to the underground world.
+// rest of the car follows it under — about 2 seconds end to end — before
+// it cuts to the underground world's spiral-tunnel arrival cinematic.
 const minePortal = {
   active: false,       // true when the car is inside the trigger zone
   timer: 0,            // counts up once active — teleport at diveTotal
   baseY: 0,            // car's ground height when the dive started
   tiltTime: 1.6,       // seconds spent just dipping the nose (phase 1)
-  diveTotal: 4.0,      // total seconds of dive before the underground swap
+  diveTotal: 2.0,      // total seconds of dive before the underground swap
   maxTilt: 0.6,        // nose-down angle at the end of phase 1 (~34°)
   rearAxle: 1.0,       // pivot centre → rear axle distance (tilt pivot)
   triggerX: -55,       // X centre of the tunnel
   triggerXHalf: 2.2,   // half-width of the trigger zone in X
   triggerZ: 42,        // Z threshold — deep in tunnel near the crystals (south)
 };
+
+// ===== Spiral-tunnel arrival cinematic =====
+// After the mine-dive swap we no longer spawn the car over the cavern.
+// Instead the camera CUTS to a pivot shot around the lit spiral tunnel while
+// the car is "still riding it down", then reveals the car partway down the
+// tube so it can burst out of the tunnel foot at speed. Control hands back
+// the moment it exits onto the cavern floor.
+const spiralCine = {
+  active: false,
+  timer: 0,
+  orbitDur: 2.6,   // seconds of camera-only pivot before the car is revealed
+  driveDur: 1.8,   // seconds the car rides the spiral from reveal to exit
+  sStart: 0.72,    // path parameter (0 = top entrance, 1 = foot) where the car appears
+};
+// Orbit geometry for the arrival shot: sweep around the tunnel's centre axis
+// (TUNNEL.cx/cz), starting high on the open east side and swinging low toward
+// the foot — kept on the south/west side so Glass City never blocks the view.
+const SPIRAL_CAM_R = 30;     // orbit radius from the tunnel centre axis
+const SPIRAL_TH0 = 0.5;      // start angle around the axis (radians)
+const SPIRAL_SWEEP = -2.6;   // total radians pivoted across the whole shot
+function smooth01(s) { return s * s * (3 - 2 * s); }
+// Pose of a car driving the spiral at path parameter s: position in the
+// underground scene's local space (tunnelPoint heights are pre-offset by
+// UNDERGROUND_Y), heading from the path tangent, pitched nose-down while
+// descending and levelling out as it nears the foot.
+function spiralPoseAt(s) {
+  const p = tunnelPoint(s);
+  const q = tunnelPoint(Math.min(1, s + 0.008));
+  const dx = q.x - p.x, dz = q.z - p.z;
+  const flat = Math.hypot(dx, dz) || 1e-6;
+  return {
+    x: p.x,
+    y: Math.max(0, p.y - UNDERGROUND_Y),
+    z: p.z,
+    heading: Math.atan2(dz / flat, -dx / flat),
+    pitch: -Math.atan2(q.y - p.y, flat),
+  };
+}
 
 function flattenCarFromRock() {
   if (flatCarState.phase === 'bounce') return;
@@ -623,9 +701,10 @@ wheelOfDeath.cooldown = 0;
 
 // ===== Underground world (the mine shaft portal destination) =====
 // A third scene for the cavern beneath the map.  The mine shaft at (-55,50)
-// is the portal entry — driving deep into the tunnel triggers a dive
-// animation and teleports the car here, spawning high above the cavern
-// floor so it falls in.  Driving into the tunnel foot returns to the city.
+// is the portal entry — driving deep into the tunnel triggers a short dive,
+// then the camera cuts to the lit spiral tunnel for an arrival cinematic
+// that ends with the car bursting out of the tunnel foot.  Driving into the
+// tunnel foot again returns to the city.
 const undergroundScene = new THREE.Scene();
 undergroundScene.background = new THREE.Color(0x120820);
 undergroundScene.fog = new THREE.FogExp2(0x180e28, 0.003);
@@ -763,7 +842,7 @@ capShadowCasters(rampScene);
 capShadowCasters(undergroundScene);
 
 // ===== Portals =====
-// The big open-front portal building at (56,20) is the city's gateway to the
+// The big open-front portal building at (56,27) is the city's gateway to the
 // ramp world: its glowing ring doorway faces EAST (away from town), so you
 // have to round the building to discover it — then roll in heading west,
 // pause a moment, and the car levitates up through the roof into the sky.
@@ -894,6 +973,9 @@ const potholeWobble = { active: false, t: 0 };
 // Tier 3 knock impulse: a hammer / wheel-rim / boulder hit slides the car in
 // world space AND spins it (like the bumper car's knock), plus a hop.
 let playerKnock = null;
+// Cooldown for the "stuck against a wall while holding forward" bounce, so it
+// fires once per press instead of every frame.
+let wallBounceCd = 0;
 // The wheel of death (rim or a paddle) flings the car TWICE as far as a
 // hammer does (hammers use power 130 → ~21 units; this → ~43 units).
 const WHEEL_KNOCK_POWER = 260;
@@ -1040,31 +1122,69 @@ function enterCityWorld() {
   shake.intensity = Math.max(shake.intensity, 0.5);
 }
 
-// City → Underground (mine shaft portal at -55,50)
+// City → Underground (mine shaft portal at -55,50). The world swap hides
+// behind a cut: the camera jumps straight to the spiral-tunnel orbit while
+// the car is still "in transit", and control only returns when the car
+// bursts out of the tunnel foot at the end of the cinematic.
 function enterUndergroundWorld() {
   scene.remove(car);
   undergroundScene.add(car);
   worldState = 'underground';
   resetKnockables();
   resetHydrantSprays();
-  portalGrace = 2.0;
-  velocity.value = 8;
+  portalGrace = spiralCine.orbitDur + spiralCine.driveDur + 1.2;
+  velocity.value = 0;
   steering.value = 0;
-  jumpState.inAir = true;      // start airborne — fall from the sky
+  jumpState.inAir = false;
   jumpState.yVelocity = 0;
   wasOnRamp = null;
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
-  // Spawn high above the cavern, directly over the Holy Mountain centre
-  // (-58, 104) so the car falls down onto the underground floor.
-  const sx = -58, sz = 104;
-  car.position.set(sx, 30, sz);
-  car.rotation.set(0, Math.PI / 2, 0);   // face +Z (north)
-  shake.intensity = Math.max(shake.intensity, 0.5);
+  // Park the car invisibly at its reveal point on the spiral — the cine
+  // update owns positioning until the handoff at the tunnel foot.
+  const pose = spiralPoseAt(spiralCine.sStart);
+  car.position.set(pose.x, pose.y, pose.z);
+  car.rotation.set(0, pose.heading, pose.pitch);
+  car.visible = false;
+  // Start the arrival cinematic and plant the camera on the first orbit pose
+  // right now: this runs AFTER updateCamera this frame, so planting here
+  // makes the very first rendered frame of the new world a clean cut.
+  spiralCine.active = true;
+  spiralCine.timer = 0;
+  camera.position.set(
+    TUNNEL.cx + SPIRAL_CAM_R * Math.cos(SPIRAL_TH0), 24,
+    TUNNEL.cz + SPIRAL_CAM_R * Math.sin(SPIRAL_TH0)
+  );
+  const g0 = tunnelPoint(0.12);
+  _lookTarget.set(g0.x, g0.y - UNDERGROUND_Y + 1.5, g0.z);
+  camera.lookAt(_lookTarget);
+  shake.intensity = 0;
   // Reset mine portal state
   minePortal.active = false;
   minePortal.timer = 0;
+}
+
+// End of the arrival cinematic: drop the car out of the tunnel foot along
+// its exit tangent, already up to speed, and hand control back.
+function finishSpiralCine() {
+  spiralCine.active = false;
+  car.visible = true;
+  const p = tunnelPoint(1);
+  const q = tunnelPoint(0.994);
+  let ex = p.x - q.x, ez = p.z - q.z;
+  const elen = Math.hypot(ex, ez) || 1;
+  ex /= elen; ez /= elen;
+  car.position.set(p.x + ex * 2.5, 0, p.z + ez * 2.5);
+  car.rotation.set(0, Math.atan2(ez, -ex), 0);
+  velocity.value = 13;          // zip out onto the land
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  portalGrace = 2.5;            // time to clear the return-zone radius
+  shake.intensity = 0.25;
 }
 
 // Underground → City (drive into the tunnel foot in the underground)
@@ -1802,6 +1922,35 @@ const clock = new THREE.Clock();
 // still. (The shake decay doubles as a stabilizer: pause right after a jump
 // and the camera settles flat for the shot.)
 function updateCamera(delta) {
+  // ===== Spiral-tunnel arrival cinematic override =====
+  // One continuous pivot around the lit spiral tunnel: the camera swings
+  // around the tube's centre axis while easing downward, tracking a ghost
+  // point sliding down the tunnel ("the car, still in transit"), then tracks
+  // the revealed car for the rest of the ride to the foot.
+  if (spiralCine.active) {
+    const k = Math.min(spiralCine.timer / (spiralCine.orbitDur + spiralCine.driveDur), 1);
+    const th = SPIRAL_TH0 + SPIRAL_SWEEP * k;
+    _spiralCamTarget.set(
+      TUNNEL.cx + SPIRAL_CAM_R * Math.cos(th),
+      THREE.MathUtils.lerp(24, 6.5, smooth01(k)),
+      TUNNEL.cz + SPIRAL_CAM_R * Math.sin(th)
+    );
+    if (car.visible) {
+      _spiralLookTarget.set(car.position.x, car.position.y + 1.2, car.position.z);
+    } else {
+      // Ghost point slides down the path so the pivot reads as travel.
+      const sGhost = THREE.MathUtils.lerp(0.12, spiralCine.sStart,
+        Math.min(spiralCine.timer / spiralCine.orbitDur, 1));
+      const gp = tunnelPoint(sGhost);
+      _spiralLookTarget.set(gp.x, gp.y - UNDERGROUND_Y + 1.5, gp.z);
+    }
+    const blend = 1 - Math.pow(0.002, delta);
+    camera.position.lerp(_spiralCamTarget, blend);
+    _lookTarget.lerp(_spiralLookTarget, blend);
+    camera.lookAt(_lookTarget);
+    return;   // skip chase cam entirely — nothing else touches the camera
+  }
+
   // ===== Mine portal camera override =====
   // When the dive starts, bypass the entire chase cam and smoothly ease the
   // camera to a fixed ground-level position outside the mine entrance.
@@ -1927,10 +2076,12 @@ function animate() {
   const delta = clock.getDelta();
   const accel = 10 * delta;
   const turnRate = 1.7 * delta;
+  wallBounceCd = Math.max(0, wallBounceCd - delta);
 
   // While the giant robot has the player in its claw, the player's car is
   // inert — it just rides up to the robot's mouth. Physics resume on respawn.
-  if (!robot.playerCaptured) {
+  // The spiral-arrival cinematic also owns the car completely while it runs.
+  if (!robot.playerCaptured && !spiralCine.active) {
 
   let forward = 0;
   let reverse = 0;
@@ -2008,6 +2159,28 @@ function animate() {
   } else {
     velocity.value *= 0.3;
     shake.intensity = Math.max(shake.intensity, 0.22);
+    // Wedged against geometry with the throttle down: bounce off. The nose
+    // deflects away from the wall (plus a little random fan, so repeated
+    // hits walk you free instead of grinding into the same spot) and the car
+    // rebounds slightly. Together with the anti-stuck pass below this makes
+    // getting permanently stuck impossible. The normal query adds a small
+    // epsilon because the anti-stuck pass parks the car at EXACT contact
+    // (zero penetration) — without it, resting against a wall could never
+    // produce a normal and the bounce would be dead code.
+    if (forward > 0.05 && wallBounceCd <= 0 && !buildingLevitate.levitating) {
+      const n = wallNormal(car.position.x, car.position.z, playerSolids(), playerCarRadius + 0.06);
+      if (n) {
+        wallBounceCd = 0.45;
+        const yaw = 0.42 + Math.random() * 0.2;   // deflection angle (rad)
+        const h = car.rotation.y;
+        // Pick the turn direction whose resulting nose points most away
+        // from the wall (forward(h) = (-cos h, 0, sin h)).
+        const away = (s) => -Math.cos(h + s * yaw) * n.nx + Math.sin(h + s * yaw) * n.nz;
+        car.rotation.y += (away(1) >= away(-1) ? 1 : -1) * yaw;
+        velocity.value = -Math.min(Math.abs(velocity.value) * 0.45 + 1.6, 4.2);
+        shake.intensity = Math.max(shake.intensity, 0.32);
+      }
+    }
   }
 
   // ===== Ramps: drive up the slope, launch off the top, fall back down =====
@@ -2276,6 +2449,25 @@ function animate() {
     }
   }
 
+  // ===== Anti-stuck guarantee =====
+  // A knock slide moves the car WITHOUT collision checks, and an awkward fall
+  // can land the body half-inside a wall band — from there every drive
+  // direction used to test as blocked, wedging the car forever. Each frame,
+  // if the grounded car overlaps anything solid, push it out along the
+  // shortest escape so being stuck can never persist. Airborne cars are
+  // exempt (they fly over things and land ON tops via buildingTopAt), and so
+  // is the ramp world (wide-open terrain, nothing solid to wedge against).
+  if (worldState !== 'ramp' && !buildingLevitate.levitating && !jumpState.inAir &&
+      buildingTopAt(car.position.x, car.position.z) <= 0 &&
+      carIsOverlappingSolid()) {
+    const fix = resolveStuck(car.position.x, car.position.z, playerSolids(), playerCarRadius);
+    if (fix.moved) {
+      car.position.x = fix.x;
+      car.position.z = fix.z;
+      shake.intensity = Math.max(shake.intensity, 0.15);
+    }
+  }
+
   // Knock over props near the player. The city wraps across the seam, so its
   // knock uses the torus spans; the ramp world's props sit well inside the
   // band, so it knocks without wrap (which would otherwise let a ramp prop
@@ -2285,6 +2477,35 @@ function animate() {
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0);
 
   }  // end !robot.playerCaptured
+
+  // ===== Spiral-tunnel arrival cinematic =====
+  // Phase 1 (orbit): the car stays hidden "in transit" while the camera
+  // pivots around the tube. Phase 2 (ride): the car appears partway down the
+  // spiral and rides it out — the tube goes translucent so the orbiting
+  // camera can see it inside, then solidifies as the car bursts out.
+  if (spiralCine.active) {
+    spiralCine.timer += delta;
+    const t = spiralCine.timer;
+    const tubeMat = undergroundWorld.spiralTubeMat || null;
+    if (t >= spiralCine.orbitDur) {
+      if (!car.visible) car.visible = true;
+      const u = Math.min((t - spiralCine.orbitDur) / spiralCine.driveDur, 1);
+      const pose = spiralPoseAt(spiralCine.sStart + (1 - spiralCine.sStart) * u);
+      car.position.set(pose.x, pose.y, pose.z);
+      car.rotation.set(0, pose.heading, pose.pitch);
+      const spin = 13 * delta * 2.6;   // wheels spin like it's really driving
+      for (const w of car.userData.wheels) w.rotation.y += spin;
+      if (tubeMat) {
+        tubeMat.transparent = true;
+        // Solidify again over the final quarter of the ride.
+        tubeMat.opacity = u > 0.75 ? THREE.MathUtils.lerp(0.42, 1, (u - 0.75) / 0.25) : 0.42;
+      }
+      if (u >= 1) {
+        finishSpiralCine();
+        if (tubeMat) { tubeMat.transparent = false; tubeMat.opacity = 1; }
+      }
+    }
+  }
 
   // Bumper car AI: chases the NEAREST copy of you across the wrap seam, stops
   // ~1 foot from you, and only follows once you drive away. Skipped entirely
@@ -2650,7 +2871,7 @@ function animate() {
     }
   }
 
-  // ===== Building levitation trigger (portal building 56,20) =====
+  // ===== Building levitation trigger (portal building 56,27) =====
   if (portalGrace <= 0 && worldState === 'city') {
     const insideBuilding = isInsideLevitationHall(car.position.x, car.position.z, buildingLevitate, car.position.y);
     const stillInArea = isStillWithinLevitationHall(car.position.x, car.position.z, buildingLevitate);
@@ -2699,7 +2920,8 @@ function animate() {
   // ===== Mine shaft portal (-55,50 → underground) =====
   // When the car drives deep into the mine tunnel (south past z=42), the nose
   // tips forward/down first, then the rest of the car sinks in after it —
-  // about 4 seconds total — before it teleports to the underground world.
+  // about 2 seconds total — before the cut to the spiral-tunnel arrival
+  // cinematic in the underground world.
   if (portalGrace <= 0 && worldState === 'city') {
     const inTunnel = isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir;
     if (inTunnel) {
@@ -2752,7 +2974,8 @@ function animate() {
 
       // Camera shake builds as the dive deepens
       shake.intensity = Math.max(shake.intensity, 0.15 + tiltT * 0.4);
-      // Teleport once the full dive completes (~4 seconds)
+      // Swap worlds once the full dive completes (~2 seconds) — the arrival
+      // cinematic takes it from there.
       if (minePortal.timer >= minePortal.diveTotal) {
         enterUndergroundWorld();
       }
@@ -2761,7 +2984,9 @@ function animate() {
 
   // Underground world: return portal (tunnel foot → city)
   // Driving into the tunnel foot area in the underground teleports back.
-  if (portalGrace <= 0 && worldState === 'underground') {
+  // Held off during the arrival cinematic — the car exits right through this
+  // zone and must not be instantly teleported back out again.
+  if (portalGrace <= 0 && worldState === 'underground' && !spiralCine.active) {
     const tEnd = tunnelPoint(1);
     if (!jumpState.inAir && isInUndergroundReturnZone(car.position.x, car.position.z, tEnd.x, tEnd.z, 8)) {
       leaveUndergroundWorld();
@@ -2887,8 +3112,29 @@ if (location.search.includes('debug')) {
       hits: undergroundWorld.poleState.hits,
       last: undergroundWorld.poleState.last,
     }),
+    // Holy Mountain state (?debug): layout config, mystery-light pulse and
+    // whether the car has discovered the hollow chamber yet.
+    ugMountain: () => ({
+      cfg: undergroundWorld.holy.MOUNT,
+      entered: undergroundWorld.holy.entered,
+      glow: +undergroundWorld.holy.light.intensity.toFixed(2),
+    }),
     // Task #35 off-slab recovery counter for automated testing.
     ugRecoveries: () => ugRecoveries,
+    // Spiral-arrival cinematic state (?debug) for automated testing.
+    spiralCine: () => ({
+      active: spiralCine.active,
+      timer: +spiralCine.timer.toFixed(2),
+      visible: car.visible,
+    }),
+    // Force-finish the arrival cinematic (?debug) — lets tests skip ahead
+    // to the control handoff at the tunnel foot.
+    finishSpiral: () => { if (spiralCine.active) finishSpiralCine(); },
+    // Camera readout (?debug) for verifying cinematic framing numerically.
+    cam: () => ({ x: +camera.position.x.toFixed(1), y: +camera.position.y.toFixed(1), z: +camera.position.z.toFixed(1) }),
+    // Ramp-world tire-pyramid state: live snapshot of every tire knockable
+    // (position + knock state) for automated testing.
+    tires: () => snapKnockables('tire'),
     // Task #36 perf probe: last frame's draw calls / triangles from the
     // renderer info struct (values reset each frame by three.js).
     perf: () => ({

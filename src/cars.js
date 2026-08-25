@@ -129,6 +129,7 @@ const knobMat = new THREE.MeshStandardMaterial({ color: 0xb9bec9, roughness: 0.4
 const ladderMat = new THREE.MeshStandardMaterial({ color: 0xdfe3ea, roughness: 0.5, metalness: 0.2 });
 const warnRed = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff2222, emissiveIntensity: 1.3 });
 const warnAmber = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0xff9900, emissiveIntensity: 1.3 });
+const warnWhite = new THREE.MeshStandardMaterial({ color: 0xf4f8ff, emissive: 0xeef4ff, emissiveIntensity: 1.3 });
 const tailMat = new THREE.MeshStandardMaterial({ color: 0xff2c2c, emissive: 0x880000, emissiveIntensity: 0.25 });
 const truckWheelGeometry = new THREE.CylinderGeometry(0.62, 0.62, 0.36, 20);
 
@@ -176,6 +177,27 @@ export function createFiretruck() {
   box(0.32, 0.16, 1.8, dark, -2.55, 2.8, 0);
   const lightRed = box(0.28, 0.16, 0.32, warnRed, -2.55, 2.92, -0.58);
   const lightAmber = box(0.28, 0.16, 0.32, warnRed, -2.55, 2.92, 0.58);
+
+  // Extra emergency lighting (all flashed by firetruck.js via userData):
+  // yellow markers down both sides of the body...
+  const sideYellow = [];
+  for (const sz of [1, -1]) {
+    for (const sx of [-0.55, 1.45, 3.45]) {
+      sideYellow.push(box(0.55, 0.16, 0.1, warnAmber, sx, 1.95, sz * 1.17));
+    }
+  }
+
+  // ...a full row of red strobes across the rear face above the taillights...
+  const rearRed = [];
+  for (const rz of [-0.95, -0.32, 0.32, 0.95]) {
+    rearRed.push(box(0.16, 0.3, 0.34, warnRed, 3.94, 2.05, rz));
+  }
+
+  // ...and white flashers on the front face above the headlights.
+  const frontWhite = [];
+  for (const fz of [-0.85, 0.85]) {
+    frontWhite.push(box(0.16, 0.3, 0.42, warnWhite, -4.14, 1.78, fz));
+  }
 
   // Cab door handles (round knobs)
   addKnob(group, -3.0, 1.25, 1.2, 0.11, chromeMat);
@@ -256,7 +278,14 @@ export function createFiretruck() {
   });
   group.userData.wheels = wheels;
   group.userData.wheelPivots = wheelPivots;
-  group.userData.warningLights = [lightRed, lightAmber];
+  // Red lights split into left/right halves so they can strobe against each
+  // other; yellows and whites flash as their own groups.
+  group.userData.warningLights = {
+    redLeft: [lightRed, ...rearRed.filter((l) => l.position.z < 0)],
+    redRight: [lightAmber, ...rearRed.filter((l) => l.position.z > 0)],
+    yellow: sideYellow,
+    white: frontWhite,
+  };
   group.userData.nozzlePivot = nozzlePivot;
 
   return group;

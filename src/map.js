@@ -255,7 +255,9 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
   roof.receiveShadow = true;
   group.add(roof);
 
-  // Add windows on the west wall (back wall, opposite the open east side)
+  // Add windows on the west wall (back wall, opposite the open east side).
+  // Row heights and column spread scale with the building so a tall hall gets
+  // windows climbing its whole back wall instead of huddling near the floor.
   const windowGeometry = new THREE.BoxGeometry(0.08, 0.6, 0.22);
   const windowGroup = new THREE.Group();
   windowGroup.position.set(-w / 2 - 0.1, 0, 0);
@@ -264,14 +266,20 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
       const mesh = new THREE.Mesh(windowGeometry, windowMaterial);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.position.set(0, row * 0.9 + 0.7, col * 0.45);
+      mesh.position.set(0, h * (0.25 + row * 0.2) + 0.4, col * d * 0.06);
       windowGroup.add(mesh);
     }
   }
   group.add(windowGroup);
 
-  // Add glowing hovering rings inside
-  const ringCount = 5;
+  // Add glowing hovering rings inside. The stack scales with the hall: more
+  // rings for taller buildings, spread evenly up most of the height, and the
+  // rings themselves grow with the footprint so they don't look lost in a
+  // huge room.
+  const ringCount = Math.max(5, Math.round(h / 3));
+  const ringSpacing = (h * 0.82 - 1.5) / (ringCount - 1);
+  const ringR = Math.max(0.8, w * 0.05);
+  const ringTube = Math.max(0.12, w * 0.008);
   const ringMaterial = new THREE.MeshStandardMaterial({
     color: 0x00ffff,
     emissive: 0x00ffff,
@@ -284,11 +292,12 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
 
   for (let i = 0; i < ringCount; i++) {
     const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.8, 0.12, 16, 32),
+      new THREE.TorusGeometry(ringR, ringTube, 16, 32),
       ringMaterial.clone()
     );
     // Position rings stacked vertically inside the building
-    ring.position.set(0, 1.5 + i * 1.8, 0);
+    const ringY = 1.5 + i * ringSpacing;
+    ring.position.set(0, ringY, 0);
     ring.rotation.x = Math.PI / 2; // Lay flat
     ring.castShadow = true;
     group.add(ring);
@@ -296,7 +305,7 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
     // Store ring info for animation
     hoveringRings.push({
       mesh: ring,
-      baseY: 1.5 + i * 1.8,
+      baseY: ringY,
       speed: 0.5 + Math.random() * 0.3,
       phase: Math.random() * Math.PI * 2
     });
@@ -306,22 +315,23 @@ function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
   // the building and spot it there's no missing the way in. It bobs gently and
   // pulses with the same animation that drives the interior rings. The car
   // drives straight through its opening (the hole is far taller than the car).
+  // Size and height scale off the building so a bigger hall gets a bigger ring.
   const doorRing = new THREE.Mesh(
-    new THREE.TorusGeometry(3.2, 0.28, 14, 48),
+    new THREE.TorusGeometry(w * 0.18, Math.max(0.28, w * 0.02), 14, 48),
     ringMaterial.clone()
   );
-  doorRing.position.set(w / 2 + 0.6, 4.0, 0);
+  doorRing.position.set(w / 2 + 0.6, h * 0.32, 0);
   doorRing.rotation.y = Math.PI / 2;   // stand upright, facing the open side
   doorRing.castShadow = true;
   group.add(doorRing);
-  hoveringRings.push({ mesh: doorRing, baseY: 4.0, speed: 0.35, phase: Math.random() * Math.PI * 2 });
+  hoveringRings.push({ mesh: doorRing, baseY: h * 0.32, speed: 0.35, phase: Math.random() * Math.PI * 2 });
 
   // Glowing threshold strip across the doorway floor — lights the entrance
   const threshold = new THREE.Mesh(
-    new THREE.BoxGeometry(1.2, 0.08, d - 2),
+    new THREE.BoxGeometry(1.6, 0.08, d - 2),
     new THREE.MeshStandardMaterial({ color: 0x00ffff, emissive: 0x00ffff, emissiveIntensity: 1.6, roughness: 0.4 })
   );
-  threshold.position.set(w / 2 - 0.9, 0.2, 0);
+  threshold.position.set(w / 2 - 1.2, 0.2, 0);
   group.add(threshold);
 
   group.position.set(x, 0, z);
@@ -371,12 +381,15 @@ function addBuildings(scene, buildingColliders) {
     buildingColliders.push({ x: spec.x, z: spec.z, halfW: spec.w / 2, halfD: spec.d / 2, h: spec.h });
   });
 
-  // Special portal building just north of the main road's east end. The OPEN
-  // SIDE FACES EAST (away from town — you have to round the building to find
-  // it, which keeps the portal a surprise), and at 14×14 the doorway is wide
-  // enough to roll through without scraping a jamb. A giant glowing ring marks
-  // the entrance (see makeOpenBuilding).
-  const openBuildingSpec = { x: 56, z: 20, w: 14, d: 14, h: 10, color: 0x6d4f3f };
+  // Special portal building just north of the main road's east end. DOUBLED
+  // in every dimension (28×28 footprint, 20 tall) per request — it now looms
+  // over the whole east end of town. The centre sits at z=27 so the south
+  // face (z=13) stays a full unit clear of the main road's edge (z=±12): no
+  // street overlap. The OPEN SIDE FACES EAST (away from town — you have to
+  // round the building to find it, which keeps the portal a surprise), and
+  // the 28-wide doorway is plenty to roll through without scraping a jamb. A
+  // giant glowing ring marks the entrance (see makeOpenBuilding).
+  const openBuildingSpec = { x: 56, z: 27, w: 28, d: 28, h: 20, color: 0x6d4f3f };
   makeOpenBuilding(scene, openBuildingSpec.x, openBuildingSpec.z, openBuildingSpec.w, openBuildingSpec.d, openBuildingSpec.h, openBuildingSpec.color, 'east');
   // Instead of a full rectangle (which blocks the open east side), add 3 wall
   // colliders: back (west), north, and south — leaving the east side open.

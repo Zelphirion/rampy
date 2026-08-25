@@ -3,6 +3,10 @@ import { addGlassCity } from '../../glasscity.js';
 // Task #29: stair retract timing lives in a pure module so node --test can
 // verify the wave math (step position + collider-active state vs time).
 import { stepTau, stepExtension, stepColliderActive } from '../../modules/stairCycle.js';
+// The Holy Mountain: pure layout math (cone profile, spiral road wedges,
+// blocker rects) verified by holyMountain.test.mjs — this file turns it into
+// meshes and colliders.
+import { MOUNT, coneRadiusAt, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js';
 
 export const UNDERGROUND_Y = -30;
 
@@ -65,7 +69,9 @@ function pointDistSq(px, py, pz, qx, qy, qz) {
   return dx * dx + dy * dy + dz * dz;
 }
 
-const TUNNEL = {
+// Exported so main.js can build the arrival-cinematic orbit around the same
+// centre axis without duplicating the constants.
+export const TUNNEL = {
   cx: -58, cz: 104,
   R: 21,
   halfW: 3.5,
@@ -247,7 +253,7 @@ export function addUnderground(parent, opts = {}) {
   // `ramps` list this level returns. Rises toward +Z (north).
   const ugRamps = [];
   const rampMaterial = new THREE.MeshStandardMaterial({ color: 0x3c4653, roughness: 0.98 });
-  function addUgRamp(def) {
+  function addUgRamp(def, mat = rampMaterial) {
     const shape = new THREE.Shape();
     shape.moveTo(0, 0);
     shape.lineTo(def.len, 0);
@@ -255,7 +261,7 @@ export function addUnderground(parent, opts = {}) {
     shape.closePath();
     const geo = new THREE.ExtrudeGeometry(shape, { depth: def.width, bevelEnabled: false });
     geo.translate(-def.len / 2, 0, -def.width / 2);   // center wedge on its midpoint
-    const m = new THREE.Mesh(geo, rampMaterial);
+    const m = new THREE.Mesh(geo, mat);
     m.rotation.y = Math.atan2(-def.runZ, def.runX);   // +X (base→top) lines up with run direction
     m.position.set(def.x, def.baseY || 0, def.z);     // baseY: stand on raised ground (peak pad)
     m.castShadow = true;
@@ -850,12 +856,267 @@ export function addUnderground(parent, opts = {}) {
     return false;
   }
 
+  // ---- The Holy Mountain (hollow snow-capped peak, west cavern) ----
+  // A full cone rising off the open western floor: drive the pilgrim's road
+  // (a spiral of wedge ramps) up to its snowy summit pad — the highest point
+  // in the cavern. The mountain is HOLLOW: around on its far side (south-
+  // west, away from the road start) a cave mouth opens into a torch-lit
+  // chamber where a man in a huge brimmed white hat stands flanked by two
+  // goats under a mysterious pulsing light. The chamber roof has an oculus
+  // skylight — land on the peak-pad-adjacent roof and you can drop in.
+  // All layout numbers come from the pure module (and its tests); here we
+  // only shape meshes and register colliders.
+  const mountColliders = [];
+  const coneR = (y) => coneRadiusAt(y, MOUNT);
+  const mountRockMat = new THREE.MeshStandardMaterial({ color: 0x4a4148, roughness: 1, side: THREE.DoubleSide });
+  const snowMat = new THREE.MeshStandardMaterial({ color: 0xf5f7fb, roughness: 0.95 });
+  const caveMat = new THREE.MeshStandardMaterial({ color: 0x17131c, roughness: 1, side: THREE.DoubleSide });
+  const roadStoneMat = new THREE.MeshStandardMaterial({ color: 0x6b6470, roughness: 0.95 });
+  const frame = mouthFrame();
+  // Lathe phi → world angle: a lathe vertex sits at (r·sinφ, y, r·cosφ), so
+  // world azimuth β = π/2 − φ. Invert for the gap placement.
+  const phiForBeta = (beta) => Math.PI / 2 - beta;
+
+  // Lower rock band (y 0 → just above the lintel), full circle MINUS the
+  // mouth gap — the gap IS the cave-mouth opening.
+  const bandTopY = MOUNT.archH + 0.1;
+  const lowerBand = new THREE.Mesh(
+    new THREE.LatheGeometry(
+      [new THREE.Vector2(0.03, 0), new THREE.Vector2(MOUNT.baseR, 0), new THREE.Vector2(coneR(bandTopY), bandTopY)],
+      48,
+      phiForBeta(frame.betaM) + MOUNT.archHalf,
+      Math.PI * 2 - MOUNT.archHalf * 2
+    ),
+    mountRockMat
+  );
+  lowerBand.castShadow = true;
+  parent.add(lowerBand);
+
+  // Upper shell (lintel → snowline → summit rim), FULL circle: it overhangs
+  // the mouth gap from above, forming the arch's natural rock lintel.
+  const upperShell = new THREE.Mesh(
+    new THREE.LatheGeometry(
+      [
+        new THREE.Vector2(coneR(MOUNT.archH), MOUNT.archH),
+        new THREE.Vector2(coneR(MOUNT.snowY), MOUNT.snowY),
+        new THREE.Vector2(MOUNT.padR, MOUNT.peakY),
+      ],
+      48,
+      0,
+      Math.PI * 2
+    ),
+    mountRockMat
+  );
+  upperShell.castShadow = true;
+  parent.add(upperShell);
+
+  // Throat side walls: flat quads closing the mouth tunnel between the
+  // chamber wall and the shell along each gap edge.
+  for (const beta of frame.edgeBeta) {
+    const dx = Math.cos(beta), dz = Math.sin(beta);
+    const quad = new THREE.BufferGeometry();
+    quad.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+      frame.throatInnerR * dx, 0, frame.throatInnerR * dz,
+      MOUNT.baseR * dx, 0, MOUNT.baseR * dz,
+      frame.throatOuterR * dx, MOUNT.archH, frame.throatOuterR * dz,
+      frame.throatInnerR * dx, MOUNT.archH, frame.throatInnerR * dz,
+    ]), 3));
+    quad.setIndex([0, 1, 2, 0, 2, 3]);
+    quad.computeVertexNormals();
+    parent.add(new THREE.Mesh(quad, mountRockMat));
+  }
+
+  // The hollow chamber: dark curved walls, a ceiling ring with an open
+  // oculus, and a short skylight shaft up into the peak's innards.
+  const CHAMBER_R = 14;
+  const CHAMBER_H = 17;
+  const OCULUS_R = 9.5;
+  const chamberWall = new THREE.Mesh(
+    new THREE.CylinderGeometry(CHAMBER_R, CHAMBER_R, CHAMBER_H, 40, 1, true),
+    caveMat
+  );
+  chamberWall.position.set(MOUNT.cx, CHAMBER_H / 2, MOUNT.cz);
+  parent.add(chamberWall);
+  const chamberCeil = new THREE.Mesh(new THREE.RingGeometry(OCULUS_R, CHAMBER_R + 0.3, 40), caveMat);
+  chamberCeil.rotation.x = -Math.PI / 2;
+  chamberCeil.position.set(MOUNT.cx, CHAMBER_H, MOUNT.cz);
+  parent.add(chamberCeil);
+  const oculusShaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(OCULUS_R + 0.1, OCULUS_R + 0.1, 4, 40, 1, true),
+    caveMat
+  );
+  oculusShaft.position.set(MOUNT.cx, CHAMBER_H + 2, MOUNT.cz);
+  parent.add(oculusShaft);
+
+  // Snow cap: a white frustum draped over everything above the snowline,
+  // its flat top face BEING the summit platform the road arrives on.
+  const snowBottomY = 16.9;
+  const snowCap = new THREE.Mesh(
+    new THREE.CylinderGeometry(MOUNT.padR + 0.4, coneR(snowBottomY) + 0.75, MOUNT.peakY - snowBottomY, 48),
+    snowMat
+  );
+  snowCap.position.set(MOUNT.cx, (snowBottomY + MOUNT.peakY) / 2, MOUNT.cz);
+  snowCap.castShadow = true;
+  parent.add(snowCap);
+
+  // The pilgrim's road: chained wedge ramps spiralling up the outside of the
+  // cone (layout + soft ride colliders verified in the pure module's tests).
+  const roadSegs = spiralSegments();
+  for (const seg of roadSegs) {
+    addUgRamp(seg, roadStoneMat);
+    mountColliders.push(seg.collider);
+  }
+  // Lantern posts mark where the road starts, so wanderers spot the climb.
+  {
+    const s0 = roadSegs[0];
+    const startX = s0.x - s0.runX * s0.len / 2;
+    const startZ = s0.z - s0.runZ * s0.len / 2;
+    const px = -s0.runZ, pz = s0.runX;   // perpendicular across the road
+    for (const side of [-1, 1]) {
+      const lx = startX + px * side * (MOUNT.roadHalfW + 1.1);
+      const lz = startZ + pz * side * (MOUNT.roadHalfW + 1.1);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, 2.8, 8), pillarMat);
+      post.position.set(lx, 1.4, lz);
+      parent.add(post);
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), makeGlowMat(NEON.amber));
+      lamp.position.set(lx, 3, lz);
+      parent.add(lamp);
+    }
+  }
+
+  // Invisible collision layout: flank rings that seal the rock against
+  // ground cars (mouth sector exempt), tunnel-wall staircases, the chamber
+  // wall ring, the shrine dais, plus the soft summit pad and the chamber-
+  // ceiling planks around the oculus hole (land up there, roll in, drop).
+  const blockers = mountainBlockers();
+  for (const r of blockers.solids) mountColliders.push(r);
+  for (const r of blockers.softs) mountColliders.push(r);
+
+  // ---- The shrine: holy man, two goats, mysterious light ----
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0x8d8695, roughness: 0.9 });
+  const robeMat = new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.85 });
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xe8c9a8, roughness: 0.8 });
+  const goatMat = new THREE.MeshStandardMaterial({ color: 0xdad5c9, roughness: 0.9 });
+  const shrine = new THREE.Group();
+  shrine.position.set(MOUNT.cx, 0, MOUNT.cz);
+  // Model built facing local +Z; turn it to face out through the mouth.
+  shrine.rotation.y = Math.atan2(frame.dirX, frame.dirZ);
+  parent.add(shrine);
+  const dais = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.7, 0.7, 24), stoneMat);
+  dais.position.y = 0.35;
+  dais.castShadow = true;
+  dais.receiveShadow = true;
+  shrine.add(dais);
+
+  // The man: tall white robe, calm head, and the huge brimmed white hat.
+  const man = new THREE.Group();
+  man.position.y = 0.7;
+  shrine.add(man);
+  const robe = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.95, 2.1, 12), robeMat);
+  robe.position.y = 1.05;
+  robe.castShadow = true;
+  man.add(robe);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), skinMat);
+  head.position.y = 2.42;
+  man.add(head);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(2.3, 2.3, 0.1, 20), robeMat);
+  brim.position.y = 2.72;
+  brim.castShadow = true;
+  man.add(brim);
+  const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.95, 0.85, 12), robeMat);
+  crown.position.y = 3.22;
+  crown.castShadow = true;
+  man.add(crown);
+
+  // A little goat: legs, body, alert head, curled horns, tiny tail.
+  function makeGoat() {
+    const g = new THREE.Group();
+    for (const lx of [-0.55, 0.55]) {
+      for (const lz of [-0.42, 0.42]) {
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.5, 8), goatMat);
+        leg.position.set(lx, 0.25, lz);
+        g.add(leg);
+      }
+    }
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 1.5), goatMat);
+    body.position.y = 0.86;
+    body.castShadow = true;
+    g.add(body);
+    const gHead = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.45, 0.55), goatMat);
+    gHead.position.set(0, 1.12, 0.92);
+    g.add(gHead);
+    for (const hx of [-0.15, 0.15]) {
+      const horn = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.055, 8, 16, 2.0), goatMat);
+      horn.position.set(hx, 1.32, 0.78);
+      horn.rotation.x = -1.1;
+      horn.rotation.z = hx > 0 ? -0.35 : 0.35;
+      g.add(horn);
+    }
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.3, 0.1), goatMat);
+    tail.position.set(0, 1.08, -0.78);
+    tail.rotation.x = 0.5;
+    g.add(tail);
+    return g;
+  }
+  for (const side of [-1, 1]) {
+    const goat = makeGoat();
+    goat.position.set(side * 2.45, 0.7, 0);
+    goat.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;   // face outward
+    shrine.add(goat);
+  }
+
+  // Candle ring on the dais rim (shared material so they flicker together).
+  const candleMat = new THREE.MeshStandardMaterial({
+    color: 0xbef5e2, emissive: 0xbef5e2, emissiveIntensity: 1.6,
+  });
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2 + Math.PI / 6;
+    const candle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.42, 8), candleMat);
+    candle.position.set(Math.cos(a) * 2.9, 0.91, Math.sin(a) * 2.9);
+    shrine.add(candle);
+  }
+
+  // The mysterious light: a glowing orb hovering over the shrine, a wide
+  // soft beam falling from the oculus, and a warm light that spills out of
+  // the mouth and paints the slope — visible from clear across the cavern.
+  const orbMat = new THREE.MeshStandardMaterial({ color: 0xffedbe, emissive: 0xffedbe, emissiveIntensity: 2.4 });
+  const orb = new THREE.Mesh(new THREE.SphereGeometry(0.65, 16, 12), orbMat);
+  orb.position.y = 6.2;
+  shrine.add(orb);
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(8, 1.6, 14.5, 24, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xfff3cf, transparent: true, opacity: 0.13,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    })
+  );
+  beam.position.y = 9.95;
+  beam.renderOrder = 5;
+  shrine.add(beam);
+  const mysteryLight = new THREE.PointLight(0xffe6ae, 2.0, 46, 2);
+  mysteryLight.position.set(MOUNT.cx, 7, MOUNT.cz);
+  parent.add(mysteryLight);
+  const caveFill = new THREE.PointLight(0x8fd8ff, 0.5, 30, 2);
+  caveFill.position.set(MOUNT.cx, 11, MOUNT.cz);
+  parent.add(caveFill);
+
+  // Live state for update() + the ?debug hook.
+  const holy = {
+    MOUNT,
+    t: 0,
+    entered: false,   // set once the car gets within 12 units of the shrine
+    light: mysteryLight,
+    orb,
+    beam,
+    candleMat,
+  };
+
   const glassCity = addGlassCity(parent);
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...stairColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...stairColliders, ...mountColliders, ...glassCity.colliders];
   // Register the animated tier colliders directly in the returned array so
   // the task-#28 splice/push sync below actually reaches ugColliders.
   for (const c of stairTierColliders) colliders.push(c);
@@ -877,6 +1138,8 @@ export function addUnderground(parent, opts = {}) {
     STAIRS,      // footprint constants (peak platform, tier count/sizes)
     poleState,   // padded-pole hit counter + last hit info (tasks #31–#32)
     stairGhostAt, // task #35: floor-level ghost detection inside the pyramid
+    holy,        // Holy Mountain live state (mystery-light pulse, entered flag)
+    spiralTubeMat: tubeMat, // arrival cinematic fades the tube translucent so the orbiting camera can see the car inside
     get bumpCount() { return bumpCount; },
     get lastBump() { return lastBump; },
     update(delta, player) {
@@ -1043,6 +1306,21 @@ export function addUnderground(parent, opts = {}) {
           }
         }
         prevX = player.x; prevY = player.y; prevZ = player.z; havePrev = true;
+      }
+
+      // The Holy Mountain: slow pulse on the mysterious shrine light, a
+      // gentle bob on the hovering orb, shimmer on the light beam, and
+      // candle flicker. Also flag the moment the car first reaches the
+      // hollow chamber (within 12 units of the shrine).
+      holy.t += delta;
+      holy.light.intensity = 1.7 + 0.9 * Math.sin(holy.t * 1.6);
+      holy.orb.position.y = 6.2 + 0.35 * Math.sin(holy.t * 0.9);
+      holy.beam.material.opacity = 0.11 + 0.04 * Math.sin(holy.t * 1.6 + 1.2);
+      holy.candleMat.emissiveIntensity = 1.35 + 0.45 * Math.sin(holy.t * 7.3) + 0.2 * Math.sin(holy.t * 13.7 + 1.3);
+      if (player && !holy.entered) {
+        const dx = player.x - MOUNT.cx;
+        const dz = player.z - MOUNT.cz;
+        if (dx * dx + dz * dz < 144) holy.entered = true;
       }
 
       // Task #8: animate the foam collectibles — ballistic fall, damped floor
