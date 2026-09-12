@@ -145,6 +145,7 @@ function randomRoam(colliders) {
     const z = (Math.random() * 2 - 1) * 170;
     let blocked = false;
     for (const c of colliders) {
+      if (c.aiOnly) continue;   // the lizard can walk over the mine pit
       if (Math.abs(x - c.x) < c.halfW + 0.5 && Math.abs(z - c.z) < c.halfD + 0.5) { blocked = true; break; }
     }
     if (!blocked) return { x, z };

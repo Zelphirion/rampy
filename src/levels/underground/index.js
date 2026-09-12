@@ -1,8 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { addGlassCity } from '../../glasscity.js';
-// Task #29: stair retract timing lives in a pure module so node --test can
-// verify the wave math (step position + collider-active state vs time).
-import { stepTau, stepExtension, stepColliderActive } from '../../modules/stairCycle.js';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
@@ -75,6 +72,7 @@ export const TUNNEL = {
   cx: -58, cz: 104,
   R: 21,
   halfW: 3.5,
+  tubeR: 5,       // interior tube radius — must match TubeGeometry tubeR below
   theta0: 0.45,
   sweep: 1.4 * Math.PI,
   startY: 0.15,
@@ -123,7 +121,6 @@ export function addUnderground(parent, opts = {}) {
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
   const pillarMat = new THREE.MeshStandardMaterial({ color: 0x3a3434, roughness: 1 });
 
-  const tubeR = 5;
   const localY = (absY) => absY - UNDERGROUND_Y;
 
   const plain = new THREE.Mesh(new THREE.BoxGeometry(292, 0.25, 276), rockMat);
@@ -131,13 +128,13 @@ export function addUnderground(parent, opts = {}) {
   plain.receiveShadow = true;
   parent.add(plain);
 
-  const pts = pathSamples.map((p) => new THREE.Vector3(p.x, localY(p.y) + tubeR, p.z));
+  const pts = pathSamples.map((p) => new THREE.Vector3(p.x, localY(p.y) + TUNNEL.tubeR, p.z));
   const curve = new THREE.CatmullRomCurve3(pts);
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, N, tubeR, 20, false), tubeMat);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, N, TUNNEL.tubeR, 20, false), tubeMat);
   tube.castShadow = true;
   parent.add(tube);
 
-  const markerR = tubeR - 1.6;
+  const markerR = TUNNEL.tubeR - 1.6;
   // Perf pass (task #36): the 60 marker dots used to be 60 separate meshes
   // (60 draw calls for a handful of pixels each). Bake them into ONE static
   // geometry instead — same look, one draw call. Plain three.js merge:
@@ -210,6 +207,14 @@ export function addUnderground(parent, opts = {}) {
   );
   ceiling.position.set((ceilMinX + ceilMaxX) / 2, CEIL_Y + 0.5, (ceilMinZ + ceilMaxZ) / 2);
   parent.add(ceiling);
+  // The ceiling top is the "second roof" — a drivable surface the elevator
+  // and the big staircase deliver the car to. Soft collider at the ceiling's
+  // top face (CEIL_Y + 1) so buildingTopAt/ugElevatorTopAt seat the car on it.
+  const ceilingColliders = [{
+    x: (ceilMinX + ceilMaxX) / 2, z: (ceilMinZ + ceilMaxZ) / 2,
+    halfW: (ceilMaxX - ceilMinX) / 2, halfD: (ceilMaxZ - ceilMinZ) / 2,
+    h: CEIL_Y + 1, soft: true,
+  }];
 
   const COL_W = 3.5;
   const courseColumns = [
@@ -464,7 +469,7 @@ export function addUnderground(parent, opts = {}) {
   // by isPositionBlocked (so you can drive under/onto the deck) but read by
   // buildingTopAt, whose `h` we rewrite every frame (task #18) so landings
   // and the main.js ground-ride logic always see the live deck height.
-  const ELEV = { cx: 44, cz: -31, halfW: 5, halfD: 3.5, low: 0.55, high: 9, speed: 0.5 };
+  const ELEV = { cx: 44, cz: -31, halfW: 5, halfD: 3.5, low: 0.55, high: 31, speed: 0.5 };
   const ELEV_MID = (ELEV.low + ELEV.high) / 2;
   const ELEV_AMP = (ELEV.high - ELEV.low) / 2;
   const elevMat = new THREE.MeshStandardMaterial({ color: 0x8a8f98, metalness: 0.6, roughness: 0.4 });
@@ -486,305 +491,88 @@ export function addUnderground(parent, opts = {}) {
   const elevatorCollider = { x: ELEV.cx, z: ELEV.cz, halfW: ELEV.halfW, halfD: ELEV.halfD, h: ELEV.low, soft: true };
   const elevatorColliders = [elevatorCollider];
 
-  // ---- Upper ledges / tiers (task #19) ----
-  // Static walkways at the elevator's top height ringing the pit, so driving
-  // off the lift at apex carries you onto a tier instead of a long fall.
-  // Slabs use `soft` colliders: they feed buildingTopAt / the soft-surface
-  // ride logic (land on them, roll across deck→ledge seamlessly) but never
-  // wall off grounded driving underneath. Support pylons are solid.
-  const LEDGE_Y = ELEV.high;
-  const LEDGES = [
-    { cx: 46, cz: -23.5, halfW: 9, halfD: 4, pylons: [[37, -19.5], [55, -19.5]] },  // north of the deck
-    { cx: 55, cz: -31,   halfW: 6, halfD: 7, pylons: [[61, -24], [61, -38]] },      // east of the deck
-    { cx: 42, cz: -38.5, halfW: 9, halfD: 4, pylons: [[33, -42.5], [51, -42.5]] },  // south of the deck
-  ];
-  const ledgeColliders = [];
-  const pylonGeo = new THREE.CylinderGeometry(0.5, 0.6, LEDGE_Y, 10);
-  for (const L of LEDGES) {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(L.halfW * 2, 0.5, L.halfD * 2), elevMat);
-    slab.position.set(L.cx, LEDGE_Y - 0.25, L.cz);
-    slab.castShadow = true;
-    slab.receiveShadow = true;
-    parent.add(slab);
-    const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(L.halfW * 2 + 0.24, 0.18, L.halfD * 2 + 0.24),
-      makeGlowMat(NEON.lime)
-    );
-    stripe.position.set(L.cx, LEDGE_Y - 0.41, L.cz);
-    parent.add(stripe);
-    ledgeColliders.push({ x: L.cx, z: L.cz, halfW: L.halfW, halfD: L.halfD, h: LEDGE_Y, soft: true });
-    for (const [px, pz] of L.pylons) {
-      const pylon = new THREE.Mesh(pylonGeo, pillarMat);
-      pylon.position.set(px, LEDGE_Y / 2, pz);
-      pylon.castShadow = true;
-      parent.add(pylon);
-      ledgeColliders.push({ x: px, z: pz, halfW: 0.5, halfD: 0.5, h: LEDGE_Y });
-    }
-  }
-
-  // ---- High balance beams + spinning sweeper arms (tasks #21–#24) ----
-  // Two narrow planks at ledge height bridge the tiers over the foam pit:
-  //   A: a west landing platform (flush with the north tier's west end)
-  //      runs south to the south tier, straight across the pit's west strip.
-  //   B: the south tier's east end runs east to a lone platform over open
-  //      floor, clipping the pit's south-east corner.
-  // Each plank is a thin `soft` collider strip (ride it like the ledges),
-  // and each crossing is guarded by a glowing sweeper arm spinning around a
-  // post at bumper height above the deck — get clipped and you're launched
-  // radially off into the foam below (knockback wired via onSweeperHit).
-  const BEAM_Y = LEDGE_Y;
-  const beamColliders = [];
-
-  // Landing platforms at the free ends of the two beams (same slab + lime
-  // stripe styling as the task-#19 tiers so the whole upper ring reads as
-  // one structure).
-  const addTierSlab = (cx, cz, halfW, halfD) => {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(halfW * 2, 0.5, halfD * 2), elevMat);
-    slab.position.set(cx, BEAM_Y - 0.25, cz);
-    slab.castShadow = true;
-    slab.receiveShadow = true;
-    parent.add(slab);
-    const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(halfW * 2 + 0.24, 0.18, halfD * 2 + 0.24),
-      makeGlowMat(NEON.lime)
-    );
-    stripe.position.set(cx, BEAM_Y - 0.41, cz);
-    parent.add(stripe);
-    beamColliders.push({ x: cx, z: cz, halfW, halfD, h: BEAM_Y, soft: true });
-  };
-  addTierSlab(33, -23.5, 4, 4);    // west of the north tier (shares its x=37 edge)
-  addTierSlab(63, -38.5, 4, 3.5);  // east of the south tier's east end
-
-  // Support pylons under the new platforms (solid, like the task-#19 ones).
-  for (const [px, pz] of [[30, -21], [36, -21], [60.5, -40.5], [65.5, -36.5]]) {
-    const pylon = new THREE.Mesh(pylonGeo, pillarMat);
-    pylon.position.set(px, BEAM_Y / 2, pz);
-    pylon.castShadow = true;
-    parent.add(pylon);
-    beamColliders.push({ x: px, z: pz, halfW: 0.5, halfD: 0.5, h: BEAM_Y });
-  }
-
-  // The planks themselves: 1.6 wide, thin, lime glow rim, soft strip collider.
-  const addBeamPlank = (cx, cz, alongX, length) => {
-    const plankGeo = alongX
-      ? new THREE.BoxGeometry(length, 0.3, 1.6)
-      : new THREE.BoxGeometry(1.6, 0.3, length);
-    const plank = new THREE.Mesh(plankGeo, elevMat);
-    plank.position.set(cx, BEAM_Y - 0.15, cz);
-    plank.castShadow = true;
-    plank.receiveShadow = true;
-    parent.add(plank);
-    const rimGeo = alongX
-      ? new THREE.BoxGeometry(length + 0.2, 0.14, 1.84)
-      : new THREE.BoxGeometry(1.84, 0.14, length + 0.2);
-    const rim = new THREE.Mesh(rimGeo, makeGlowMat(NEON.lime));
-    rim.position.set(cx, BEAM_Y - 0.34, cz);
-    parent.add(rim);
-    beamColliders.push(alongX
-      ? { x: cx, z: cz, halfW: length / 2, halfD: 0.8, h: BEAM_Y, soft: true }
-      : { x: cx, z: cz, halfW: 0.8, halfD: length / 2, h: BEAM_Y, soft: true });
-  };
-  addBeamPlank(33, -31, false, 7);   // A: landing platform (z -27.5) -> south tier (z -34.5)
-  addBeamPlank(55, -38.5, true, 8);  // B: south tier (x 51) -> lone platform (x 59)
-
-  // Sweeper arms: post + hub + glowing arm spinning in the XZ plane at
-  // `armY`. Two modes (task #24):
-  //   - full circle: angle = phase + elapsed·speed (sweeper B).
-  //   - sector swing: angle oscillates ±amp around center (sweeper A) so the
-  //     arm rakes ONLY its plank — a full circle here would also rake the
-  //     elevator deck / north tier sitting a few units from the pivot.
+  // ---- The y=9 "roof over the elevator hub" is GONE ----
+  // The ledges, balance beams and sweeper arms that used to ring the elevator
+  // at its old top height (y=9) were removed so the elevator can rise all the
+  // way to the cavern ceiling — the real "second roof". The sweepers array
+  // stays empty so the ?debug hook (ugSweepers) keeps returning [].
   const sweepers = [];
-  function addSweeper(spec) {
-    const postH = spec.armY - spec.baseY + 1.4;
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.6, postH, 10), pillarMat);
-    post.position.set(spec.px, spec.baseY + postH / 2, spec.pz);
-    post.castShadow = true;
-    parent.add(post);
-    const grp = new THREE.Group();
-    grp.position.set(spec.px, spec.armY, spec.pz);
-    parent.add(grp);
-    const hub = new THREE.Mesh(new THREE.SphereGeometry(0.9, 12, 10), makeGlowMat(spec.color));
-    grp.add(hub);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(spec.len, 0.55, 0.85), makeGlowMat(spec.color));
-    arm.position.x = spec.len / 2;
-    grp.add(arm);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.55, 10, 8), makeGlowMat(spec.color));
-    tip.position.x = spec.len;
-    grp.add(tip);
-    // Task #24: glow light riding with the arm so the sweep paints light.
-    const glow = new THREE.PointLight(spec.color, 1.3, 20, 2);
-    glow.position.set(spec.len * 0.6, 0.8, 0);
-    grp.add(glow);
-    sweepers.push({
-      px: spec.px, pz: spec.pz, armY: spec.armY, len: spec.len,
-      speed: spec.speed, phase: spec.phase,
-      swing: spec.swing || null,   // { center, amp } in radians, or null
-      grp,
-      angle: spec.phase, cd: 0, hits: 0,
-    });
-    // Solid post collider so the pivot can't be driven through.
-    beamColliders.push({ x: spec.px, z: spec.pz, halfW: 0.6, halfD: 0.6, h: spec.armY + 0.8 });
-  }
-  const degToRad = (d) => (d * Math.PI) / 180;
-  // A: pivot on the landing platform's west side, swinging across the plank
-  // like a windscreen wiper. Sector (50°…80°) aims straight down the plank;
-  // the elevator deck bears ≈28° from here and the north tier ≈0°, so with
-  // a 9.5-long arm neither is ever touched (closest pass ≈4 units clear).
-  addSweeper({
-    px: 29.5, pz: -22.5, baseY: BEAM_Y, armY: BEAM_Y + 1.6, len: 9.5,
-    speed: 1.6, phase: 0, color: NEON.magenta,
-    swing: { center: degToRad(65), amp: degToRad(15) },
-  });
-  // B: floor-mounted post south of the plank; faster, opposite spin, higher
-  // arm, full rotation.
-  addSweeper({ px: 55, pz: -43.5, baseY: 0, armY: BEAM_Y + 2.4, len: 6.5, speed: -2.0, phase: Math.PI / 2, color: NEON.cyan });
 
-  // ---- Retracting pyramid stairs (tasks #25–#28) ----
-  // A stepped pyramid backing onto the SOUTH cavern wall (z = SLAB.minZ),
-  // built in the open east half of the zone so it clears everything already
-  // placed: conduit lane #2 (posts x 95.5–128.5 at z −60), lane #3 (x ≤ 54),
-  // the corner columns (30,−80)/(130,−80) and the test ramp (80,−35).
-  // Footprint: tiers climb SOUTH toward the wall — you approach across open
-  // floor heading −Z, each tier one riser higher, until the peak platform
-  // sits flush against the rock face. Retraction (task #27) slides each tier
-  // horizontally INTO that wall (−Z).
+  // ---- Big staircase up to the second roof (the cavern ceiling) ----
+  // A proper stepped staircase (no moving parts, no smooth ramp) standing
+  // OUTSIDE the cavern ceiling — it climbs from the open floor west of the
+  // ceiling up to the ceiling's west edge, so you drive up the steps and roll
+  // straight ONTO the ceiling top (the "second roof", CEIL_Y = 30, top face
+  // at 31). The whole staircase sits west of x=12 (outside the ceiling), so
+  // the car never drives "up through the roof". Each step is a solid box with
+  // a neon front-edge strip; soft climb colliders let the car drive up it
+  // step by step.
+  const CEIL_TOP = CEIL_Y + 1;   // 31 — the ceiling's top face (the second roof)
   const STAIRS = {
-    cx: 100,            // footprint centre x
-    width: 24,          // x span of every tier (x ∈ [88, 112])
-    wallZ: SLAB.minZ,   // south cavern wall the pyramid backs onto (−96.5)
-    padDepth: 7,        // z depth of the flat peak platform (U-turn + launch ramp)
-    tiers: 7,           // risers; the flat pad on top is one more step (h = 8)
-    stepH: 1,           // riser height per tier
-    stepD: 2.2,         // tread depth per tier
+    cx: -22,            // centre of the x-span (x ∈ [-56, 12])
+    width: 12,          // z span of the steps (z ∈ [-56, -44])
+    cz: -50,            // centre of the z-span (clear of the Holy Mountain)
+    topX: 12,           // x of the top step's east face (meets the ceiling's west edge)
+    topY: CEIL_TOP,     // 31 — the ceiling top (second roof height)
+    steps: 31,          // risers; the top step reaches y = 31
+    stepH: 1,           // riser height per step
+    stepD: 2.2,         // tread depth per step
   };
-  const PEAK_Y = (STAIRS.tiers + 1) * STAIRS.stepH;   // 8 — pad sits one riser above the top tier
-  // Task #27: per-tier retract cycle. Neighbouring tiers are offset by 1/9
-  // of a cycle, so extension travels along the pyramid as a wave and some
-  // band of tiers is always climbable (asserted in stairCycle.test.mjs).
-  const STAIR_TIMING = {
-    period: 7.5,
-    outFrac: 0.8,
-    transFrac: 0.12,
-    phaseStep: 1 / STAIRS.tiers,
-  };
-  // Far enough that a retracted tier's footprint fully clears its slot and
-  // disappears into the rock face behind the pyramid.
-  const STAIR_RETRACT_DIST = STAIRS.stepD + 1.0;
+  const PEAK_Y = STAIRS.topY;   // 31 — the ceiling top
   const stairMat = new THREE.MeshStandardMaterial({ color: 0x453f52, roughness: 0.85 });
-  const stairColliders = [];      // static: peak platform + side skirts
-  const stairTierColliders = [];  // animated tiers — synced into `colliders`
-  const stairs = [];
+  const stairColliders = [];    // static: step climb colliders + side skirts
 
-  // Static peak platform against the wall — always-present ground at the top
-  // so a timed wave of retracting tiers always has a summit to aim for. Deep
-  // enough to U-turn on before charging back north up the launch ramp.
-  const peakHalfW = STAIRS.width / 2 + 1;
-  const peakSlab = new THREE.Mesh(
-    new THREE.BoxGeometry(peakHalfW * 2, PEAK_Y, STAIRS.padDepth),
-    stairMat
-  );
-  peakSlab.position.set(STAIRS.cx, PEAK_Y / 2, STAIRS.wallZ + STAIRS.padDepth / 2);
-  peakSlab.castShadow = true;
-  peakSlab.receiveShadow = true;
-  parent.add(peakSlab);
-  const peakStripe = new THREE.Mesh(
-    new THREE.BoxGeometry(peakHalfW * 2 + 0.16, 0.16, 0.2),
-    makeGlowMat(NEON.amber)
-  );
-  peakStripe.position.set(STAIRS.cx, PEAK_Y - 0.06, STAIRS.wallZ + STAIRS.padDepth - 0.02);
-  parent.add(peakStripe);
-  const padCollider = {
-    x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.padDepth / 2,
-    halfW: peakHalfW, halfD: STAIRS.padDepth / 2, h: PEAK_Y, soft: true,
-  };
-  stairColliders.push(padCollider);
-
-  // The tiers themselves (task #26): full-height boxes so the silhouette is
-  // a proper stepped pyramid. Colliders are `soft` like the ledges — they
-  // feed buildingTopAt (stand/climb on them) but never wall off driving, and
-  // task #28 will splice them out of this array while a tier is retracted.
-  for (let k = 0; k < STAIRS.tiers; k++) {
+  // The steps themselves: full-height boxes so the silhouette is a proper
+  // staircase. They climb EAST — the top step's east face sits at topX=12
+  // (the ceiling's west edge), so you drive up the steps and roll straight
+  // onto the ceiling top (y=31). Colliders are `soft` — they feed
+  // ugElevatorTopAt (stand/climb on them) but never wall off driving.
+  const stripeColors = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime];
+  for (let k = 0; k < STAIRS.steps; k++) {
     const h = (k + 1) * STAIRS.stepH;
-    const cz = STAIRS.wallZ + STAIRS.padDepth + (STAIRS.tiers - k - 0.5) * STAIRS.stepD;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(STAIRS.width, h, STAIRS.stepD), stairMat);
-    mesh.position.set(STAIRS.cx, h / 2, cz);
+    const cx = STAIRS.topX - (STAIRS.steps - k - 0.5) * STAIRS.stepD;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(STAIRS.stepD, h, STAIRS.width), stairMat);
+    mesh.position.set(cx, h / 2, STAIRS.cz);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     parent.add(mesh);
-    // Glow stripe along each tread's front (north) edge — reads as edge
+    // Glow stripe along each tread's front (west) edge — reads as edge
     // lighting and marks the climbable face.
-    const stripeColor = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime][k % 4];
     const stripe = new THREE.Mesh(
-      new THREE.BoxGeometry(STAIRS.width + 0.16, 0.16, 0.2),
-      makeGlowMat(stripeColor)
+      new THREE.BoxGeometry(0.2, 0.16, STAIRS.width + 0.16),
+      makeGlowMat(stripeColors[k % 4])
     );
-    stripe.position.set(STAIRS.cx, h - 0.06, cz - STAIRS.stepD / 2 - 0.02);
+    stripe.position.set(cx - STAIRS.stepD / 2 - 0.02, h - 0.06, STAIRS.cz);
     parent.add(stripe);
-    // Collider extends ½ a tread into the band IN FRONT of this tier (z is
-    // shifted north, footprint deepened): while this tier is out it owns the
-    // strip (buildingTopAt takes the max), but when it RETRACTS the tier
-    // below's overlap keeps supporting the strip — so a car standing on a
-    // dropping tier falls exactly ONE tier (task #28) instead of to the
-    // floor. Only when a tier AND its front neighbour are both down does
-    // the strip open to the floor (brief co-down sliver of the wave).
-    const collider = {
-      x: STAIRS.cx, z: cz - STAIRS.stepD * 0.25,
-      halfW: STAIRS.width / 2, halfD: STAIRS.stepD * 0.75, h, soft: true,
-    };
-    // Task #28: tier colliders live in their own list — main.js took a
-    // one-time COPY of stairColliders via spread, so retract-sync has to
-    // splice from / push back to the level's returned `colliders` array
-    // itself (done below, once it exists) for removals to reach ugColliders.
-    stairTierColliders.push(collider);
-    stairs.push({ index: k, mesh, collider, baseZ: cz, ext: 0, active: true });
+    // Soft climb collider for this step (overlapping neighbours so there's
+    // never a gap the car can fall through while climbing).
+    stairColliders.push({
+      x: cx + STAIRS.stepD * 0.25, z: STAIRS.cz,
+      halfW: STAIRS.stepD * 0.75, halfD: STAIRS.width / 2, h, soft: true,
+    });
   }
 
-  // Solid curb skirts down the east/west faces: without them a grounded car
-  // could clip straight through the pyramid's side (soft colliders never
-  // block). They sit JUST outside the tier footprints so buildingTopAt never
-  // reports a phantom roof strip, and `elevated` cars on the tiers ignore
-  // them entirely.
-  const skirtHalfD = (STAIRS.tiers * STAIRS.stepD) / 2;
-  const skirtZ = STAIRS.wallZ + STAIRS.padDepth + skirtHalfD;
+  // Solid curb skirts down the north/south faces: without them a grounded car
+  // could clip straight through the staircase's side (soft colliders never
+  // block). They sit JUST outside the step footprints so buildingTopAt never
+  // reports a phantom roof strip.
+  const skirtHalfW = (STAIRS.steps * STAIRS.stepD) / 2;
+  const skirtX = STAIRS.topX - skirtHalfW;
   for (const side of [-1, 1]) {
-    const sx = STAIRS.cx + side * (STAIRS.width / 2 + 0.6);
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, skirtHalfD * 2), pillarMat);
-    skirt.position.set(sx, 0.5, skirtZ);
+    const sz = STAIRS.cz + side * (STAIRS.width / 2 + 0.6);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(skirtHalfW * 2, 1.0, 1.2), pillarMat);
+    skirt.position.set(skirtX, 0.5, sz);
     parent.add(skirt);
-    stairColliders.push({ x: sx, z: skirtZ, halfW: 0.6, halfD: skirtHalfD, h: 0.5 });
-  }
-
-  // ---- Massive launch ramp off the pyramid peak (task #30) ----
-  // Steep wedge sitting ON the peak pad (baseY = PEAK_Y), rising NORTH so a
-  // driver U-turns on the pad then charges back and flies over the course.
-  // Same slope approach as every other surface ramp — main.js rides it via
-  // ugRampInfoAt and launches off the lip with the def's boost kicker.
-  // Flight numbers at full throttle (v=14): vy = 14·(3.5/5)·1.25 ≈ 12.3,
-  // apex ≈ y 15.7 about 9 units past the lip, touchdown ≈ 22 units north.
-  const LAUNCH = { x: STAIRS.cx, z: STAIRS.wallZ + STAIRS.padDepth + 2.5, len: 5, width: 10, height: 3.5, boost: 1.25 };
-  addUgRamp({ x: LAUNCH.x, z: LAUNCH.z, runX: 0, runZ: 1, len: LAUNCH.len, width: LAUNCH.width, height: LAUNCH.height, boost: LAUNCH.boost, baseY: PEAK_Y });
-  // Glowing lip bar marks the launch edge.
-  const lipBar = new THREE.Mesh(
-    new THREE.BoxGeometry(LAUNCH.width + 0.2, 0.16, 0.22),
-    makeGlowMat(NEON.magenta)
-  );
-  lipBar.position.set(LAUNCH.x, PEAK_Y + LAUNCH.height - 0.08, LAUNCH.z + LAUNCH.len / 2);
-  parent.add(lipBar);
-  // Decorative diagonal struts bracing the cantilevered half back to the pad
-  // face (visual only — they sit above every tier top, no colliders needed).
-  for (const sx of [LAUNCH.x - 4, LAUNCH.x + 4]) {
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 4.2), pillarMat);
-    strut.rotation.x = Math.atan2(PEAK_Y - 1.6 - (PEAK_Y - 0.4), 3.7);   // gentle upward tilt toward the pad
-    strut.position.set(sx, PEAK_Y - 0.9, STAIRS.wallZ + STAIRS.padDepth + 1.6);
-    parent.add(strut);
+    stairColliders.push({ x: skirtX, z: sz, halfW: skirtHalfW, halfD: 0.6, h: 0.5 });
   }
 
   // ---- Padded vertical pole (tasks #31–#34) ----
-  // Tall cushioned column standing at the launch's touchdown point. A solid
-  // small collider makes ground bonks physical, while a larger pass-through
-  // TRIGGER volume catches flights: slam it above POLE_BIG_SPEED and you get
-  // the reward sequence (light burst here + boom/bounce via onPoleHit);
-  // below that it just soft-bounces you off (main.js damps the knock).
+  // Tall cushioned column standing on the open floor as a standalone landmark
+  // (the launch ramp that used to feed it was removed). A solid small collider
+  // makes ground bonks physical, while a larger pass-through TRIGGER volume
+  // catches flights: slam it above POLE_BIG_SPEED and you get the reward
+  // sequence (light burst here + boom/bounce via onPoleHit); below that it
+  // just soft-bounces you off (main.js damps the knock).
   const POLE = { x: 95, z: -64, r: 1.6, h: 16, trigR: 5.5, bigSpeed: 8 };
   const poleBodyMat = new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.9 });
   const poleBody = new THREE.Mesh(
@@ -840,17 +628,13 @@ export function addUnderground(parent, opts = {}) {
     fxBursts.push({ age: 0, life: 1.0, lights, rings: [mkRing(-Math.PI / 2, 0), mkRing(0, Math.PI / 2)] });
   }
 
-  // Task #35 helper: is the car ghosting at floor level inside an EXTENDED
-  // tier/pad footprint? (Soft colliders never block, so a car that enters a
-  // slot too low to snap up can sit inside the boxes.) main.js nudges it
-  // back out to open floor after a moment.
+  // Task #35 helper: is the car ghosting at floor level inside the solid
+  // staircase / roof footprint? (Soft colliders never block, so a car that
+  // enters a slot too low to snap up can sit inside the boxes.) main.js
+  // nudges it back out to open floor after a moment.
   function stairGhostAt(x, y, z) {
     if (y > 0.45) return false;
-    if (Math.abs(x - padCollider.x) <= padCollider.halfW && Math.abs(z - padCollider.z) <= padCollider.halfD
-      && y < padCollider.h - 1.2) return true;
-    for (const st of stairs) {
-      if (!st.active) continue;
-      const c = st.collider;
+    for (const c of stairColliders) {
       if (Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD && y < c.h - 1.2) return true;
     }
     return false;
@@ -1116,10 +900,7 @@ export function addUnderground(parent, opts = {}) {
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ledgeColliders, ...beamColliders, ...stairColliders, ...mountColliders, ...glassCity.colliders];
-  // Register the animated tier colliders directly in the returned array so
-  // the task-#28 splice/push sync below actually reaches ugColliders.
-  for (const c of stairTierColliders) colliders.push(c);
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ceilingColliders, ...stairColliders, ...mountColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
@@ -1134,10 +915,9 @@ export function addUnderground(parent, opts = {}) {
     spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
     conduitPipes,
     sweepers,
-    stairs,      // live retracting-stair tier state (tasks #25–#28)
-    STAIRS,      // footprint constants (peak platform, tier count/sizes)
+    STAIRS,      // footprint constants (solid ramp + big flat roof)
     poleState,   // padded-pole hit counter + last hit info (tasks #31–#32)
-    stairGhostAt, // task #35: floor-level ghost detection inside the pyramid
+    stairGhostAt, // task #35: floor-level ghost detection inside the staircase
     holy,        // Holy Mountain live state (mystery-light pulse, entered flag)
     spiralTubeMat: tubeMat, // arrival cinematic fades the tube translucent so the orbiting camera can see the car inside
     get bumpCount() { return bumpCount; },
@@ -1181,54 +961,6 @@ export function addUnderground(parent, opts = {}) {
       const elevH = ELEV_MID + ELEV_AMP * Math.sin(elapsed * ELEV.speed);
       elevGroup.position.y = elevH - 0.25;
       elevatorCollider.h = elevH;
-      // Tasks #27–#28: run each pyramid tier through its retract cycle —
-      // slide the mesh horizontally into the cavern wall (−Z) and back, then
-      // sync its collider: spliced OUT of the collider list while retracted
-      // so buildingTopAt stops reporting a surface there and a car standing
-      // on that tier falls through to the tier below instead of riding a
-      // ghost step. Membership only changes on state flips, so this is
-      // splice-churn-free while a tier holds its plateau.
-      for (const st of stairs) {
-        st.ext = stepExtension(stepTau(elapsed, st.index, STAIR_TIMING), STAIR_TIMING);
-        st.mesh.position.z = st.baseZ - st.ext * STAIR_RETRACT_DIST;
-        const active = stepColliderActive(st.ext);
-        if (active !== st.active) {
-          st.active = active;
-          if (active) {
-            colliders.push(st.collider);
-          } else {
-            const idx = colliders.indexOf(st.collider);
-            if (idx !== -1) colliders.splice(idx, 1);
-          }
-        }
-      }
-      // Tasks #22–#23: spin each sweeper arm around its post and, when the
-      // arm's segment sweeps through a car riding at beam height, fire
-      // onSweeperHit with a radial unit vector (away from the pivot) so the
-      // caller can launch the car off the plank. Vertical gate keeps floor
-      // drivers safe; per-arm cooldown keeps one clip from firing per frame.
-      for (const s of sweepers) {
-        s.angle = s.swing
-          ? s.swing.center + s.swing.amp * Math.sin(elapsed * s.speed + s.phase)
-          : s.phase + elapsed * s.speed;
-        s.grp.rotation.y = s.angle;
-        if (s.cd > 0) s.cd -= delta;
-        if (player && onSweeperHit && s.cd <= 0
-          && player.y > s.armY - 2.6 && player.y < s.armY + 0.9) {
-          // rotation.y = a maps local +X to world (cos a, 0, -sin a).
-          const ex = s.px + Math.cos(s.angle) * s.len;
-          const ez = s.pz - Math.sin(s.angle) * s.len;
-          const d2 = segDistSq(s.px, s.armY, s.pz, ex, s.armY, ez, player.x, player.y, player.z);
-          if (d2 <= 2.6 * 2.6) {
-            s.cd = 0.9;
-            s.hits += 1;
-            let nx = player.x - s.px;
-            let nz = player.z - s.pz;
-            const nl = Math.hypot(nx, nz) || 1;
-            onSweeperHit(nx / nl, nz / nl);
-          }
-        }
-      }
       // Tasks #31–#32: padded-pole trigger. Swept segment check (previous →
       // current position) against the pole axis so a slow frame can't tunnel
       // through the trigger volume; airborne gate keeps ground drivers near

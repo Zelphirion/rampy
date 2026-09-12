@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="rampy_logo.png" alt="Rampy logo" width="400">
+</p>
+
 # Crankshaft and Rampy's Wreck-less Ramble
 
 A 3D open-world driving toy (Three.js). Drive around a little city with traffic

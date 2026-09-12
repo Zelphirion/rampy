@@ -11,16 +11,52 @@ const windowMaterial = new THREE.MeshStandardMaterial({
 });
 const doorMaterial = new THREE.MeshStandardMaterial({ color: 0x6b4026, roughness: 1 });
 
+export const PORTAL_HILL = { x: 56, z: 27, baseRadius: 16, topRadius: 6, height: 4 };
+
+export function portalHillHeightAt(x, z) {
+  const radius = Math.hypot(x - PORTAL_HILL.x, z - PORTAL_HILL.z);
+  if (radius >= PORTAL_HILL.baseRadius) return 0;
+  if (radius <= PORTAL_HILL.topRadius) return PORTAL_HILL.height;
+  return PORTAL_HILL.height * (PORTAL_HILL.baseRadius - radius) /
+    (PORTAL_HILL.baseRadius - PORTAL_HILL.topRadius);
+}
+
 // ===== Ground =====
 function addGround(scene) {
   // Asymmetric ground: the grass only extends far to the NORTH (the mega-ramp
   // approach field, z up to ~126). The east/west/south edges end at ±90 like
   // the original map. The box overhangs each wrap seam slightly (to ~±95) so
   // no grass edge is ever visible through the seams.
-  const ground = new THREE.Mesh(new THREE.BoxGeometry(190, 0.25, 221), grassMaterial);
-  ground.position.set(0, -0.125, 15.5);
-  ground.receiveShadow = true;
-  scene.add(ground);
+  //
+  // The ground is split into four slabs with a rectangular HOLE over the
+  // abandoned mine shaft (x -60..-50, z 34..54). The descending-adit
+  // excavation lives in that hole, so the car visibly drives DOWN into the
+  // shaft instead of sinking below a flat meadow plane.
+  const groundY = -0.125;
+  const groundH = 0.25;
+  const makeSlab = (w, d, x, z) => {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(w, groundH, d), grassMaterial);
+    slab.position.set(x, groundY, z);
+    slab.receiveShadow = true;
+    scene.add(slab);
+  };
+  // South slab: z -95..32 (full width) — hole starts closer to the rocks.
+  makeSlab(190, 127, 0, -31.5);
+  // North slab: z 44..126 (full width).
+  makeSlab(190, 82, 0, 85);
+  // West slab: x -95..-61, z 32..44 — wider hole.
+  makeSlab(34, 12, -78, 38);
+  // East slab: x -49..95, z 32..44 — wider hole.
+  makeSlab(144, 12, 23, 38);
+
+  const hill = new THREE.Mesh(
+    new THREE.CylinderGeometry(PORTAL_HILL.topRadius, PORTAL_HILL.baseRadius, PORTAL_HILL.height, 48),
+    grassMaterial
+  );
+  hill.position.set(PORTAL_HILL.x, PORTAL_HILL.height / 2, PORTAL_HILL.z);
+  hill.castShadow = true;
+  hill.receiveShadow = true;
+  scene.add(hill);
 }
 
 // ===== Roads, crosswalks =====
@@ -187,6 +223,54 @@ function makeBuilding(scene, x, z, w, d, h, color) {
 // Creates a building with one side open (facing the edge of the map) and
 // glowing hovering rings inside that float upward.
 const hoveringRings = []; // stored for animation
+
+function makeHilltopPortal(scene) {
+  const group = new THREE.Group();
+  // Floating concentric glowing rings stacked vertically above the hill like
+  // a column of light the car floats UP through during the levitation sequence.
+  // Larger rings sit near the ground, progressively smaller ones higher up —
+  // the car threads through the whole tower on its way to the sky.  Every
+  // ring is a shade of green so the whole column reads as a glowing green
+  // beacon.  Each ring bobs gently up/down out of phase.
+  const ringDefs = [
+    { r: 5.8, y: 3 },
+    { r: 5.2, y: 12 },
+    { r: 4.5, y: 22 },
+    { r: 3.8, y: 34 },
+    { r: 3.0, y: 48 },
+    { r: 2.2, y: 64 },
+    { r: 1.6, y: 82 },
+    { r: 1.1, y: 100 },
+  ];
+  ringDefs.forEach((def, i) => {
+    const t = i / (ringDefs.length - 1);  // 0 = lowest, 1 = highest
+    const hue = 0.36 - t * 0.08;          // forest green → bright spring green
+    const sat = 0.88;
+    const light = 0.32 + t * 0.4;         // upper rings glow brighter
+    const color = new THREE.Color().setHSL(hue, sat, light);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(def.r, 0.28, 16, 48),
+      new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 1.8 + t * 0.8,
+        roughness: 0.25,
+        metalness: 0.6,
+        transparent: true,
+        opacity: 0.88,
+      })
+    );
+    ring.rotation.x = Math.PI / 2;   // lie flat, face the sky
+    ring.position.y = def.y;
+    group.add(ring);
+    hoveringRings.push({ mesh: ring, baseY: def.y, speed: 0.35 + i * 0.04, phase: i * 0.7 });
+  });
+  const portalLight = new THREE.PointLight(0x33ff66, 14, 40, 2);
+  portalLight.position.y = PORTAL_HILL.height + 2;
+  group.add(portalLight);
+  group.position.set(PORTAL_HILL.x, 0, PORTAL_HILL.z);
+  scene.add(group);
+}
 
 function makeOpenBuilding(scene, x, z, w, d, h, color, openSide) {
   const group = new THREE.Group();
@@ -381,27 +465,7 @@ function addBuildings(scene, buildingColliders) {
     buildingColliders.push({ x: spec.x, z: spec.z, halfW: spec.w / 2, halfD: spec.d / 2, h: spec.h });
   });
 
-  // Special portal building just north of the main road's east end. DOUBLED
-  // in every dimension (28×28 footprint, 20 tall) per request — it now looms
-  // over the whole east end of town. The centre sits at z=27 so the south
-  // face (z=13) stays a full unit clear of the main road's edge (z=±12): no
-  // street overlap. The OPEN SIDE FACES EAST (away from town — you have to
-  // round the building to find it, which keeps the portal a surprise), and
-  // the 28-wide doorway is plenty to roll through without scraping a jamb. A
-  // giant glowing ring marks the entrance (see makeOpenBuilding).
-  const openBuildingSpec = { x: 56, z: 27, w: 28, d: 28, h: 20, color: 0x6d4f3f };
-  makeOpenBuilding(scene, openBuildingSpec.x, openBuildingSpec.z, openBuildingSpec.w, openBuildingSpec.d, openBuildingSpec.h, openBuildingSpec.color, 'east');
-  // Instead of a full rectangle (which blocks the open east side), add 3 wall
-  // colliders: back (west), north, and south — leaving the east side open.
-  const wt = 0.4; // wall thickness for collider half-width
-  const ow = openBuildingSpec.x, oz = openBuildingSpec.z;
-  const obw = openBuildingSpec.w, obd = openBuildingSpec.d, obh = openBuildingSpec.h;
-  // West wall collider (full depth) — the solid back wall behind the portal
-  buildingColliders.push({ x: ow - obw / 2 + wt / 2, z: oz, halfW: wt / 2, halfD: obd / 2, h: obh });
-  // North wall collider (full width)
-  buildingColliders.push({ x: ow, z: oz + obd / 2 - wt / 2, halfW: obw / 2, halfD: wt / 2, h: obh });
-  // South wall collider (full width)
-  buildingColliders.push({ x: ow, z: oz - obd / 2 + wt / 2, halfW: obw / 2, halfD: wt / 2, h: obh });
+  makeHilltopPortal(scene);
 }
 
 // ===== Build everything =====

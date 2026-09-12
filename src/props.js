@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from './physics.js';
+import { addKnockable, setKnockableWorldGroup } from './physics.js';
 
 const grassMaterial = new THREE.MeshStandardMaterial({ color: 0x3a7a3f, roughness: 1 });
 
@@ -617,7 +617,7 @@ function makePhoneBooth(scene, x, z, rotY) {
 }
 
 // ===== Old Mine Shaft Entrance =====
-// Rough-hewn timber frame and boulders at the mouth of an old mine shaft.
+// Open pit mine shaft with boulders around the mouth.
 // The entrance faces -X (west, toward the road) so the car can drive in.
 // Returns { colliders } so main.js can block the car from driving through walls.
 function makeMineShaftEntrance(scene) {
@@ -629,52 +629,20 @@ function makeMineShaftEntrance(scene) {
   scene = mineGroup;                 // redirect all scene.add() into the group
   const x = 0, z = 0;               // local centre (group is positioned later)
   const timberMat = new THREE.MeshStandardMaterial({ color: 0x5a3d22, roughness: 0.95 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1 });
   const boulderMat = new THREE.MeshStandardMaterial({ color: 0x5c5550, roughness: 1 });
   const plankMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2e, roughness: 0.9 });
   const dirtMat = new THREE.MeshStandardMaterial({ color: 0x6b5a3e, roughness: 1 });
 
-  // --- Open cave interior: dark floor + far back wall + glowing crystals ---
-  // No walls/ceiling near the entrance — the archway stays open and driveable
+  // The old flat cave interior (dark floor plane, side walls, back ceiling,
+  // back wall, crystals) was REMOVED — the descending-adit excavation now
+  // carves its own floor, walls and ceiling through this area. Those flat
+  // planes sat at the old tunnel level and made the car look like it was
+  // sinking through water instead of driving down a slope.
   const tunnelLen = 12;     // how far back the cave extends
   const tunnelW = 5;        // interior width (z)
   const tunnelH = 4.5;      // interior height (y)
   const hw = tunnelW / 2;   // half-width
   const tx = x + 1;         // cave interior starts just behind the frame
-
-  // Dark floor inside the tunnel
-  const caveFloor = new THREE.Mesh(
-    new THREE.BoxGeometry(tunnelLen, 0.1, tunnelW),
-    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 1 })
-  );
-  caveFloor.position.set(tx + tunnelLen / 2, 0.05, z);
-  scene.add(caveFloor);
-
-  // Far back wall (deep inside, so it doesn't block the entrance view)
-  const backWall = new THREE.Mesh(
-    new THREE.BoxGeometry(0.5, tunnelH + 1, tunnelW + 1),
-    darkMat
-  );
-  backWall.position.set(tx + tunnelLen, tunnelH / 2, z);
-  scene.add(backWall);
-
-  // Subtle side walls that start MIDWAY through the tunnel (not at the entrance)
-  for (const side of [-1, 1]) {
-    const sideWall = new THREE.Mesh(
-      new THREE.BoxGeometry(tunnelLen * 0.6, tunnelH, 0.4),
-      darkMat
-    );
-    sideWall.position.set(tx + tunnelLen * 0.7, tunnelH / 2, z + side * (hw + 0.2));
-    scene.add(sideWall);
-  }
-
-  // Partial ceiling that only covers the back half (front stays open)
-  const backCeil = new THREE.Mesh(
-    new THREE.BoxGeometry(tunnelLen * 0.5, 0.4, tunnelW + 0.8),
-    darkMat
-  );
-  backCeil.position.set(tx + tunnelLen * 0.75, tunnelH + 0.2, z);
-  scene.add(backCeil);
 
   // --- Collision colliders for the tunnel walls (car can't drive through) ---
   // h=0 so buildingTopAt() doesn't mistake them for rooftops (which bypass collisions).
@@ -685,233 +653,17 @@ function makeMineShaftEntrance(scene) {
     { x: -55, z: 47, halfW: 3.0, halfD: 0.5, h: 0 },     // back wall
     { x: -60, z: 41, halfW: 1.25, halfD: 6.5, h: 0 },     // west dirt bank
     { x: -50, z: 41, halfW: 1.25, halfD: 6.5, h: 0 },     // east dirt bank
+    // The excavation pit itself: blocks AI traffic/pedestrians (aiOnly) but
+    // never the player car or the fire lizard, which can drive/walk over it.
+    { x: -55, z: 38, halfW: 6, halfD: 6, h: 0, aiOnly: true },
   ];
 
-  // --- Shining crystals at the back of the cave ---
-  const crystalColors = [0x44ddff, 0x88ff88, 0xff88ff, 0xffff66, 0x66aaff];
-  const crystalPositions = [
-    [tx + tunnelLen - 2, 0.5, z - 1.5],
-    [tx + tunnelLen - 1, 0.8, z + 0.5],
-    [tx + tunnelLen - 1.5, 0.4, z + 2],
-    [tx + tunnelLen - 2.5, 0.6, z - 0.3],
-    [tx + tunnelLen - 1.2, 1.2, z - 2],
-    [tx + tunnelLen - 0.8, 0.3, z + 1.5],
-    [tx + tunnelLen - 2, 1.0, z + 1],
-  ];
-  crystalPositions.forEach(([cx, cy, cz], i) => {
-    const col = crystalColors[i % crystalColors.length];
-    const crystalMat = new THREE.MeshStandardMaterial({
-      color: col, emissive: col, emissiveIntensity: 1.2, roughness: 0.2,
-    });
-    const h = 0.4 + Math.random() * 0.6;
-    const crystal = new THREE.Mesh(
-      new THREE.ConeGeometry(0.15 + Math.random() * 0.1, h, 5),
-      crystalMat
-    );
-    crystal.position.set(cx, cy, cz);
-    crystal.rotation.z = (Math.random() - 0.5) * 0.4;
-    crystal.rotation.x = (Math.random() - 0.5) * 0.4;
-    scene.add(crystal);
-  });
-
-  // Faint glow light deep inside the cave
-  const caveLight = new THREE.PointLight(0x44aaff, 1.5, 14, 2);
-  caveLight.position.set(tx + tunnelLen - 2, 2.5, z);
-  scene.add(caveLight);
-
-  // --- Dirt/earth mound on top of the cave (visible from outside) ---
-  const dirtRoof = new THREE.Mesh(new THREE.BoxGeometry(tunnelLen + 2, 2.0, tunnelW + 4), dirtMat);
-  dirtRoof.position.set(tx + tunnelLen / 2, tunnelH + 1.0, z);
-  scene.add(dirtRoof);
-  // Dirt side-banks flanking the tunnel
-  for (const side of [-1, 1]) {
-    const bank = new THREE.Mesh(new THREE.BoxGeometry(tunnelLen + 1, 2.2, 2.5), dirtMat);
-    bank.position.set(tx + tunnelLen / 2, 1.1, z + side * (hw + 2.5));
-    scene.add(bank);
-  }
-
-  // --- Two main vertical timber posts (the frame) ---
-  for (const side of [-1, 1]) {
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.45, 4.5, 0.45), timberMat);
-    post.position.set(x - 2.5, 2.25, z + side * 2.8);
-    post.castShadow = true;
-    scene.add(post);
-  }
-
-  // --- Horizontal lintel beam across the top ---
-  const lintel = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 6.5), timberMat);
-  lintel.position.set(x - 2.5, 4.6, z);
-  lintel.castShadow = true;
-  scene.add(lintel);
-
-  // --- Second (inner) set of posts deeper inside the tunnel ---
-  for (const side of [-1, 1]) {
-    const innerPost = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.8, 0.35), timberMat);
-    innerPost.position.set(tx + 3, 1.9, z + side * 2.5);
-    scene.add(innerPost);
-  }
-  const innerLintel = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 5.8), timberMat);
-  innerLintel.position.set(tx + 3, 3.9, z);
-  scene.add(innerLintel);
-
-  // --- Cross-bracing timbers on each side (inside the tunnel) ---
-  for (const side of [-1, 1]) {
-    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.18, 5.2, 0.18), timberMat);
-    brace.position.set(tx + 2, 2.3, z + side * 2.7);
-    brace.rotation.z = side * 0.35;
-    scene.add(brace);
-  }
-
-  // === EXTRA ROUGH LUMBER on the outside — extra posts, beams, angled braces ===
-  // Additional vertical posts flanking the entrance (wider spread)
-  for (const side of [-1, 1]) {
-    const outerPost = new THREE.Mesh(new THREE.BoxGeometry(0.35, 3.6, 0.35), timberMat);
-    outerPost.position.set(x - 2.5, 1.8, z + side * 3.8);
-    outerPost.rotation.z = side * 0.08;  // slight lean outward
-    outerPost.castShadow = true;
-    scene.add(outerPost);
-  }
-  // Diagonal log braces from outer posts to the main frame (like flying buttresses)
-  for (const side of [-1, 1]) {
-    const diagLog = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.8, 0.2), timberMat);
-    diagLog.position.set(x - 3.5, 2.0, z + side * 3.3);
-    diagLog.rotation.z = side * 0.55;
-    diagLog.rotation.y = -0.15;
-    diagLog.castShadow = true;
-    scene.add(diagLog);
-  }
-  // Extra horizontal collar beams across the top (behind the main lintel)
-  for (let i = 0; i < 3; i++) {
-    const collarBeam = new THREE.Mesh(
-      new THREE.BoxGeometry(0.25 + Math.random() * 0.1, 0.25 + Math.random() * 0.1, 6.2 + Math.random() * 0.6),
-      timberMat
-    );
-    collarBeam.position.set(x - 1.5 - i * 1.5, 3.8 + Math.random() * 0.5, z);
-    collarBeam.rotation.z = (Math.random() - 0.5) * 0.12;
-    collarBeam.castShadow = true;
-    scene.add(collarBeam);
-  }
-  // Short horizontal ledger boards nailed to the side of each outer post
-  for (const side of [-1, 1]) {
-    for (let h = 0; h < 3; h++) {
-      const ledger = new THREE.Mesh(new THREE.BoxGeometry(1.0 + Math.random() * 0.4, 0.12, 0.12), plankMat);
-      ledger.position.set(x - 2.5 + (Math.random() - 0.5) * 0.3, 1.0 + h * 1.1, z + side * 3.8);
-      ledger.rotation.y = (Math.random() - 0.5) * 0.2;
-      scene.add(ledger);
-    }
-  }
-  // Leaning support logs on the ground (angled against the outer posts)
-  for (const side of [-1, 1]) {
-    const leanLog = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 4.5, 6), timberMat);
-    leanLog.position.set(x - 4.5, 1.5, z + side * 3.5);
-    leanLog.rotation.z = side * 0.35;
-    leanLog.rotation.x = -0.1;
-    leanLog.castShadow = true;
-    scene.add(leanLog);
-  }
-  // Extra side timbers — rough horizontal planks bridging outer posts to the frame
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 4; i++) {
-      const sidePlank = new THREE.Mesh(
-        new THREE.BoxGeometry(1.4 + Math.random() * 0.6, 0.1, 0.14 + Math.random() * 0.06),
-        plankMat
-      );
-      sidePlank.position.set(
-        x - 3.0 - i * 0.8 + (Math.random() - 0.5) * 0.2,
-        0.6 + i * 1.0 + Math.random() * 0.3,
-        z + side * (3.0 + Math.random() * 0.5)
-      );
-      sidePlank.rotation.y = side * 0.15 + (Math.random() - 0.5) * 0.1;
-      sidePlank.rotation.z = side * 0.08;
-      sidePlank.castShadow = true;
-      scene.add(sidePlank);
-    }
-  }
-  // Additional vertical supports pressed against the dirt banks
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 2; i++) {
-      const bankPost = new THREE.Mesh(
-        new THREE.BoxGeometry(0.22, 2.8 + Math.random() * 1.2, 0.22),
-        timberMat
-      );
-      bankPost.position.set(
-        tx + 2 + i * 5 + Math.random() * 2,
-        1.4,
-        z + side * (hw + 1.5 + Math.random() * 0.8)
-      );
-      bankPost.rotation.z = (Math.random() - 0.5) * 0.15;
-      bankPost.castShadow = true;
-      scene.add(bankPost);
-    }
-  }
-  // Diagonal kickers bracing the dirt banks from below
-  for (const side of [-1, 1]) {
-    const kicker = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 3.2, 5), timberMat);
-    kicker.position.set(tx + 6, 0.8, z + side * (hw + 2.0));
-    kicker.rotation.z = side * 0.6;
-    kicker.rotation.x = 0.2;
-    kicker.castShadow = true;
-    scene.add(kicker);
-  }
-
-  // === ROCKS ON TOP of the dirt mound ===
-  const rockColors = [0x6e665e, 0x7a756d, 0x5c574f, 0x847e76, 0x635e56];
-  // Large boulders sitting on the roof mound
-  const roofRockData = [
-    [tx + 1,    tunnelH + 2.2, z - 1.5, 1.0],
-    [tx + 3,    tunnelH + 2.5, z + 0.8, 0.85],
-    [tx + 5,    tunnelH + 2.1, z - 0.5, 1.1],
-    [tx + 7,    tunnelH + 2.6, z + 1.2, 0.9],
-    [tx + 9,    tunnelH + 2.3, z - 1.0, 0.95],
-    [tx + 10.5, tunnelH + 2.0, z + 0.3, 0.8],
-    [tx + 2,    tunnelH + 2.4, z + 2.0, 0.7],
-    [tx + 6,    tunnelH + 2.2, z - 2.0, 0.75],
-    [tx + 8,    tunnelH + 2.5, z + 2.2, 0.65],
-    [tx + 4,    tunnelH + 2.1, z,       1.05],
-  ];
-  roofRockData.forEach(([rx, ry, rz, rr]) => {
-    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
-    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
-    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 7, 5), rockMat);
-    rock.scale.y = 0.55 + Math.random() * 0.3;
-    rock.scale.x = 0.8 + Math.random() * 0.4;
-    rock.position.set(rx, ry, rz);
-    rock.rotation.set(Math.random(), Math.random() * Math.PI, Math.random() * 0.3);
-    rock.castShadow = true;
-    scene.add(rock);
-  });
-  // Medium rocks scattered across the mound slope
-  for (let i = 0; i < 14; i++) {
-    const rx = tx + 1 + Math.random() * (tunnelLen - 2);
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const rz = z + side * (hw + 1 + Math.random() * 1.5);
-    const rr = 0.35 + Math.random() * 0.45;
-    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
-    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
-    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 6, 4), rockMat);
-    rock.scale.y = 0.5 + Math.random() * 0.3;
-    rock.position.set(rx, tunnelH + 0.8 + Math.random() * 1.2, rz);
-    rock.rotation.set(Math.random(), Math.random() * Math.PI, 0);
-    rock.castShadow = true;
-    scene.add(rock);
-  }
-  // Small pebbles across the top
-  for (let i = 0; i < 18; i++) {
-    const rx = tx + Math.random() * tunnelLen;
-    const rz = z + (Math.random() - 0.5) * (tunnelW + 2);
-    const rr = 0.15 + Math.random() * 0.25;
-    const col = rockColors[Math.floor(Math.random() * rockColors.length)];
-    const rockMat = new THREE.MeshStandardMaterial({ color: col, roughness: 1 });
-    const rock = new THREE.Mesh(new THREE.SphereGeometry(rr, 5, 4), rockMat);
-    rock.scale.y = 0.4 + Math.random() * 0.3;
-    rock.position.set(rx, tunnelH + 1.8 + Math.random() * 0.8, rz);
-    scene.add(rock);
-  }
+  // (above-ground structures removed — open pit mine shaft)
 
   // --- Worn planks on the ground at the entrance ---
   for (let i = 0; i < 4; i++) {
     const plank = new THREE.Mesh(new THREE.BoxGeometry(1.8 + Math.random() * 0.8, 0.1, 0.5), plankMat);
-    plank.position.set(x - 2 + Math.random() * 1.5, 0.06, z + (i - 1.5) * 1.4 + (Math.random() - 0.5) * 0.3);
+    plank.position.set(x - 2 + Math.random() * 1.5, 0.06 + (Math.random() - 0.5) * 0.04, z + (i - 1.5) * 1.4 + (Math.random() - 0.5) * 0.3);
     plank.rotation.y = (Math.random() - 0.5) * 0.3;
     scene.add(plank);
   }
@@ -949,16 +701,137 @@ function makeMineShaftEntrance(scene) {
     });
   });
 
-  // --- Small rocks/gravel on the ground around the entrance ---
+  // --- Small rocks/gravel on the ground around the entrance (knockable) ---
   const gravelMat = new THREE.MeshStandardMaterial({ color: 0x8a8078, roughness: 1 });
   for (let i = 0; i < 12; i++) {
     const angle = Math.random() * Math.PI * 2;
     const dist = 3 + Math.random() * 2.5;
     const gr = 0.12 + Math.random() * 0.18;
+    const gg = new THREE.Group();
     const g = new THREE.Mesh(new THREE.SphereGeometry(gr, 5, 4), gravelMat);
-    g.position.set(x + Math.cos(angle) * dist, gr * 0.4, z + Math.sin(angle) * dist);
+    g.position.y = gr * 0.4;
     g.scale.y = 0.5;
-    scene.add(g);
+    gg.add(g);
+    gg.position.set(x + Math.cos(angle) * dist, 0, z + Math.sin(angle) * dist);
+    scene.add(gg);
+    addKnockable(gg, gr + 0.2, {
+      mode: 'slide',
+      fallTime: 0.25 + Math.random() * 0.15,
+      slideDistance: 0.8 + Math.random() * 0.8,
+      shovePower: 6,
+      shoveSpinPower: 1.5,
+    });
+  }
+
+  // --- Broken board walls lining the sides of the ceiling ---
+  // Weathered boards standing in the grass at the edges of the excavation,
+  // leaning inward so each board's base sits on the grass and its top leans
+  // against the edge of the wooden ceiling (never skewered through it).
+  // Gaps and missing boards let the rock show through; the entrance (x < 0)
+  // is left clear.
+  // Ceiling height (world y) above the mine bed at local x (tunnel axis).
+  const ceilHAt = (lx) => {
+    const wz = 34 + lx;
+    const prof = MINE_ADIT_PROFILE;
+    let drop;
+    if (wz <= prof[0][0]) drop = prof[0][1];
+    else if (wz >= prof[prof.length - 1][0]) drop = prof[prof.length - 1][1];
+    else {
+      for (let i = 1; i < prof.length; i++) {
+        if (wz <= prof[i][0]) {
+          const za = prof[i - 1][0], zb = prof[i][0];
+          const ya = prof[i - 1][1], yb = prof[i][1];
+          drop = ya + (yb - ya) * (wz - za) / (zb - za);
+          break;
+        }
+      }
+    }
+    return drop + 4.5;
+  };
+  for (let side = -1; side <= 1; side += 2) {
+    for (let bx = 0.5; bx < 12; bx += 0.65 + Math.random() * 0.55) {
+      if (Math.random() < 0.2) continue;   // broken gap in the wall
+      const lean = 0.4 + Math.random() * 0.15;   // lean inward against the ceiling edge
+      const ceilY = ceilHAt(bx);
+      const bh = ceilY / Math.cos(lean) + 0.05;   // tall enough to just touch the ceiling
+      const bd = 0.8 + Math.random() * 1.4;   // varied lengths along the wall
+      const bz = side * (6.2 + Math.random() * 0.6);   // on the grass, outside the hole
+      const board = new THREE.Mesh(new THREE.BoxGeometry(bd, bh, 0.12), plankMat);
+      board.position.set(bx, bh / 2 - 0.1, bz);
+      board.rotation.x = -side * lean;
+      board.rotation.z = (Math.random() - 0.5) * 0.12;
+      board.castShadow = true;
+      scene.add(board);
+      // Occasionally a fallen board lying at the base of the wall
+      if (Math.random() < 0.25) {
+        const fallen = new THREE.Mesh(new THREE.BoxGeometry(1.2 + Math.random() * 0.8, 0.12, 0.1), plankMat);
+        fallen.position.set(bx + (Math.random() - 0.5) * 0.5, 0.08, bz + side * 0.4);
+        fallen.rotation.y = Math.random() * Math.PI;
+        scene.add(fallen);
+      }
+    }
+  }
+
+  // --- Rickety gate archway in front of the entrance (open — car drives through) ---
+  const gateX = x - 3.5;   // just in front of the entrance
+  const gateHalf = 2.9;    // half-width of the opening
+  for (const side of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 4.6, 0.35), timberMat);
+    post.position.set(gateX, 2.3, z + side * gateHalf);
+    post.rotation.z = side * 0.06;   // slight lean
+    post.castShadow = true;
+    scene.add(post);
+  }
+  const gateLintel = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, gateHalf * 2 + 0.8), timberMat);
+  gateLintel.position.set(gateX, 4.7, z);
+  gateLintel.rotation.z = 0.05;      // slightly crooked
+  gateLintel.castShadow = true;
+  scene.add(gateLintel);
+  for (const side of [-1, 1]) {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.15, 3.4, 0.15), timberMat);
+    brace.position.set(gateX + side * 0.6, 2.2, z + side * gateHalf * 0.7);
+    brace.rotation.z = side * 0.5;
+    brace.castShadow = true;
+    scene.add(brace);
+  }
+
+  // --- Pickaxe and mining tools scattered near the entrance ---
+  const toolMetalMat = new THREE.MeshStandardMaterial({ color: 0x6d757a, roughness: 0.6, metalness: 0.7 });
+  // Pickaxe leaning against a boulder
+  const pickGroup = new THREE.Group();
+  const pickHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 1.3, 6), timberMat);
+  pickHandle.position.y = 0.65;
+  pickHandle.rotation.z = 0.5;
+  pickGroup.add(pickHandle);
+  const pickHead = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.05, 6, 12, Math.PI), toolMetalMat);
+  pickHead.position.set(0.55, 1.15, 0);
+  pickHead.rotation.z = 0.5;
+  pickGroup.add(pickHead);
+  pickGroup.position.set(x - 4.5, 0, z - 1.5);
+  pickGroup.rotation.y = 0.6;
+  scene.add(pickGroup);
+  addKnockable(pickGroup, 0.5, { mode: 'slide', fallTime: 0.3, slideDistance: 1.0, shovePower: 6, shoveSpinPower: 1.5 });
+
+  // Shovel lying on the ground
+  const shovelGroup = new THREE.Group();
+  const shovelHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1.1, 6), timberMat);
+  shovelHandle.rotation.z = Math.PI / 2;
+  shovelHandle.position.set(0, 0.05, 0);
+  shovelGroup.add(shovelHandle);
+  const shovelBlade = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.04, 0.25), toolMetalMat);
+  shovelBlade.position.set(0.65, 0.05, 0);
+  shovelGroup.add(shovelBlade);
+  shovelGroup.position.set(x - 4.8, 0, z + 1.8);
+  shovelGroup.rotation.y = -0.4;
+  scene.add(shovelGroup);
+  addKnockable(shovelGroup, 0.5, { mode: 'slide', fallTime: 0.3, slideDistance: 1.0, shovePower: 6, shoveSpinPower: 1.5 });
+
+  // A couple of loose timber scraps
+  for (let i = 0; i < 3; i++) {
+    const scrap = new THREE.Mesh(new THREE.BoxGeometry(1.2 + Math.random() * 0.8, 0.08, 0.25), plankMat);
+    scrap.position.set(x - 4 + Math.random() * 2, 0.05, z + (Math.random() - 0.5) * 4);
+    scrap.rotation.y = Math.random() * Math.PI;
+    scene.add(scrap);
   }
 
   // --- Position & orient the mine group ---
@@ -966,6 +839,10 @@ function makeMineShaftEntrance(scene) {
   mineGroup.position.set(-55, 0, 34);
   mineGroup.rotation.y = -Math.PI / 2;  // face south (-Z = bottom of minimap)
   _realScene.add(mineGroup);
+  // Update the world matrix so the knockable system can convert directions
+  // from world space to the group's local space (ghost-rock fix).
+  mineGroup.updateMatrixWorld(true);
+  setKnockableWorldGroup(mineGroup);
 
   return { colliders: mineColliders };
 }
@@ -1405,6 +1282,20 @@ function updateFountains(fountains, delta) {
   }
 }
 
+// Twinkle the mine-shaft gems: each gem shimmers on its own phase/speed.
+// Cubing the sine makes the flashes brief and bright — like facets catching
+// the light — and a tiny scale pulse adds life without moving the body.
+function updateMineGems(gems, delta) {
+  for (const g of gems) {
+    g.time += delta;
+    const t = g.time * g.speed + g.phase;
+    const sparkle = Math.pow(Math.max(0, Math.sin(t)), 3);
+    g.mesh.material.emissiveIntensity = g.base * (0.55 + 0.75 * sparkle);
+    const pulse = 1 + 0.05 * Math.sin(t * 1.7);
+    g.mesh.scale.copy(g.baseScale).multiplyScalar(pulse);
+  }
+}
+
 // ===== Bronze & stone statues =====
 const bronzeMat = new THREE.MeshStandardMaterial({ color: 0x6e5a3c, roughness: 0.5, metalness: 0.5 });
 const statueStoneMat = new THREE.MeshStandardMaterial({ color: 0xb8b5ad, roughness: 0.9 });
@@ -1493,7 +1384,7 @@ export function addProps(scene) {
   makeStopSign(scene, 0, -12.8, Math.PI);
 
   for (let x = -70; x <= 70; x += 14) {
-    // Skip the portal building's stretch — it now spans x 42..70 at z=17
+    // Keep this row open around the portal hill.
     if (x < 40 || x > 72) makeLampPost(scene, x, 17);
     makeLampPost(scene, x, -17);
   }
@@ -1518,7 +1409,7 @@ export function addProps(scene) {
   makeFireHydrant(scene, -34, 18);    // near north building (-28,12)
   makeFireHydrant(scene, 16, 18);     // near north building (6,12)
   makeFireHydrant(scene, 42, 18);     // near north-east building (36,12)
-  makeFireHydrant(scene, 76, 20);     // beside the portal building's open east side (56,27), clear of its walls
+  makeFireHydrant(scene, 76, 20);     // beside the portal hill
   makeFireHydrant(scene, -20, 58);    // near rightmost shop
   makeFireHydrant(scene, 60, 48);     // near park edge
 
@@ -1533,8 +1424,264 @@ export function addProps(scene) {
   addVillageCharm(scene, fountains);
   addStreetFurniture(scene);
   const { colliders: mineColliders } = makeMineShaftEntrance(scene);
+  const mineGems = excavateDescendingAdit(scene);
 
-  return { trafficLights, fountains, mineColliders };
+  return { trafficLights, fountains, mineColliders, mineGems };
 }
 
-export { updateFountains };
+// ========================================================================
+// Descending Adit — a REAL visible dig-down at the mine mouth.
+//
+// Previously the mine-shift dive sold poorly: the car parked on flat paving,
+// tipped its nose, and sank straight down into closed turf — nobody saw it
+// "go underground". This builder carves an honest, graded excavation into
+// the ground at the mine entrance so the departure finally reads:
+//
+//   • A GRASSY APRÓN grades down from the meadow into a widening notch.
+//   • STEPPED ROCK-TERRACE walls hem the slot on both flanks (hewn layers,
+//     not sheer voids), so the passage visibly LOWERS as it advances.
+//   • A DESCENDING SOIL BED carries the carriage-way steadily downward
+//     (monotonic Y-loss) toward the darkened throat.
+//   • COLORFUL FACET-GEMS crust the freshly-exposed cliff faces AND drip
+//     from a CONVERGENT ARCH-CANOPY overhead — brighter and denser as the
+//     slot burrows, so the eyes follow the jewels down into the dark.
+//
+// Coordinates are WORLD space (independent of the rotated timber hut), tuned
+// to the existing mine cluster: axis x=-55, advancing +z from the meadow
+// (z≈30) down to the buried throat (z≈54), bounded by the existing dirt-bank
+// colliders at x=-60 / x=-50. Nothing here creates colliders — the stock
+// mine huts + banks already fence the driver; this is pure dressing so the
+// descent is spectacular and believable.
+// ------------------------------------------------------------------------
+
+// Shared station profile (z -> cumulative drop below grade). Exported so the
+// dive motion in main.js interpolates the SAME curve — the car's path and the
+// carved bed can never drift apart. Opens with a long FLAT runway inside the
+// mouth, toes off imperceptibly, then plunges well past the old terminus so
+// the car visibly dwindles into the earth.
+export const MINE_ADIT_PROFILE = [
+  [30, 0.0],
+  [34, 0.0],      // flat lead-in — enter, coast, THEN descend
+  [37, -0.4],     // whisper-grade toe-off
+  [40, -1.2],
+  [43, -2.6],
+  [46, -4.4],
+  [49, -6.6],
+  [52, -9.0],
+  [54, -10.5],    // buried throat
+];
+
+function excavateDescendingAdit(scene) {
+  const AXIS_X = -55;
+
+  // Materials -----------------------------------------------------------
+  const soilMat = new THREE.MeshStandardMaterial({ color: 0x4a3b28, roughness: 1 });
+  const soilDarkMat = new THREE.MeshStandardMaterial({ color: 0x33271a, roughness: 1 });
+  const rockFaceMat = new THREE.MeshStandardMaterial({ color: 0x5f5a52, roughness: 1 });
+  const rockDeepMat = new THREE.MeshStandardMaterial({ color: 0x3c3833, roughness: 1 });
+
+  // Facetted gem palette — saturated colours with strong emissive bloom so
+  // they shine in the murk. Each gem gets its OWN material (colour + emissive
+  // tied) so updateMineGems() can twinkle them independently.
+  const GEM_HUE = ['#ff4bd8', '#ffe14b', '#4bf0ff', '#7dff4b', '#b06bff'];
+
+  // Station profile: z -> cumulative drop below grade (units). Shared with the
+  // dive motion in main.js via MINE_ADIT_PROFILE so the carved bed and the
+  // car's path stay perfectly in sync.
+  const PROFILE = MINE_ADIT_PROFILE;
+  const dropAt = (zz) => {
+    if (zz <= PROFILE[0][0]) return PROFILE[0][1];
+    if (zz >= PROFILE[PROFILE.length - 1][0]) return PROFILE[PROFILE.length - 1][1];
+    for (let i = 1; i < PROFILE.length; i++) {
+      if (zz <= PROFILE[i][0]) {
+        const za = PROFILE[i - 1][0], zb = PROFILE[i][0];
+        const ya = PROFILE[i - 1][1], yb = PROFILE[i][1];
+        const tt = (zz - za) / (zb - za);
+        return ya + (yb - ya) * tt;
+      }
+    }
+    return PROFILE[PROFILE.length - 1][1];
+  };
+
+  const HALFW = 5;              // channel half-width (flanked by x=-60/x=-50 banks)
+  const CH_MIN = 30, CH_MAX = 44;  // matches ground hole in map.js (z 34..44)
+
+  // Helper: a single tapering bedrock shelf filling one side of the slot.
+  // Approximates the hewn cliff-face as a ladder of stepped prisms that walk
+  // DOWN and INWARD as z advances — classic quarry terracing.
+  function addFlankBank(sign /* -1 = west (x<xAxis), +1 = east */) {
+    const innerEdgeSign = sign;             // signed direction from axis to the wall
+    const numSteps = 6;
+    const zPer = (CH_MAX - CH_MIN) / numSteps;
+    for (let sIdx = 0; sIdx < numSteps; sIdx++) {
+      const zA = CH_MIN + sIdx * zPer;
+      const zB = zA + zPer;
+      const fracMid = (sIdx + 0.5) / numSteps;                     // 0..1 along the dig
+      const maxDrop = -PROFILE[PROFILE.length - 1][1];             // total burial (10.5)
+      const dropMid = -(fracMid * maxDrop);                        // average drop at midpoint
+      // Step thickness widens as we go deeper (bank bulges inward over the slot).
+      const thickInner = 1.2 + fracMid * 2.6;                      // protrusion past the nominal wall
+      const stepCX = AXIS_X + sign * (HALFW + thickInner / 2);
+      const stepCY = dropMid + 0.6;                                // seat the shelf just proud of the bed
+      const stepCZ = (zA + zB) / 2;
+      const stepDX = thickInner;
+      const stepDY = 1.6 + fracMid * 1.1;                          // thicker shelves lower down
+      const stepDZ = zPer + 0.4;                                   // slight overlap kills gaps
+      const shelf = new THREE.Mesh(new THREE.BoxGeometry(stepDX, stepDY, stepDZ), rockFaceMat);
+      shelf.position.set(stepCX, stepCY, stepCZ);
+      shelf.castShadow = true;
+      shelf.receiveShadow = true;
+      scene.add(shelf);
+
+      // Grassy sod topping each shelf — ties the scarred rock back to the meadow.
+      // Wrapped in a group so it can be knocked loose by the car.
+      const sodG = new THREE.Group();
+      const sod = new THREE.Mesh(new THREE.BoxGeometry(stepDX + 0.3, 0.35, stepDZ + 0.3), grassMaterial);
+      sod.position.y = 0.17;
+      sod.receiveShadow = true;
+      sodG.add(sod);
+      sodG.position.set(stepCX, stepCY + stepDY / 2, stepCZ);
+      scene.add(sodG);
+      addKnockable(sodG, stepDX * 0.5 + 0.3, {
+        mode: 'slide',
+        fallTime: 0.3 + Math.random() * 0.2,
+        slideDistance: 1.2 + Math.random() * 1.0,
+        shovePower: 8,
+        shoveSpinPower: 2.0,
+      });
+    }
+
+    // Deep shadow curtain backing the lowest shelf — swallows the throat.
+    const deepBox = new THREE.Mesh(
+      new THREE.BoxGeometry(HALFW * 2 + 2, 7, 2.2),
+      rockDeepMat
+    );
+    deepBox.position.set(AXIS_X, -8.5, CH_MAX + 0.6);
+    scene.add(deepBox);
+  }
+
+  // Flanking quarried terraces ----------------------------------------------
+  addFlankBank(-1);
+  addFlankBank(1);
+
+  // Flat grass lip at the entrance — straight edge, no curved apron.
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(HALFW * 2 + 4, 0.1, 2.5), grassMaterial);
+  lip.position.set(AXIS_X, 0.02, CH_MIN - 1.5);
+  lip.receiveShadow = true;
+  scene.add(lip);
+
+  // Descending soil bed: a carpet of overlapping plates walking down the slot,
+  // so the carriage-way visibly LOSES HEIGHT as it advances toward the throat.
+  const plateNum = 12;
+  for (let i = 0; i < plateNum; i++) {
+    const zA = CH_MIN + (i / plateNum) * (CH_MAX - CH_MIN);
+    const zB = CH_MIN + ((i + 1) / plateNum) * (CH_MAX - CH_MIN);
+    const zm = (zA + zB) / 2;
+    const ym = dropAt(zm);
+    const plate = new THREE.Mesh(
+      new THREE.BoxGeometry(HALFW * 2 - 0.6, 0.5, zB - zA + 0.3),
+      i % 2 ? soilMat : soilDarkMat
+    );
+    // Raised 0.02 (~half inch) above the bed so the plates render on top of
+    // the grass instead of z-fighting with it at the entrance.
+    plate.position.set(AXIS_X, ym - 0.25 + 0.02, zm);
+    plate.receiveShadow = true;
+    scene.add(plate);
+  }
+
+  // Descending ceiling: rock plates spanning the channel, following the bed
+  // profile so the car drives INTO a descending tunnel. Without it the flat
+  // meadow plane at y=0 stayed visible above the car, making the descent
+  // read as sinking through water instead of driving down a slope.
+  const ceilNum = 16;
+  const CEIL_H = 4.5;     // tunnel height above the bed
+  const CEIL_START = 33;  // generously covers the hole and overlaps it (z 33..54)
+  for (let i = 0; i < ceilNum; i++) {
+    const zA = CEIL_START + (i / ceilNum) * (54 - CEIL_START);
+    const zB = CEIL_START + ((i + 1) / ceilNum) * (54 - CEIL_START);
+    const zm = (zA + zB) / 2;
+    const ym = dropAt(zm) + CEIL_H;
+    const ceil = new THREE.Mesh(
+      new THREE.BoxGeometry(HALFW * 2 - 0.6, 0.5, zB - zA + 0.3),
+      rockFaceMat
+    );
+    ceil.position.set(AXIS_X, ym, zm);
+    scene.add(ceil);
+  }
+
+  // Glowing gemstones lining the mine shaft — the "deeper into the mind"
+  // treasure. Very sparse near the mouth (z 34–40): just a few faint glimmers
+  // hinting at what's below. The cluster builds as you descend and blooms
+  // deep in the throat (z 48–54) where the biggest, brightest crystals live.
+  let seedRand = 1234;
+  const rand = () => {
+    seedRand = (seedRand * 16807) % 2147483647;
+    return (seedRand - 1) / 2147483646;
+  };
+  const OCTAHEDRON = new THREE.OctahedronGeometry(0.5, 0);
+  const DODECAHEDRON = new THREE.DodecahedronGeometry(0.5, 0);
+  const CONE = new THREE.ConeGeometry(0.34, 0.95, 5);
+  const mineGems = [];
+  // Depth bands: [start, end, gems-per-wall, base intensity, size]
+  const bands = [
+    [34, 40, 1, 1.0, 0.35],   // mouth — tiny, faint hints
+    [40, 46, 3, 1.6, 0.6],    // mid-shaft — growing presence
+    [46, 51, 4, 2.0, 0.9],    // deep — the real cluster begins
+    [51, 55, 3, 2.4, 1.1],    // throat — big showcase crystals
+  ];
+  for (const [za, zb, perWall, intenBase, sizeBase] of bands) {
+    for (let ci = 0; ci < 2; ci++) {
+      const sign = ci === 0 ? -1 : 1;
+      for (let gi = 0; gi < perWall; gi++) {
+        const zz = za + rand() * (zb - za);
+        const yy = dropAt(zz) + 0.7 + rand() * 3.6;
+        const xx = AXIS_X + sign * (HALFW - 0.5 - rand() * 1.7);
+        const hex = GEM_HUE[(rand() * GEM_HUE.length) | 0];
+        const base = intenBase + rand() * 0.5;
+        const mat = new THREE.MeshStandardMaterial({
+          color: hex, emissive: hex, emissiveIntensity: base,
+          roughness: 0.15, metalness: 0.15,
+        });
+        const roll = rand();
+        const spike = roll < 0.35;
+        const big = roll > 0.85;
+        const geo = big ? DODECAHEDRON : (spike ? CONE : OCTAHEDRON);
+        const gemMesh = new THREE.Mesh(geo, mat);
+        gemMesh.position.set(xx, yy, zz);
+        gemMesh.rotation.set(rand() * 3, rand() * 3, rand() * 3);
+        const s = (big ? sizeBase * 1.6 : sizeBase * 0.8) + rand() * sizeBase * 0.6;
+        const baseScale = new THREE.Vector3(s, s * (spike ? 1.35 : 1), s);
+        gemMesh.scale.copy(baseScale);
+        gemMesh.castShadow = true;
+        scene.add(gemMesh);
+        mineGems.push({
+          mesh: gemMesh,
+          base,
+          baseScale,
+          phase: rand() * Math.PI * 2,
+          speed: 1.2 + rand() * 2.6,
+          time: rand() * 10,
+        });
+      }
+    }
+  }
+
+  // Warm coloured spill-lights washing the descending tunnel so the car and
+  // the gems stay visible in the gloom — a cool pool near the entrance, hot
+  // pools deeper in where the treasure glows brightest.
+  const spills = [
+    [AXIS_X, 2.0, 34, 0xaaccff, 1.2, 16],
+    [AXIS_X, 2.0, 37, 0xaaccff, 1.1, 17],
+    [AXIS_X, 0.8, 44, 0xff88ee, 1.2, 16],
+    [AXIS_X, -1.2, 51, 0xffcf66, 1.4, 14],
+  ];
+  for (const [lx, ly, lz, col, inten, dst] of spills) {
+    const sp = new THREE.PointLight(col, inten, dst, 2);
+    sp.position.set(lx, ly, lz);
+    scene.add(sp);
+  }
+
+  return mineGems;
+}
+
+export { updateFountains, updateMineGems };

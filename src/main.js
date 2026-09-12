@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap, updateHoveringRings } from './map.js?v=1787160950000';
-import { addProps, updateFountains, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones } from './props.js?v=1787180000000';
+import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1787160950001';
+import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1787180000001';
 import { createCar, addTrafficCars } from './cars.js?v=1787510500000';
 import { addFiretruck } from './firetruck.js?v=1787510500000';
 import { addPeople } from './people.js';
@@ -65,6 +65,9 @@ const ROBOT_CAM_MAX_RADIUS = 42;  // fully zoomed distance when the robot is rig
 // User yaw offset (radians) added to the car's heading for the chase cam
 let cameraYawOffset = 0;
 const cameraTarget = new THREE.Vector3(0, 0.6, 0);
+const CAMERA_MANUAL_HOLD = 10;
+const CAMERA_RETURN_SPEED = 4;
+let cameraManualTimer = 0;
 const _lookTarget = new THREE.Vector3(0, 0.6, 0);      // persistent across frames
 const _mineCamTarget = new THREE.Vector3();   // reused each frame during mine dive
 const _mineLookTarget = new THREE.Vector3();
@@ -72,6 +75,21 @@ const _levCamTarget = new THREE.Vector3();    // reused each frame during levita
 const _levLookTarget = new THREE.Vector3();
 const _spiralCamTarget = new THREE.Vector3(); // reused each frame during the spiral-arrival shot
 const _spiralLookTarget = new THREE.Vector3();
+const _postCineCamPos = new THREE.Vector3();  // saved tripod position for the post-cinematic ease
+const _postCineLookPos = new THREE.Vector3(); // saved look target for the post-cinematic ease
+let _postCineTimer = 0;                       // counts down during the ease-in to chase view
+let _postCineHandoff = false;                  // true for one frame after ease ends — syncs camOffset
+const _mineAscentCamPos = new THREE.Vector3();  // emergence-shot camera position (mine ascent)
+const _mineAscentLookPos = new THREE.Vector3(); // emergence-shot look target (mine ascent)
+const _tunnelAscentCamTarget = new THREE.Vector3();  // tunnel-ascent camera target (underground → city)
+const _tunnelAscentLookTarget = new THREE.Vector3(); // tunnel-ascent look target
+let _camDbg = {};   // TEMP debug: populated by updateCamera each frame
+// Fade-to-black overlay for the mine-shaft dive → underground transition.
+// Cuts to black when the car is about halfway sunk, then fades back in
+// once the underground world is loaded.
+const _fadeOverlay = document.createElement('div');
+_fadeOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#000;z-index:9999;opacity:0;pointer-events:none';
+document.body.appendChild(_fadeOverlay);
 // Initial camera sits behind the car (car faces -X at spawn)
 const startX = cameraOrbit.radius * Math.sin(cameraOrbit.phi);
 const startY = cameraOrbit.radius * Math.cos(cameraOrbit.phi) + 2.2;
@@ -110,7 +128,7 @@ scene.add(dirLight);
 
 // ===== Build the world =====
 const { buildingColliders, ramps } = buildMap(scene);
-const { trafficLights, fountains, mineColliders } = addProps(scene);
+const { trafficLights, fountains, mineColliders, mineGems } = addProps(scene);
 const traffic = addTrafficCars(scene);
 const { people, update: updatePeople } = addPeople(scene);
 
@@ -195,11 +213,15 @@ const bumperBaseSpeed = 5;
 
 // rectCircleIntersect is shared torus/world math — imported from modules/world.js.
 
-function isPositionBlocked(x, z, radius) {
+function isPositionBlocked(x, z, radius, ignoreAIOnly = false) {
   const list = worldState === 'underground' ? ugColliders : colliders;
   // `soft` colliders (the underground elevator deck) never block driving —
   // they only feed buildingTopAt so you can land on / ride the moving deck.
-  return list.some((collider) => !collider.soft && rectCircleIntersect(x, z, collider, radius));
+  // `aiOnly` colliders (the mine pit) block AI traffic but not the player car.
+  return list.some((collider) =>
+    !collider.soft &&
+    !(ignoreAIOnly && collider.aiOnly) &&
+    rectCircleIntersect(x, z, collider, radius));
 }
 
 // Traffic cars are moving obstacles: check a position against every car on the
@@ -268,7 +290,7 @@ function playerSolids() {
 // that block driving — callers exempt airborne / rooftop / ramp-world cars,
 // which legitimately sit "inside" collider footprints from the map's view).
 function carIsOverlappingSolid() {
-  return isPositionBlocked(car.position.x, car.position.z, playerCarRadius) ||
+  return isPositionBlocked(car.position.x, car.position.z, playerCarRadius, true) ||
     isPositionBlockedByFiretruck(car.position.x, car.position.z, playerCarRadius) ||
     isPositionBlockedByRobot(car.position.x, car.position.z, playerCarRadius);
 }
@@ -553,37 +575,124 @@ let currentRamp = null; // ramp the car is ON right now (for body tilt)
 // bump and the tail rocks up as the rear wheels follow (instead of the whole
 // car rising flat and level). Recomputed every frame on grounded terrain.
 let terrainPitch = 0;
+// Tunnel interior floor state: active when the car is riding inside the
+// spiral tube in the underground world.
+let tunnelFloorState = { active: false, slope: 0, tanX: 0, tanZ: 0 };
 
-// ===== Building levitation (portal building at 56,27) =====
+// ===== Hilltop portal levitation =====
 // 1.2 seconds after driving inside the big open-front hall, the car levitates
 // upward through the roof, then teleports to the ramp world once it has
 // floated well clear — long enough for the ground-level camera to watch it go.
 const buildingLevitate = {
   active: false,
-  timer: 0,          // counts up from 0 once car enters the building
+  timer: 0,          // counts up from 0 once car enters the rings
   levitating: false,  // true once the 1.2s delay is over and the car rises
   levitateTime: 0,    // time since levitation started
-  x: 56, z: 27,       // building centre (open side faces EAST, away from town — a surprise)
-  w: 28, d: 28, h: 20, // doubled dimensions — must match map.js openBuildingSpec
+  x: PORTAL_HILL.x, z: PORTAL_HILL.z,
+  w: PORTAL_HILL.topRadius * 2, d: PORTAL_HILL.topRadius * 2,
+  h: PORTAL_HILL.height + 8,
 };
+
+function cityGroundHeightAt(x, z) {
+  return groundHeight + portalHillHeightAt(x, z);
+}
 
 // ===== Mine shaft portal (entrance at -55,50, tunnel faces north) =====
 // Driving deep into the mine tunnel triggers a dive animation: first the
 // car's nose tips forward/down as if descending into the earth, then the
 // rest of the car follows it under — about 2 seconds end to end — before
 // it cuts to the underground world's spiral-tunnel arrival cinematic.
+//
+// v2 (descending adit): the dive is now a REAL drive down the excavated
+// channel at the mine mouth. The car travels forward-and-down along the
+// graded adit (z 34 → 54, dropping ~10.5 units) while a FIXED camera parked
+// directly behind the car watches it drive away, sink below the bench
+// crests, and vanish into the jewelled dark — then the fade-cut swaps to
+// the underground.
 const minePortal = {
   active: false,       // true when the car is inside the trigger zone
   timer: 0,            // counts up once active — teleport at diveTotal
   baseY: 0,            // car's ground height when the dive started
-  tiltTime: 1.6,       // seconds spent just dipping the nose (phase 1)
-  diveTotal: 2.0,      // total seconds of dive before the underground swap
-  maxTilt: 0.6,        // nose-down angle at the end of phase 1 (~34°)
-  rearAxle: 1.0,       // pivot centre → rear axle distance (tilt pivot)
+  diveTotal: 3.1,      // seconds of visible forward-and-down travel (2× speed)
+  // Descending-adit path (world coords, matches MINE_ADIT_PROFILE):
+  //   z0/z1 = channel run, y0/y1 = grade → buried depth.
+  z0: 34, z1: 54,
+  y0: 0, y1: -10.5,
   triggerX: -55,       // X centre of the tunnel
   triggerXHalf: 2.2,   // half-width of the trigger zone in X
-  triggerZ: 42,        // Z threshold — deep in tunnel near the crystals (south)
+  triggerZ: 34,        // Z threshold — END of the flat lead-in; the car
+                       // drives the level runway manually, THEN the dive
+                       // takes over and the descent begins.
+  camZ: 26,            // Z threshold for the fixed behind-the-car camera to
+                       // park (start of the approach corridor)
+  // Camera glide: when the car commits to the approach, the camera eases
+  // from the chase position to the fixed tripod over `camBlend` seconds
+  // (smoothstep) instead of snapping — no jarring jump.
+  camBlend: 1.0,       // seconds to glide to the fixed position
+  camBlendT: 0,        // blend progress
+  camBlending: false,  // true while gliding
+  camFromX: 0, camFromY: 0, camFromZ: 0,       // start position
+  camFromLX: 0, camFromLY: 0, camFromLZ: 0,    // start look target
+  // Fixed camera parked DIRECTLY BEHIND the car on the channel axis, gazing
+  // down the adit so the car departs foreground and dwindles into the
+  // gemlit depths. No lateral offset — the view is dead-centre on the mine.
+  cam: {
+    x: -55, y: 3.5, z: 18,
+    lx: -55, ly: -2, lz: 45,
+  },
 };
+
+// Depth of the descending adit bed at world-z — interpolates the SAME
+// station profile the props carve (MINE_ADIT_PROFILE), so the car's path
+// and the visible bed can never drift apart. Flat lead-in (z 30–34) then a
+// gentle toe-off that gathers into a sustained plunge.
+function mineAditDropAt(zz) {
+  const prof = MINE_ADIT_PROFILE;
+  if (zz <= prof[0][0]) return prof[0][1];
+  if (zz >= prof[prof.length - 1][0]) return prof[prof.length - 1][1];
+  for (let i = 1; i < prof.length; i++) {
+    if (zz <= prof[i][0]) {
+      const za = prof[i - 1][0], zb = prof[i][0];
+      const ya = prof[i - 1][1], yb = prof[i][1];
+      const tt = (zz - za) / (zb - za);
+      return ya + (yb - ya) * tt;
+    }
+  }
+  return prof[prof.length - 1][1];
+}
+
+// True once the car commits to the mine approach corridor (aligned on the
+// channel axis, past the meadow).  Currently unused for the camera (the
+// chase cam now always follows the car through the mine entrance), but
+// kept as a utility in case other systems need to know.
+function isMineCamActive() {
+  if (worldState !== 'city') return false;
+  const p = minePortal;
+  return Math.abs(car.position.x - p.triggerX) < p.triggerXHalf + 1.5 && car.position.z > p.camZ;
+}
+
+// ===== Mine-ascent cinematic (underground → city) =====
+// Reverse of the dive: the car appears at the buried throat of the mine
+// shaft (z=54, y=-10.5) and drives UP the adit to the surface (z=34, y=0),
+// then shoots out of the mine entrance and flies clear before control
+// returns. No more dropping from the sky into the trigger zone.
+const mineAscent = {
+  active: false,
+  timer: 0,
+  driveTotal: 2.8,     // seconds driving up the adit (z 54 → 34)
+  launchTotal: 1.88,   // seconds of ballistic flight out of the shaft (lands at y≈0.15)
+  triggerX: -55,
+  // Launch trajectory out of the mine entrance (z=34, y=0), heading south.
+  launchVh: 15,        // horizontal speed (south, -z)
+  launchVv: 17,        // vertical speed (up)
+  gravity: 18,
+};
+// Seconds the car stays perfectly level after the mine-ascent landing — the
+// body-lean code normally pitches the hood down a touch under acceleration,
+// which looks wrong right after the car bursts out of the shaft. During the
+// settle the car drives flat (like it does at game start) before normal lean
+// physics resumes.
+let mineAscentSettle = 0;
 
 // ===== Spiral-tunnel arrival cinematic =====
 // After the mine-dive swap we no longer spawn the car over the cavern.
@@ -594,17 +703,49 @@ const minePortal = {
 const spiralCine = {
   active: false,
   timer: 0,
-  orbitDur: 2.6,   // seconds of camera-only pivot before the car is revealed
-  driveDur: 1.8,   // seconds the car rides the spiral from reveal to exit
-  sStart: 0.72,    // path parameter (0 = top entrance, 1 = foot) where the car appears
+  orbitDur: 0,     // no separate orbit phase — the car is visible the whole time
+  driveDur: 5.0,   // seconds the camera orbits the tunnel (back → front)
+  watchDur: 1.5,   // extra seconds the camera watches the exit before the car bursts out
+  sStart: 0.08,    // path parameter (0 = top entrance, 1 = foot) where the car starts
+};
+
+// ===== Tunnel-ascent cinematic (underground → city) =====
+// When the car gets near the tunnel foot in the underground, instead of just
+// driving up into the tunnel with the chase cam, we play the reverse of the
+// arrival's "car inside the tunnel" shot: the camera follows the car up the
+// spiral tunnel from behind (headlights facing away from us), then cuts to
+// the mine-ascent emergence where the car shoots out of the mine shaft.
+const tunnelAscentCine = {
+  active: false,
+  timer: 0,
+  s: 1,          // current path parameter (1 = foot → sStart = near the top)
+  driveDur: 3.5, // seconds driving up the tunnel from foot to near the top
+  sStart: 0.08,  // path parameter where the car ends (near the top)
 };
 // Orbit geometry for the arrival shot: sweep around the tunnel's centre axis
-// (TUNNEL.cx/cz), starting high on the open east side and swinging low toward
-// the foot — kept on the south/west side so Glass City never blocks the view.
-const SPIRAL_CAM_R = 30;     // orbit radius from the tunnel centre axis
-const SPIRAL_TH0 = 0.5;      // start angle around the axis (radians)
-const SPIRAL_SWEEP = -2.6;   // total radians pivoted across the whole shot
+// (TUNNEL.cx/cz) in the OPPOSITE direction to the tunnel's own spin, ending
+// exactly at the watch tripod east of the exit (see spiralWatchPose) so the
+// camera settles there to watch the car come out — no pull-back speed-up.
+// The camera rides high enough to clear the Glass City towers as it passes
+// the north.
+const SPIRAL_CAM_R = 42;     // orbit radius from the tunnel centre axis (matches the robot-zoom distance)
+const SPIRAL_SWEEP = 1.4 * Math.PI;   // angular sweep of the orbit (opposite to the tunnel's spin)
 function smooth01(s) { return s * s * (3 - 2 * s); }
+
+// Watch tripod for the arrival shot: fixed EAST of the tunnel exit (in front
+// of the opening), looking west at the exit so the car comes out toward the
+// camera. The orbit sweeps counterclockwise (opposite to the tunnel's spin)
+// and ENDS exactly here — the camera settles at this spot to watch the car
+// burst out, then eases smoothly to behind the car.
+function spiralWatchPose() {
+  const exitP = tunnelPoint(1);
+  const watchX = exitP.x + 30;   // east of the exit (in front of the opening)
+  const watchY = 8;              // camera height — above the car's exit path
+  const watchZ = exitP.z;
+  const watchAngle = Math.atan2(watchZ - TUNNEL.cz, watchX - TUNNEL.cx);
+  const watchRadius = Math.hypot(watchX - TUNNEL.cx, watchZ - TUNNEL.cz);
+  return { watchX, watchY, watchZ, watchAngle, watchRadius, startAngle: watchAngle + SPIRAL_SWEEP };
+}
 // Pose of a car driving the spiral at path parameter s: position in the
 // underground scene's local space (tunnelPoint heights are pre-offset by
 // UNDERGROUND_Y), heading from the path tangent, pitched nose-down while
@@ -620,6 +761,25 @@ function spiralPoseAt(s) {
     z: p.z,
     heading: Math.atan2(dz / flat, -dx / flat),
     pitch: -Math.atan2(q.y - p.y, flat),
+  };
+}
+// Pose of a car driving UP the spiral tunnel at path parameter s — the
+// reverse of the arrival descent. Position in the underground scene's local
+// space, heading back up the tunnel (away from the foot), nose-up while
+// climbing. The car's headlights point up the tunnel, so a camera behind it
+// sees the tail.
+function spiralPoseAtUp(s) {
+  const a = tunnelPoint(Math.max(0, s - 0.008));
+  const b = tunnelPoint(Math.min(1, s + 0.008));
+  const p = tunnelPoint(s);
+  const tx = b.x - a.x, tz = b.z - a.z;
+  const flat = Math.hypot(tx, tz) || 1e-6;
+  return {
+    x: p.x,
+    y: Math.max(0, p.y - UNDERGROUND_Y),
+    z: p.z,
+    heading: Math.atan2(-tz, tx),
+    pitch: Math.atan2(b.y - a.y, flat),
   };
 }
 
@@ -842,10 +1002,7 @@ capShadowCasters(rampScene);
 capShadowCasters(undergroundScene);
 
 // ===== Portals =====
-// The big open-front portal building at (56,27) is the city's gateway to the
-// ramp world: its glowing ring doorway faces EAST (away from town), so you
-// have to round the building to discover it — then roll in heading west,
-// pause a moment, and the car levitates up through the roof into the sky.
+// The hilltop rings at (56,27) are the city's gateway to the ramp world.
 // Returning from the ramp world is done by driving UNDER the vortex.
 
 // ===== Ramp physics =====
@@ -878,7 +1035,7 @@ function rampInfoAt(px, pz, py, onRampDef) {
 }
 function rampSurfaceY(px, pz, py) {
   const info = rampInfoAt(px, pz, py);
-  return info ? groundHeight + info.height * info.s : groundHeight;
+  return info ? groundHeight + info.height * info.s : cityGroundHeightAt(px, pz);
 }
 
 // Ramp-world launch ramps: same footprint/surface math as the city ramps, but
@@ -946,16 +1103,78 @@ function ugRampSurfaceY(px, pz) {
 
 // Current top of the underground elevator deck if (x,z) is inside its
 // footprint, else 0. The level rewrites the deck collider's `h` every frame,
-// so this tracks the moving platform exactly (task #17).
-function ugElevatorTopAt(px, pz) {
+// so this tracks the moving platform exactly (task #17). Surfaces more than
+// 1.2 above the car are ignored — the cavern ceiling (h=31) spans the whole
+// course, and without this filter it would mask the elevator deck and the
+// stair-step heights below it. (1.2 < the 1.4 snap gate, so the moment the
+// ceiling becomes visible the car can always snap up onto it.)
+function ugElevatorTopAt(px, pz, carY) {
   let top = 0;
   for (const c of ugColliders) {
     if (c.soft && Math.abs(px - c.x) <= c.halfW && Math.abs(pz - c.z) <= c.halfD) {
-      top = Math.max(top, c.h);
+      if (c.h <= carY + 1.2) top = Math.max(top, c.h);
     }
   }
   return top;
 }
+
+// ===== Tunnel interior floor (underground spiral tube) =====
+// The spiral tube that connects the cavern to the surface is a visual mesh
+// with no colliders.  These helpers let the car ride the tube's interior floor
+// so it genuinely drives UP the tunnel instead of ghosting through it on the
+// cavern floor below.
+
+// Tunnel floor height at (px, pz) in local space — no vertical proximity
+// check; used for airborne landing (the caller gates on floor <= carY).
+function tunnelFloorYRaw(px, pz) {
+  const dx = px - TUNNEL.cx;
+  const dz = pz - TUNNEL.cz;
+  const distXZ = Math.sqrt(dx * dx + dz * dz);
+  if (Math.abs(distXZ - TUNNEL.R) > TUNNEL.tubeR) return null;
+  let theta = Math.atan2(dz, dx);
+  // The tunnel arc crosses the ±π boundary of atan2 (theta0+sweep ≈ 4.85 > π),
+  // so near the foot the raw angle wraps negative. Unwrap it so s maps
+  // correctly onto [0,1] (foot = 1, top = 0).
+  if (theta < TUNNEL.theta0) theta += 2 * Math.PI;
+  let s = (theta - TUNNEL.theta0) / TUNNEL.sweep;
+  if (s < -0.05 || s > 1.05) return null;
+  s = Math.max(0, Math.min(1, s));
+  return tunnelPoint(s).y - UNDERGROUND_Y;
+}
+
+// Tunnel floor at (px, pz) for a grounded car: returns { y, slope, tanX,
+// tanZ } when the car is inside the tube AND the floor is near the car's
+// current height (prevents snapping up when driving under the tunnel on the
+// cavern floor).
+function tunnelFloorAt(px, pz, carY) {
+  const dx = px - TUNNEL.cx;
+  const dz = pz - TUNNEL.cz;
+  const distXZ = Math.sqrt(dx * dx + dz * dz);
+  if (Math.abs(distXZ - TUNNEL.R) > TUNNEL.tubeR) return null;
+  let theta = Math.atan2(dz, dx);
+  // The tunnel arc crosses the ±π boundary of atan2 (theta0+sweep ≈ 4.85 > π),
+  // so near the foot the raw angle wraps negative. Unwrap it so s maps
+  // correctly onto [0,1] (foot = 1, top = 0).
+  if (theta < TUNNEL.theta0) theta += 2 * Math.PI;
+  let s = (theta - TUNNEL.theta0) / TUNNEL.sweep;
+  if (s < -0.05 || s > 1.05) return null;
+  s = Math.max(0, Math.min(1, s));
+  const p = tunnelPoint(s);
+  const floorY = p.y - UNDERGROUND_Y;
+  // Floor must be at or below the car (with a small margin) — prevents
+  // snapping up when the car is on the cavern floor under the elevated tube.
+  if (floorY > carY + 1.5) return null;
+  // Slope for body pitch
+  const ds = 0.002;
+  const s1 = Math.max(0, s - ds), s2 = Math.min(1, s + ds);
+  const p1 = tunnelPoint(s1), p2 = tunnelPoint(s2);
+  const hDist = (s2 - s1) * TUNNEL.R * TUNNEL.sweep;
+  const slope = (p2.y - p1.y) / hDist;
+  // Path tangent for heading correction
+  const th = TUNNEL.theta0 + TUNNEL.sweep * s;
+  return { y: floorY, slope, tanX: -Math.sin(th), tanZ: Math.cos(th), s };
+}
+
 const bumperState = { speed: bumperBaseSpeed, stopped: false };
 let bumperKnock = null;   // set when the player smashes the blue car aside
 const bumperStopDistance = 3.4;     // ~1 foot of clearance before the blue car stops
@@ -1010,7 +1229,7 @@ function respawnPlayer() {
     const dx = wrappedDeltaX(c.x, robot.mesh.position.x);
     const dz = wrappedDeltaZ(c.z, robot.mesh.position.z);
     if (dx * dx + dz * dz < 30 * 30) continue;              // too close to the robot
-    if (isPositionBlocked(c.x, c.z, playerCarRadius)) continue;  // inside a building
+    if (isPositionBlocked(c.x, c.z, playerCarRadius, true)) continue;  // inside a building
     spot = c;
     break;
   }
@@ -1141,28 +1360,37 @@ function enterUndergroundWorld() {
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
-  // Park the car invisibly at its reveal point on the spiral — the cine
-  // update owns positioning until the handoff at the tunnel foot.
+  // Park the car at the top of the spiral — the cine update owns
+  // positioning until the handoff at the tunnel foot. The car is genuinely
+  // in the tunnel the whole time: the opaque tube hides it while it's deep
+  // inside, and it becomes visible as it comes around the corner toward the
+  // exit.
   const pose = spiralPoseAt(spiralCine.sStart);
   car.position.set(pose.x, pose.y, pose.z);
   car.rotation.set(0, pose.heading, pose.pitch);
-  car.visible = false;
-  // Start the arrival cinematic and plant the camera on the first orbit pose
-  // right now: this runs AFTER updateCamera this frame, so planting here
-  // makes the very first rendered frame of the new world a clean cut.
+  car.visible = true;
+  // Start the arrival cinematic and plant the camera at the orbit start:
+  // high up, looking at the centre axis, ready to sweep counterclockwise
+  // (opposite to the tunnel's spin) down to the watch tripod.
   spiralCine.active = true;
   spiralCine.timer = 0;
+  const wp = spiralWatchPose();
   camera.position.set(
-    TUNNEL.cx + SPIRAL_CAM_R * Math.cos(SPIRAL_TH0), 24,
-    TUNNEL.cz + SPIRAL_CAM_R * Math.sin(SPIRAL_TH0)
+    TUNNEL.cx + SPIRAL_CAM_R * Math.cos(wp.startAngle), 30,
+    TUNNEL.cz + SPIRAL_CAM_R * Math.sin(wp.startAngle)
   );
-  const g0 = tunnelPoint(0.12);
-  _lookTarget.set(g0.x, g0.y - UNDERGROUND_Y + 1.5, g0.z);
+  _lookTarget.set(TUNNEL.cx, 15, TUNNEL.cz);
   camera.lookAt(_lookTarget);
   shake.intensity = 0;
   // Reset mine portal state
   minePortal.active = false;
   minePortal.timer = 0;
+  // Fade in from black once the underground is loaded — smooth transition
+  // from the cut-to-black that fired during the dive.
+  setTimeout(() => {
+    _fadeOverlay.style.transition = 'opacity 0.8s';
+    _fadeOverlay.style.opacity = '0';
+  }, 300);
 }
 
 // End of the arrival cinematic: drop the car out of the tunnel foot along
@@ -1170,6 +1398,11 @@ function enterUndergroundWorld() {
 function finishSpiralCine() {
   spiralCine.active = false;
   car.visible = true;
+  // Save the camera's current tripod position so the post-cinematic ease
+  // can smoothly interpolate from here to the chase view.
+  _postCineCamPos.copy(camera.position);
+  _postCineLookPos.copy(_lookTarget);
+  _postCineTimer = 3.5;   // seconds for the slow ease-in to chase view
   const p = tunnelPoint(1);
   const q = tunnelPoint(0.994);
   let ex = p.x - q.x, ez = p.z - q.z;
@@ -1188,26 +1421,105 @@ function finishSpiralCine() {
 }
 
 // Underground → City (drive into the tunnel foot in the underground)
-function leaveUndergroundWorld() {
-  undergroundScene.remove(car);
-  scene.add(car);
-  worldState = 'city';
-  resetKnockables();
-  resetHydrantSprays();
-  portalGrace = 2.0;
-  velocity.value = 6;
+// The car drives UP the spiral tunnel (reverse of the arrival descent) while
+// the camera follows from behind — headlights facing away from us — then
+// cuts to the mine-ascent emergence where the car shoots out of the shaft.
+function startTunnelAscentCine() {
+  portalGrace = tunnelAscentCine.driveDur + mineAscent.driveTotal + mineAscent.launchTotal + 2.0;
+  velocity.value = 0;
   steering.value = 0;
-  jumpState.inAir = true;      // fall from above the mine shaft
+  jumpState.inAir = false;
   jumpState.yVelocity = 0;
   wasOnRamp = null;
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
-  // Spawn high above the mine shaft entrance, facing south so you land
-  // on the road and can drive away.
-  car.position.set(-55, 40, 31);  // above entrance (north side)
+  // Park the car at the tunnel foot facing up the tunnel — the cine update
+  // owns positioning until the cut to the mine ascent.
+  const pose = spiralPoseAtUp(1);
+  car.position.set(pose.x, pose.y, pose.z);
+  car.rotation.set(0, pose.heading, pose.pitch);
+  car.visible = true;
+  tunnelAscentCine.active = true;
+  tunnelAscentCine.timer = 0;
+  tunnelAscentCine.s = 1;
+  // Fade the tube translucent so the camera can see the car driving up
+  // inside the tunnel, then cut to black for the mine-ascent emergence.
+  if (undergroundWorld.spiralTubeMat) {
+    undergroundWorld.spiralTubeMat.transparent = true;
+    undergroundWorld.spiralTubeMat.opacity = 0.74;
+  }
+  shake.intensity = 0;
+}
+
+// Underground → City (drive into the tunnel foot in the underground)
+// The car drives UP the mine shaft and shoots out of the entrance — the
+// reverse of the dive. It appears at the buried throat, drives up the adit
+// to the surface, then launches out of the mine entrance and flies clear
+// before control returns.
+function startMineAscent() {
+  undergroundScene.remove(car);
+  scene.add(car);
+  worldState = 'city';
+  resetKnockables();
+  resetHydrantSprays();
+  portalGrace = mineAscent.driveTotal + mineAscent.launchTotal + 2.0;
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  // Park the car at the buried throat of the mine shaft — the ascent
+  // cinematic owns positioning until the car shoots clear of the entrance.
+  car.position.set(mineAscent.triggerX, -10.5, 54);
+  car.rotation.set(0, -Math.PI / 2, 0);   // heading south, up the adit
+  car.visible = true;
+  mineAscent.active = true;
+  mineAscent.timer = 0;
+  mineAscentSettle = 0;   // no stale leveling from a previous ascent
+  // Fade in from black once the city is loaded — smooth transition from the
+  // cut-to-black that fired when the car drove into the tunnel foot.
+  _fadeOverlay.style.transition = 'none';
+  _fadeOverlay.style.opacity = '1';
+  setTimeout(() => {
+    _fadeOverlay.style.transition = 'opacity 0.8s';
+    _fadeOverlay.style.opacity = '0';
+  }, 200);
+  // Plant the camera for the emergence shot: parked south of the mine
+  // entrance, looking north down the adit so the car visibly drives up and
+  // bursts out, then lands in front of the camera.
+  _mineAscentCamPos.set(-55, 5, 16);
+  _mineAscentLookPos.set(-55, 0, 34);
+  shake.intensity = 0;
+}
+
+// End of the ascent cinematic: the car has shot clear of the mine shaft and
+// landed on the road south of it — hand control back with forward speed.
+function finishMineAscent() {
+  mineAscent.active = false;
+  // Land clear of the mine shaft, facing south, already rolling.
+  const landZ = 34 - mineAscent.launchVh * mineAscent.launchTotal;
+  car.position.set(mineAscent.triggerX, groundHeight, landZ);
   car.rotation.set(0, -Math.PI / 2, 0);
-  shake.intensity = Math.max(shake.intensity, 0.5);
+  // Extra step: keep the car level as it drives away from the shaft — the
+  // body-lean code would otherwise pitch the hood down under acceleration.
+  mineAscentSettle = 4.0;
+  velocity.value = 12;          // keep rolling south after the landing
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  portalGrace = 2.0;            // time to clear the mine trigger zone
+  shake.intensity = 0.3;
+  // Ease the camera from the emergence shot to the chase view.
+  _postCineCamPos.copy(camera.position);
+  _postCineLookPos.copy(_lookTarget);
+  _postCineTimer = 3.5;
 }
 
 // ===== Minimap =====
@@ -1546,6 +1858,7 @@ const CAM_ZOOM_MIN = 4;
 const CAM_ZOOM_MAX = 85;
 window.addEventListener('wheel', (event) => {
   event.preventDefault();
+  cameraManualTimer = CAMERA_MANUAL_HOLD;
   const factor = Math.exp(event.deltaY * 0.0012);
   cameraOrbit.radius = THREE.MathUtils.clamp(cameraOrbit.radius * factor, CAM_ZOOM_MIN, CAM_ZOOM_MAX);
 }, { passive: false });
@@ -1907,7 +2220,7 @@ function updateRampWorldBumper(delta) {
       bumperCar.position.addScaledVector(chaseDir.normalize(), -push);
     }
     // It knocks props over too as it drives through them.
-    knockAt(bumperCar.position, aiKnockRadius, 0, 0);
+    knockAt(bumperCar.position, aiKnockRadius, 0, 0, bumperState.speed);
   }
   // Ride the terrain like a real car.
   bumperCar.position.y = terrainHeightAt(bumperCar.position.x, bumperCar.position.z) + groundHeight;
@@ -1922,28 +2235,60 @@ const clock = new THREE.Clock();
 // still. (The shake decay doubles as a stabilizer: pause right after a jump
 // and the camera settles flat for the shot.)
 function updateCamera(delta) {
+  cameraManualTimer = Math.max(0, cameraManualTimer - delta);
+
+  // TEMP debug: raw car state at the START of updateCamera
+  _camDbg = {
+    carYStart: +car.position.y.toFixed(2),
+    carZStart: +car.position.z.toFixed(2),
+    mineStart: minePortal.active,
+    overrideRan: false,
+  };
+
+  // Give manual framing a moment to settle, then ease back to the default
+  // chase view so a stray drag or scroll cannot leave the player disoriented.
+  if (cameraManualTimer <= 0) {
+    const blend = 1 - Math.pow(0.018, delta * CAMERA_RETURN_SPEED);
+    cameraYawOffset = THREE.MathUtils.lerp(cameraYawOffset, 0, blend);
+    cameraOrbit.phi = THREE.MathUtils.lerp(cameraOrbit.phi, 1.25, blend);
+    cameraOrbit.radius = THREE.MathUtils.lerp(cameraOrbit.radius, 8, blend);
+  }
+
   // ===== Spiral-tunnel arrival cinematic override =====
-  // One continuous pivot around the lit spiral tunnel: the camera swings
-  // around the tube's centre axis while easing downward, tracking a ghost
-  // point sliding down the tunnel ("the car, still in transit"), then tracks
-  // the revealed car for the rest of the ride to the foot.
+  // One continuous orbit around the spiral tunnel, in the OPPOSITE direction
+  // to the tunnel's own spin. The camera starts high up, sweeps
+  // counterclockwise around the tunnel (the tunnel spins clockwise), easing
+  // downward the whole way, and ENDS exactly at the watch tripod east of the
+  // exit — no pull-back speed-up. It gazes at the tunnel centre while
+  // orbiting (the car is hidden inside the opaque tube), pans to the exit as
+  // it settles, watches the car come out toward it, then eases smoothly to
+  // behind the car.
   if (spiralCine.active) {
-    const k = Math.min(spiralCine.timer / (spiralCine.orbitDur + spiralCine.driveDur), 1);
-    const th = SPIRAL_TH0 + SPIRAL_SWEEP * k;
-    _spiralCamTarget.set(
-      TUNNEL.cx + SPIRAL_CAM_R * Math.cos(th),
-      THREE.MathUtils.lerp(24, 6.5, smooth01(k)),
-      TUNNEL.cz + SPIRAL_CAM_R * Math.sin(th)
+    const t = spiralCine.timer;
+    const driveDur = spiralCine.driveDur;
+
+    // Orbit phase (t 0 → driveDur): sweep counterclockwise (opposite to the
+    // tunnel's spin), easing down the whole way, ending at the watch tripod.
+    const ok = Math.min(t / driveDur, 1);
+    const wp = spiralWatchPose();
+    const th = wp.startAngle - SPIRAL_SWEEP * ok;
+    const orbitR = THREE.MathUtils.lerp(SPIRAL_CAM_R, wp.watchRadius, smooth01(ok));
+    const orbitX = TUNNEL.cx + orbitR * Math.cos(th);
+    const orbitY = THREE.MathUtils.lerp(30, wp.watchY, smooth01(ok));
+    const orbitZ = TUNNEL.cz + orbitR * Math.sin(th);
+
+    _spiralCamTarget.set(orbitX, orbitY, orbitZ);
+
+    // Look target: tunnel centre while orbiting → the tunnel exit while
+    // watching, so we look at the opening and see the car drive out.
+    const exitP = tunnelPoint(1);
+    const lookT = THREE.MathUtils.clamp((ok - 0.8) / 0.2, 0, 1);
+    _spiralLookTarget.set(
+      THREE.MathUtils.lerp(TUNNEL.cx, exitP.x, lookT),
+      THREE.MathUtils.lerp(15, 0.15, lookT),
+      THREE.MathUtils.lerp(TUNNEL.cz, exitP.z, lookT)
     );
-    if (car.visible) {
-      _spiralLookTarget.set(car.position.x, car.position.y + 1.2, car.position.z);
-    } else {
-      // Ghost point slides down the path so the pivot reads as travel.
-      const sGhost = THREE.MathUtils.lerp(0.12, spiralCine.sStart,
-        Math.min(spiralCine.timer / spiralCine.orbitDur, 1));
-      const gp = tunnelPoint(sGhost);
-      _spiralLookTarget.set(gp.x, gp.y - UNDERGROUND_Y + 1.5, gp.z);
-    }
+
     const blend = 1 - Math.pow(0.002, delta);
     camera.position.lerp(_spiralCamTarget, blend);
     _lookTarget.lerp(_spiralLookTarget, blend);
@@ -1951,27 +2296,50 @@ function updateCamera(delta) {
     return;   // skip chase cam entirely — nothing else touches the camera
   }
 
-  // ===== Mine portal camera override =====
-  // When the dive starts, bypass the entire chase cam and smoothly ease the
-  // camera to a fixed ground-level position outside the mine entrance.
-  if (minePortal.active) {
-    const t = Math.min(minePortal.timer / minePortal.diveTotal, 1);
-    const camY = THREE.MathUtils.lerp(camera.position.y, 1.2, t);  // ease Y down
-    _mineCamTarget.set(-55, camY, 29);
-    _mineLookTarget.set(-55, 0, 42);
-    const blend = 1 - Math.pow(0.004, delta);
-    camera.position.lerp(_mineCamTarget, blend);
-    _lookTarget.lerp(_mineLookTarget, blend);
+  // ===== Tunnel-ascent cinematic override (underground → city) =====
+  // The camera follows the car up the spiral tunnel from behind, so we see
+  // the car's tail (headlights facing away from us) as it drives up the
+  // tunnel. The tube is translucent during the shot so the car stays visible
+  // inside it.
+  if (tunnelAscentCine.active) {
+    const pose = spiralPoseAtUp(tunnelAscentCine.s);
+    const fwd = new THREE.Vector3(-Math.cos(pose.heading), 0, Math.sin(pose.heading));
+    _tunnelAscentCamTarget.set(
+      pose.x - fwd.x * 7,
+      pose.y + 3,
+      pose.z - fwd.z * 7
+    );
+    _tunnelAscentLookTarget.set(pose.x, pose.y + 1.2, pose.z);
+    const blend = 1 - Math.pow(0.002, delta);
+    camera.position.lerp(_tunnelAscentCamTarget, blend);
+    _lookTarget.lerp(_tunnelAscentLookTarget, blend);
+    camera.lookAt(_lookTarget);
+    return;   // skip chase cam entirely — nothing else touches the camera
+  }
+
+  // ===== Mine-ascent emergence shot =====
+  // Fixed camera parked south of the mine entrance, looking north down the
+  // adit so the car visibly drives up and bursts out of the shaft. As the
+  // car launches out and arcs over, the look target pans to follow it.
+  if (mineAscent.active) {
+    const t = mineAscent.timer;
+    camera.position.copy(_mineAscentCamPos);
+    _mineAscentLookPos.set(-55, 0, 34);   // the mine entrance
+    if (t > mineAscent.driveTotal) {
+      // Phase 2: track the car's flight out of the shaft.
+      const t2 = THREE.MathUtils.clamp((t - mineAscent.driveTotal) / mineAscent.launchTotal, 0, 1);
+      _mineAscentLookPos.lerp(car.position, t2);
+    }
+    _lookTarget.copy(_mineAscentLookPos);
     camera.lookAt(_lookTarget);
     return;   // skip chase cam entirely — nothing else touches the camera
   }
 
   // ===== Levitation camera override =====
   // Same smooth technique as the mine dive: bypass the chase cam and ease the
-  // camera to a fixed ground-level vantage just outside the portal building's
-  // open (east) side, tilting up to follow the car as it floats away.
+  // camera to a fixed vantage just east of the hill, tilting up to follow the car.
   if (buildingLevitate.active && buildingLevitate.levitating) {
-    _levCamTarget.set(buildingLevitate.x + buildingLevitate.w / 2 + 9, 1.6, buildingLevitate.z);
+    _levCamTarget.set(buildingLevitate.x + buildingLevitate.w / 2 + 7, PORTAL_HILL.height + 1.6, buildingLevitate.z);
     _levLookTarget.set(buildingLevitate.x, Math.max(1.5, car.position.y), buildingLevitate.z);
     const blend = 1 - Math.pow(0.004, delta);
     camera.position.lerp(_levCamTarget, blend);
@@ -1980,8 +2348,56 @@ function updateCamera(delta) {
     return;   // skip chase cam entirely — nothing else touches the camera
   }
 
+  // ===== Post-spiral-cinematic ease-in =====
+  // After the arrival cinematic ends the camera sits at the tripod position
+  // while the car zips out at speed.  This override eases the camera from
+  // the tripod spot to the normal chase position over several seconds so
+  // there's no hard cut — just a slow, cinematic drift into the driving view.
+  if (_postCineTimer > 0) {
+    _postCineTimer -= delta;
+    const t = 1 - Math.max(0, _postCineTimer / 3.5);          // 0 → 1 over 3.5s
+    const ease = t * t * (3 - 2 * t);                          // smoothstep
+
+    // Compute the normal chase-cam position (same logic as below)
+    const fwd2 = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
+    fwd2.y = 0; fwd2.normalize();
+    const heading2 = Math.atan2(-fwd2.z, -fwd2.x);
+    const theta2 = heading2 + cameraYawOffset;
+    const chaseY = Math.max(0.8, car.position.y);
+    const desiredOffset2 = new THREE.Vector3(
+      camRadius * Math.sin(cameraOrbit.phi) * Math.cos(theta2),
+      camRadius * Math.cos(cameraOrbit.phi) + 2.2,
+      camRadius * Math.sin(cameraOrbit.phi) * Math.sin(theta2)
+    );
+    const chaseLook = new THREE.Vector3(car.position.x, chaseY, car.position.z);
+    chaseLook.addScaledVector(fwd2, THREE.MathUtils.clamp(velocity.value, 0, 14) * 0.12);
+
+    // Smoothly blend from tripod to chase
+    camera.position.lerpVectors(_postCineCamPos, new THREE.Vector3(car.position.x + desiredOffset2.x, chaseY + desiredOffset2.y, car.position.z + desiredOffset2.z), ease);
+    _lookTarget.lerpVectors(_postCineLookPos, chaseLook, ease);
+    camera.lookAt(_lookTarget);
+
+    // Signal the chase cam to sync camOffset on its first frame.
+    if (_postCineTimer <= 0) _postCineHandoff = true;
+
+    return;   // skip chase cam — the ease owns the camera
+  }
+
+  // ===== Chase-cam handoff from post-cinematic ease =====
+  // The ease leaves the camera at a blended position.  Snap camOffset to
+  // match so the chase cam starts from the exact right spot — no jump.
+  if (_postCineHandoff) {
+    cameraTarget.copy(car.position);
+    cameraTarget.y = Math.max(0.8, car.position.y);
+    camOffset.copy(camera.position).sub(cameraTarget);
+    _postCineHandoff = false;
+  }
+
   cameraTarget.copy(car.position);
-  cameraTarget.y = Math.max(0.8, car.position.y);   // follow the car up ramps / into the robot's mouth
+  // Follow the car up ramps / into the robot's mouth — but during the mine
+  // dive the car sinks below grade, so let the camera follow it DOWN into
+  // the shaft instead of clamping to the surface.
+  cameraTarget.y = minePortal.active ? car.position.y : Math.max(0.8, car.position.y);
 
   const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
   fwd.y = 0;
@@ -2018,13 +2434,26 @@ function updateCamera(delta) {
   // its own behind-the-car framing whenever IT is the reason we're pulled out.
   const FLIGHT_PHI = 0.70;   // steep look-down angle (~50° above level) for the flight
   const flightDominant = flightZoomT > robotZoomT + 0.001;
-  const camPhi = THREE.MathUtils.clamp(
+  let camPhi = THREE.MathUtils.clamp(
     flightDominant
       ? cameraOrbit.phi + (FLIGHT_PHI - cameraOrbit.phi) * flightZoomT   // flight: high, looking down
       : cameraOrbit.phi + 0.30 * zoomT,                                  // robot: sit higher behind the car
     cameraOrbit.minPhi,
     cameraOrbit.maxPhi
   );
+
+  // Mine approach: drop the camera to ground level so you look INTO the adit
+  // tunnel as the car drives in, instead of over the roof. Blends in as the
+  // car commits to the mine corridor (z 26 → 34). Once the dive itself
+  // starts (z > 34) the dedicated override below takes over and follows the
+  // car down into the shaft.
+  const MINE_PHI = 1.55;   // near-flat orbit angle → camera hugs the ground
+  let mineCamT = 0;
+  if (worldState === 'city' && (minePortal.active || isMineCamActive())) {
+    const p = minePortal;
+    mineCamT = THREE.MathUtils.clamp((car.position.z - p.camZ) / (p.triggerZ - p.camZ), 0, 1);
+  }
+  camPhi = THREE.MathUtils.lerp(camPhi, MINE_PHI, mineCamT);
   // Swing the camera around perpendicular to the flight path (the side view)
   // as the flight zoom kicks in; the camOffset lerp below eases the arc.
   const camTheta = theta - (flightDominant ? (Math.PI / 2) * flightZoomT : 0);
@@ -2045,6 +2474,55 @@ function updateCamera(delta) {
   // shot is focused on the robot).
   _lookTarget.copy(cameraTarget);
   _lookTarget.addScaledVector(fwd, THREE.MathUtils.clamp(velocity.value, 0, 14) * 0.12 * (1 - zoomT));
+
+  // Mine dive: the camera drops LOW and CLOSE behind the car and follows it
+  // down into the shaft — riding the adit bed so it never clips the rock.
+  // (Without this the chase cam stays at ground level while the car sinks to
+  // y=-10.5, so you just watch it shrink away into the distance.)
+  //
+  // The camera only follows for the FIRST QUARTER of the dive, then it STOPS
+  // and stays parked at the mine entrance — the car keeps driving away and
+  // sinking into the depths while we watch it go. The look target keeps
+  // tracking the car, so the shot pans down as the car recedes into the
+  // jewelled dark.
+  //
+  // NOTE: the camera target is computed from the DIVE STATE (minePortal.timer),
+  // not from car.position — the dive code that actually moves the car runs
+  // AFTER updateCamera, so at this point car.position.y is still the surface
+  // height (0.3) and car.position.z can be nudged ahead by the physics step.
+  if (worldState === 'city' && minePortal.active) {
+    const p = minePortal;
+    const t = Math.min(p.timer / p.diveTotal, 1);
+    const zz = THREE.MathUtils.lerp(p.z0, p.z1, t);   // car's dive z
+    const yy = p.baseY + mineAditDropAt(zz);          // car's dive y
+    // Camera progress clamps at the entrance — the tripod parks there and
+    // never descends further, even though the car keeps going.
+    const camT = Math.min(t, 0.25);
+    const camZz = THREE.MathUtils.lerp(p.z0, p.z1, camT);   // camera's dive z
+    const camYy = p.baseY + mineAditDropAt(camZz);          // camera's dive y
+    const behind = 5.5;                               // tight, close behind the car
+    const camZ = camZz - behind;
+    const camY = mineAditDropAt(camZ) + 2.2;          // ride the bed, low above it
+    cameraTarget.set(p.triggerX, camYy, camZz);
+    desiredOffset.set(0, camY - camYy, camZ - camZz);
+    _lookTarget.set(p.triggerX, yy + 0.5, zz + 3);    // keep watching the car recede
+    _camDbg.overrideRan = true;
+  } else if (mineCamT > 0) {
+    // Approach corridor: the car hasn't committed to the dive yet — tilt the
+    // look target down to keep following it into the adit as it descends.
+    _lookTarget.y = THREE.MathUtils.lerp(_lookTarget.y, car.position.y, mineCamT);
+  }
+
+  // TEMP debug capture
+  _camDbg.mineActive = minePortal.active;
+  _camDbg.carZ = +car.position.z.toFixed(2);
+  _camDbg.carY = +car.position.y.toFixed(2);
+  _camDbg.camTargetZ = +cameraTarget.z.toFixed(2);
+  _camDbg.camTargetY = +cameraTarget.y.toFixed(2);
+  _camDbg.robotZoomT = +robotZoomT.toFixed(3);
+  _camDbg.robotHead = { x: +robotHead.x.toFixed(1), y: +robotHead.y.toFixed(1), z: +robotHead.z.toFixed(1) };
+  _camDbg.camOffsetZ = +camOffset.z.toFixed(2);
+  _camDbg.camOffsetY = +camOffset.y.toFixed(2);
 
   // Camera shake (jump / landing)
   if (shake.intensity > 0.002) {
@@ -2080,8 +2558,9 @@ function animate() {
 
   // While the giant robot has the player in its claw, the player's car is
   // inert — it just rides up to the robot's mouth. Physics resume on respawn.
-  // The spiral-arrival cinematic also owns the car completely while it runs.
-  if (!robot.playerCaptured && !spiralCine.active) {
+  // The spiral-arrival cinematic and the mine-ascent cinematic also own the
+  // car completely while they run.
+  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active) {
 
   let forward = 0;
   let reverse = 0;
@@ -2146,12 +2625,12 @@ function animate() {
   // (elevator deck, ledge tiers, pit rims): standing on one lifts the wall
   // blocking exactly like a city roof, so low rim colliders can't invisibly
   // fence off the ledges floating above them.
-  const elevated = jumpState.inAir || buildingTopAt(car.position.x, car.position.z) > 0;
+  const elevated = jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5);
   const canMove =
     !buildingLevitate.levitating && (
     worldState === 'ramp' ||
     elevated ||
-    (!isPositionBlocked(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
+    (!isPositionBlocked(nextCarPos.x, nextCarPos.z, playerCarRadius, true) &&
       !isPositionBlockedByFiretruck(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
       !isPositionBlockedByRobot(nextCarPos.x, nextCarPos.z, playerCarRadius)));
   if (canMove) {
@@ -2246,10 +2725,13 @@ function animate() {
       // The min() cap stops a high surface from snapping the car UP to it
       // when flying through its footprint below deck level.
       currentRamp = null;
+      tunnelFloorState.active = false;
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
       const bTop = buildingTopAt(car.position.x, car.position.z);
-      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z), Math.min(bTop, car.position.y + 0.4));
+      const tfloor = tunnelFloorYRaw(car.position.x, car.position.z);
+      const tfloorSurface = (tfloor !== null && tfloor <= car.position.y + 0.4) ? tfloor : -Infinity;
+      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z), tfloorSurface, bTop <= car.position.y + 0.4 ? bTop : 0);
       if (car.position.y <= surface) {
         car.position.y = surface;
         const impact = Math.abs(jumpState.yVelocity);
@@ -2258,44 +2740,69 @@ function animate() {
         shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
       }
     } else {
-      // On the ground in the underground: ride a course ramp slope if the car
-      // is on one, otherwise stay on the cavern floor.
-      const r = ugRampInfoAt(car.position.x, car.position.z);
-      currentRamp = r;
-      if (r) {
-        car.position.y = r.baseY + r.height * r.s;
-        wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
-      } else {
-        // Drive off the far (high) edge of the ramp we were just riding:
-        // launch off it, same as the city/ramp-world ramps.
-        const launched =
-          wasOnRamp &&
-          velocity.value > 2 &&
-          (direction.x * wasOnRamp.runX + direction.z * wasOnRamp.runZ) > 0.3;
-        if (launched) {
-          jumpState.inAir = true;
-          jumpState.yVelocity = velocity.value * (wasOnRamp.height / wasOnRamp.len) * wasOnRamp.boost;
-          shake.intensity = Math.max(shake.intensity, 0.08);
-        } else {
-          // Task #17: ride the elevator deck while the car stands in its
-          // footprint — y snaps to the deck's live top each frame, so the
-          // car is carried up AND down with it. Mounting is proximity-gated
-          // so a deck passing overhead never yo-yos the car off the floor.
-          const eTop = ugElevatorTopAt(car.position.x, car.position.z);
-          if (eTop > 0.05 && Math.abs(car.position.y - eTop) < 1.4) {
-            car.position.y = eTop;
-          } else if (eTop > 0.05) {
-            car.position.y = 0;   // deck is overhead — stay on the floor
-          } else if (car.position.y > 0.3) {
-            // Drove off a raised surface (deck edge, pit rim): become gently
-            // airborne instead of teleporting down, keeping momentum.
-            jumpState.inAir = true;
-            jumpState.yVelocity = 0;
-          } else {
-            car.position.y = 0;
-          }
-        }
+      // On the ground in the underground: ride the tunnel interior floor,
+      // a course ramp slope, or stay on the cavern floor.
+      const tf = tunnelFloorAt(car.position.x, car.position.z, car.position.y);
+      if (tf) {
+        // Ride the tunnel interior floor — the car is inside the tube.
+        currentRamp = null;
+        car.position.y = tf.y;
+        tunnelFloorState.active = true;
+        tunnelFloorState.slope = tf.slope;
+        tunnelFloorState.tanX = tf.tanX;
+        tunnelFloorState.tanZ = tf.tanZ;
+        // Gentle heading correction toward the tunnel path (simulates
+        // tunnel walls guiding the car around the curve). The car drives
+        // INTO the tunnel (decreasing s), so the heading is the reverse of
+        // the path tangent: atan2(tanX, -tanZ) — the old atan2(tanZ, -tanX)
+        // pointed ~75° off the path and fought the player's steering.
+        // Fade the correction to zero near s = 1 (tunnel foot / exit) so
+        // the car doesn't get yanked back into the tube when bursting out.
+        const headingTangent = Math.atan2(tf.tanX, -tf.tanZ);
+        let headingErr = headingTangent - car.rotation.y;
+        while (headingErr > Math.PI) headingErr -= 2 * Math.PI;
+        while (headingErr < -Math.PI) headingErr += 2 * Math.PI;
+        car.rotation.y += headingErr * 3.0 * (1 - tf.s) * delta;
         wasOnRamp = null;
+      } else {
+        tunnelFloorState.active = false;
+        const r = ugRampInfoAt(car.position.x, car.position.z);
+        currentRamp = r;
+        if (r) {
+          car.position.y = r.baseY + r.height * r.s;
+          wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+        } else {
+          // Drive off the far (high) edge of the ramp we were just riding:
+          // launch off it, same as the city/ramp-world ramps.
+          const launched =
+            wasOnRamp &&
+            velocity.value > 2 &&
+            (direction.x * wasOnRamp.runX + direction.z * wasOnRamp.runZ) > 0.3;
+          if (launched) {
+            jumpState.inAir = true;
+            jumpState.yVelocity = velocity.value * (wasOnRamp.height / wasOnRamp.len) * wasOnRamp.boost;
+            shake.intensity = Math.max(shake.intensity, 0.08);
+          } else {
+            // Task #17: ride the elevator deck while the car stands in its
+            // footprint — y snaps to the deck's live top each frame, so the
+            // car is carried up AND down with it. Mounting is proximity-gated
+            // so a deck passing overhead never yo-yos the car off the floor.
+            const eTop = ugElevatorTopAt(car.position.x, car.position.z, car.position.y);
+            if (eTop > 0.05 && Math.abs(car.position.y - eTop) < 1.4) {
+              car.position.y = eTop;
+            } else if (eTop > 0.05) {
+              car.position.y = 0;   // deck is overhead — stay on the floor
+            } else if (car.position.y > 0.3) {
+              // Drove off a raised surface (deck edge, pit rim): become gently
+              // airborne instead of teleporting down, keeping momentum.
+              jumpState.inAir = true;
+              jumpState.yVelocity = 0;
+            } else {
+              car.position.y = 0;
+            }
+          }
+          wasOnRamp = null;
+        }
       }
     }
   } else if (jumpState.inAir) {
@@ -2347,7 +2854,7 @@ function animate() {
           jumpState.inAir = true;
           jumpState.yVelocity = 0;
         } else {
-          car.position.y = groundHeight;
+          car.position.y = cityGroundHeightAt(car.position.x, car.position.z);
         }
       }
       wasOnRamp = null;
@@ -2365,7 +2872,11 @@ function animate() {
   // ground. Off the ramp it just does the usual steering roll + accel lean.
   const targetRoll = -steering.value * 0.1;
   const accelPitch = THREE.MathUtils.clamp(velocity.value, -7, 14) * -0.004;
-  if (currentRamp) {
+  if (tunnelFloorState.active) {
+    const rampPitch = -Math.atan(tunnelFloorState.slope);
+    car.rotation.z += (rampPitch - car.rotation.z) * 0.28;
+    car.rotation.x += (0 - car.rotation.x) * 0.12;
+  } else if (currentRamp) {
     const slopeAngle = Math.atan2(currentRamp.height, currentRamp.len);
     const alongRun = direction.x * currentRamp.runX + direction.z * currentRamp.runZ;
     const rampPitch = -slopeAngle * Math.sign(alongRun);   // pitch about the lateral axis
@@ -2379,6 +2890,13 @@ function animate() {
   } else if (minePortal.active) {
     // Mine portal dive: the portal code controls car.rotation.z directly.
     // Do not touch rotation.z here — the dive code sets it each frame.
+  } else if (mineAscentSettle > 0) {
+    // Post-mine-ascent settle: keep the car perfectly level as it drives
+    // away from the shaft — no accel lean or steering roll while it settles
+    // onto the road, matching the level look at game start.
+    car.rotation.z += (0 - car.rotation.z) * 0.12;
+    car.rotation.x += (0 - car.rotation.x) * 0.12;
+    mineAscentSettle -= delta;
   } else {
     car.rotation.z += (targetRoll - car.rotation.z) * 0.12;
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
@@ -2472,38 +2990,97 @@ function animate() {
   // knock uses the torus spans; the ramp world's props sit well inside the
   // band, so it knocks without wrap (which would otherwise let a ramp prop
   // near the edge also topple city props folded across the seam).
-  if (worldState === 'city') knockAt(car.position, playerKnockRadius, worldSizeX, worldSizeZ);
-  else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0);
-  else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0);
+  if (worldState === 'city') knockAt(car.position, playerKnockRadius, worldSizeX, worldSizeZ, velocity.value);
+  else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value);
+  else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value);
 
   }  // end !robot.playerCaptured
 
   // ===== Spiral-tunnel arrival cinematic =====
-  // Phase 1 (orbit): the car stays hidden "in transit" while the camera
-  // pivots around the tube. Phase 2 (ride): the car appears partway down the
-  // spiral and rides it out — the tube goes translucent so the orbiting
-  // camera can see it inside, then solidifies as the car bursts out.
+  // The car drives through the opaque spiral tube from near the top to the
+  // foot — the camera orbits the tunnel, then pulls way back to watch the
+  // exit opening as the car bursts out (see updateCamera), then hands back
+  // control once it exits onto the cavern floor.
   if (spiralCine.active) {
     spiralCine.timer += delta;
     const t = spiralCine.timer;
-    const tubeMat = undergroundWorld.spiralTubeMat || null;
+    const totalDur = spiralCine.driveDur + spiralCine.watchDur;
     if (t >= spiralCine.orbitDur) {
-      if (!car.visible) car.visible = true;
-      const u = Math.min((t - spiralCine.orbitDur) / spiralCine.driveDur, 1);
-      const pose = spiralPoseAt(spiralCine.sStart + (1 - spiralCine.sStart) * u);
+      const u = Math.min((t - spiralCine.orbitDur) / totalDur, 1);
+      const pathPos = spiralCine.sStart + (1 - spiralCine.sStart) * u;
+      const pose = spiralPoseAt(pathPos);
       car.position.set(pose.x, pose.y, pose.z);
       car.rotation.set(0, pose.heading, pose.pitch);
+      // The car is genuinely driving through the tunnel the whole time —
+      // the opaque tube hides it while it's deep inside, and it becomes
+      // visible as it comes around the corner toward the exit.
       const spin = 13 * delta * 2.6;   // wheels spin like it's really driving
       for (const w of car.userData.wheels) w.rotation.y += spin;
-      if (tubeMat) {
-        tubeMat.transparent = true;
-        // Solidify again over the final quarter of the ride.
-        tubeMat.opacity = u > 0.75 ? THREE.MathUtils.lerp(0.42, 1, (u - 0.75) / 0.25) : 0.42;
-      }
       if (u >= 1) {
         finishSpiralCine();
-        if (tubeMat) { tubeMat.transparent = false; tubeMat.opacity = 1; }
       }
+    }
+  }
+
+  // ===== Mine-ascent cinematic (underground → city) =====
+  // The car drives UP the mine shaft from the buried throat, shoots out of
+  // the entrance, and flies clear before control returns.
+  if (mineAscent.active) {
+    mineAscent.timer += delta;
+    const t = mineAscent.timer;
+    const spin = 13 * delta * 2.6;   // wheels spin like it's really driving
+    if (t < mineAscent.driveTotal) {
+      // Phase 1: drive up the adit (z 54 → 34, y -10.5 → 0) — reverse of the
+      // dive, nose-up as it climbs out of the dark.
+      const u = t / mineAscent.driveTotal;
+      const zz = THREE.MathUtils.lerp(54, 34, u);
+      const yy = mineAditDropAt(zz);
+      const slope = (mineAditDropAt(zz + 0.5) - mineAditDropAt(zz - 0.5)) / 1.0;
+      const pitch = Math.atan2(slope, 1) * 0.85;   // nose-up (reverse of the dive)
+      car.position.set(mineAscent.triggerX, yy, zz);
+      car.rotation.set(0, -Math.PI / 2, pitch);    // heading south, nose up
+    } else {
+      // Phase 2: ballistic launch out of the mine entrance — the car shoots
+      // out and arcs over, landing clear of the shaft.
+      const t2 = t - mineAscent.driveTotal;
+      const zz = 34 - mineAscent.launchVh * t2;
+      const yy = mineAscent.launchVv * t2 - 0.5 * mineAscent.gravity * t2 * t2;
+      car.position.set(mineAscent.triggerX, yy, zz);
+      const vy = mineAscent.launchVv - mineAscent.gravity * t2;
+      const pitch = THREE.MathUtils.clamp(Math.atan2(vy, mineAscent.launchVh) * 0.6, -0.5, 0.9);
+      car.rotation.set(0, -Math.PI / 2, pitch);
+      if (t >= mineAscent.driveTotal + mineAscent.launchTotal) {
+        finishMineAscent();
+      }
+    }
+    for (const w of car.userData.wheels) w.rotation.y += spin;
+  }
+
+  // ===== Tunnel-ascent cinematic (underground → city) =====
+  // The car drives UP the spiral tunnel (reverse of the arrival descent) —
+  // the camera follows from behind so we see the tail (headlights facing
+  // away from us) — then cuts to black and starts the mine-ascent emergence
+  // where the car shoots out of the mine shaft.
+  if (tunnelAscentCine.active) {
+    tunnelAscentCine.timer += delta;
+    const t = tunnelAscentCine.timer;
+    const u = Math.min(t / tunnelAscentCine.driveDur, 1);
+    tunnelAscentCine.s = 1 - (1 - tunnelAscentCine.sStart) * u;
+    const pose = spiralPoseAtUp(tunnelAscentCine.s);
+    car.position.set(pose.x, pose.y, pose.z);
+    car.rotation.set(0, pose.heading, pose.pitch);
+    const spin = 13 * delta * 2.6;   // wheels spin like it's really driving
+    for (const w of car.userData.wheels) w.rotation.y += spin;
+    if (u >= 1) {
+      // Restore the tube, cut to black, and start the mine-ascent emergence.
+      if (undergroundWorld.spiralTubeMat) {
+        undergroundWorld.spiralTubeMat.transparent = false;
+        undergroundWorld.spiralTubeMat.opacity = 1;
+      }
+      tunnelAscentCine.active = false;
+      _fadeOverlay.style.transition = 'none';
+      _fadeOverlay.style.opacity = '1';
+      startMineAscent();
     }
   }
 
@@ -2793,6 +3370,9 @@ function animate() {
   // Gentle fountain splashes in the centre plaza
   updateFountains(fountains, delta);
 
+  // Twinkling gemstones lining the mine shaft
+  updateMineGems(mineGems, delta);
+
   // Fire hydrant water sprays
   updateHydrantSprays(delta);
 
@@ -2803,7 +3383,7 @@ function animate() {
   updateNwCornerArrow(delta);
 
   // Walk the pedestrians (they scream and scatter when you or the robot get close)
-  updatePeople(delta, { player: car.position, robot: robot.mesh.position });
+  updatePeople(delta, { player: car.position, robot: robot.mesh.position, aiOnly: colliders.filter((c) => c.aiOnly) });
   }  // end city ambience
 
   // Animate knockable props in BOTH worlds — the city's props and the ramp
@@ -2871,7 +3451,7 @@ function animate() {
     }
   }
 
-  // ===== Building levitation trigger (portal building 56,27) =====
+  // ===== Hilltop portal trigger =====
   if (portalGrace <= 0 && worldState === 'city') {
     const insideBuilding = isInsideLevitationHall(car.position.x, car.position.z, buildingLevitate, car.position.y);
     const stillInArea = isStillWithinLevitationHall(car.position.x, car.position.z, buildingLevitate);
@@ -2895,18 +3475,17 @@ function animate() {
         shake.intensity = Math.max(shake.intensity, 0.3);
       }
       if (buildingLevitate.levitating) {
-        // Rise upward: slow start, then accelerate over 4 seconds.
-        // Use a quadratic ease-in: speed = maxSpeed * (t/4)^2 so the car
-        // barely moves at first and rockets upward by the end.
+        // Rise upward: slow start, then accelerate hard — but the WHOLE flight
+        // still takes ~4 seconds (same as before), the car just ends up far
+        // higher: a dot in the sky by the time the swap fires.
         buildingLevitate.levitateTime += delta;
         const t = Math.min(buildingLevitate.levitateTime / 4, 1);  // 0..1
-        const speed = 18 * t * t;  // quadratic ease-in, peaks at 18 u/s
+        const speed = 70 * t * t;  // quadratic ease-in, peaks at 70 u/s
         car.position.y += speed * delta;
         // Slowly fade horizontal velocity to zero
         velocity.value *= 0.95;
-        // Keep floating well past the roof so the ground-level camera gets a
-        // long look at the car drifting up into the sky before the swap.
-        if (car.position.y > buildingLevitate.h + 8) {
+        // Float SO high the car is barely visible before jumping to ramp world.
+        if (car.position.y > 110) {
           enterRampWorld();
           buildingLevitate.active = false;
           buildingLevitate.levitating = false;
@@ -2918,10 +3497,11 @@ function animate() {
   }
 
   // ===== Mine shaft portal (-55,50 → underground) =====
-  // When the car drives deep into the mine tunnel (south past z=42), the nose
-  // tips forward/down first, then the rest of the car sinks in after it —
-  // about 2 seconds total — before the cut to the spiral-tunnel arrival
-  // cinematic in the underground world.
+  // When the car drives deep into the mine tunnel (south past z=34), it now
+  // DRIVES DOWN the excavated adit: forward-and-down along the graded channel
+  // (z 34 → 54, dropping ~10.5 units) while the fixed behind-the-car camera
+  // watches it shrink into the jewelled dark — then the fade-cut swaps to
+  // the spiral-tunnel arrival cinematic in the underground world.
   if (portalGrace <= 0 && worldState === 'city') {
     const inTunnel = isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir;
     if (inTunnel) {
@@ -2929,53 +3509,48 @@ function animate() {
         minePortal.active = true;
         minePortal.timer = 0;
         minePortal.baseY = car.position.y;   // remember the surface height
-        // Don't freeze velocity — let the car coast toward the crystals
+        // Keep whatever forward speed the driver had — the adit carries it down.
       }
     } else if (minePortal.active) {
       // Car left the trigger zone before teleport — reset
       minePortal.active = false;
       minePortal.timer = 0;
       car.rotation.z = 0;    // undo any tilt
+      _fadeOverlay.style.transition = 'none';
+      _fadeOverlay.style.opacity = '0';
     }
     if (minePortal.active) {
       minePortal.timer += delta;
-      // Gradually slow down as the nose dips — the car coasts deeper toward
-      // the crystals but eases to a stop before the teleport fires.
-      velocity.value *= (1 - 1.5 * delta);
+      const t = Math.min(minePortal.timer / minePortal.diveTotal, 1);
 
-      // Two-phase dive, ~4 seconds end to end:
-      //   Phase 1 (0–tiltTime): ONLY the nose tips forward/down, pivoting
-      //     around the rear axle so the back wheels stay planted while the
-      //     hood dips toward the dirt.
-      //   Phase 2 (tiltTime–diveTotal): the REST of the car follows the nose
-      //     under, sinking below the surface while holding the tilted pose.
-      const tiltT = Math.min(minePortal.timer / minePortal.tiltTime, 1);
-      // Smoothstep ease so the nose dip starts gently and settles smoothly.
-      const tiltEase = tiltT * tiltT * (3 - 2 * tiltT);
-      const tiltAngle = tiltEase * minePortal.maxTilt;
-      car.rotation.z = tiltAngle;  // positive rotation.z = hood/nose dips DOWN
+      // Forward progress along the channel: monotonic z advance, eased so the
+      // car rolls off the meadow, picks up speed down the slope, then settles
+      // into the throat. The car genuinely TRAVELS — it doesn't just nod in place.
+      const zz = THREE.MathUtils.lerp(minePortal.z0, minePortal.z1, t);
+      const yy = minePortal.baseY + mineAditDropAt(zz);
 
-      if (tiltT < 1) {
-        // Phase 1: keep the rear wheels grounded by dropping the body exactly
-        // as far as the pivot geometry demands for the current tilt angle.
-        car.position.y = minePortal.baseY - Math.sin(tiltAngle) * minePortal.rearAxle;
-      } else {
-        // Phase 2: sink the whole car, easing in so the hand-off from tilt
-        // to sink reads as one continuous motion. Depth covers the full body
-        // length by the time the teleport fires.
-        const sinkT = Math.min(
-          (minePortal.timer - minePortal.tiltTime) / (minePortal.diveTotal - minePortal.tiltTime), 1);
-        const sinkDepth = sinkT * sinkT * 3.5;   // quadratic ease-in
-        car.position.y = minePortal.baseY -
-          Math.sin(minePortal.maxTilt) * minePortal.rearAxle - sinkDepth;
-        // Keep tipping a touch further as it goes under for extra drama.
-        car.rotation.z = minePortal.maxTilt + sinkT * 0.15;
-      }
+      // Gentle nose-down pitch matching the adit's slope (reads as driving
+      // downhill), plus a touch of body roll for life.
+      const slope = (mineAditDropAt(zz + 0.5) - mineAditDropAt(zz - 0.5)) / 1.0;
+      const pitch = Math.atan2(-slope, 1) * 0.85;
+      car.rotation.set(0, Math.PI / 2, pitch);   // heading +z (north), nose down
+
+      // Keep the car centred on the channel axis (the banks guide it; no
+      // steering input needed — the adit is a one-way chute).
+      car.position.set(minePortal.triggerX, yy, zz);
 
       // Camera shake builds as the dive deepens
-      shake.intensity = Math.max(shake.intensity, 0.15 + tiltT * 0.4);
-      // Swap worlds once the full dive completes (~2 seconds) — the arrival
-      // cinematic takes it from there.
+      shake.intensity = Math.max(shake.intensity, 0.12 + t * 0.35);
+      // Fade to black as the car sinks below the bench crests — a GRADUAL
+      // ramp (not a hard cut) so the car visibly vanishes into the gloom,
+      // then the swap to the underground world happens under full black.
+      if (t > 0.78) {
+        const fadeT = THREE.MathUtils.clamp((t - 0.78) / 0.22, 0, 1);
+        _fadeOverlay.style.transition = 'none';
+        _fadeOverlay.style.opacity = String(fadeT);
+      }
+      // Swap worlds once the full dive completes — the arrival cinematic
+      // takes it from there.
       if (minePortal.timer >= minePortal.diveTotal) {
         enterUndergroundWorld();
       }
@@ -2983,13 +3558,19 @@ function animate() {
   }
 
   // Underground world: return portal (tunnel foot → city)
-  // Driving into the tunnel foot area in the underground teleports back.
+  // When the car gets near the tunnel foot entrance, we play the reverse of
+  // the arrival's "car inside the tunnel" shot — the car drives UP the spiral
+  // tunnel (headlights facing away from us) — then cut to black and start
+  // the mine-ascent emergence in the city.
   // Held off during the arrival cinematic — the car exits right through this
   // zone and must not be instantly teleported back out again.
-  if (portalGrace <= 0 && worldState === 'underground' && !spiralCine.active) {
-    const tEnd = tunnelPoint(1);
-    if (!jumpState.inAir && isInUndergroundReturnZone(car.position.x, car.position.z, tEnd.x, tEnd.z, 8)) {
-      leaveUndergroundWorld();
+  if (portalGrace <= 0 && worldState === 'underground' && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active) {
+    const tFoot = tunnelPoint(1);   // tunnel foot entrance
+    if (!jumpState.inAir &&
+        isInUndergroundReturnZone(car.position.x, car.position.z, tFoot.x, tFoot.z, 5)) {
+      // Car touched the tunnel foot — play the reverse "drive up the tunnel"
+      // cinematic, then cut to the mine-ascent emergence.
+      startTunnelAscentCine();
     }
   }
 
@@ -3028,7 +3609,14 @@ animate();
 // Inert during normal play.
 if (location.search.includes('debug')) {
   window.__game = {
-    car: () => ({ x: car.position.x, y: car.position.y, z: car.position.z, rz: car.rotation.z, world: worldState }),
+    car: () => ({ x: car.position.x, y: car.position.y, z: car.position.z, rx: car.rotation.x, rz: car.rotation.z, ry: car.rotation.y, world: worldState }),
+    pg: () => ({ grace: +portalGrace.toFixed(2), inAir: jumpState.inAir }),
+    cine: () => ({
+      robot: robot.playerCaptured, spiral: spiralCine.active, mineA: mineAscent.active,
+      tunnelA: tunnelAscentCine.active,
+      paused: isPaused,
+    }),
+    vel: () => ({ v: +velocity.value.toFixed(2), s: +steering.value.toFixed(2) }),
     // Small NW-corner marker arrow (read-only): live position
     nwArrow: () => ({ x: nwArrow.position.x, y: nwArrow.position.y, z: nwArrow.position.z }),
     teleport(x, z, heading = 0) {
@@ -3052,6 +3640,13 @@ if (location.search.includes('debug')) {
       jumpState.yVelocity = 0;
       wasOnRamp = null;
       playerKnock = null;   // don't carry a stale slide into the new spot
+    },
+    // Force-return to the city world (?debug only): moves the car back into
+    // the main scene so tests can re-stage a mine dive from a clean state.
+    resetToCity() {
+      if (worldState === 'city') return;
+      if (worldState === 'ramp') enterCityWorld();
+      else if (worldState === 'underground') enterCityWorld();
     },
     // Underground prompt-block bump state (tasks #6–#7) for automated testing.
     ugBumps: () => ({
@@ -3095,17 +3690,10 @@ if (location.search.includes('debug')) {
       hits: s.hits,
       cd: +Math.max(0, s.cd).toFixed(2),
     })),
-    // Retracting pyramid-stair state (tasks #25–#28) for automated testing:
-    // per-tier extension (0 = retracted into the wall, 1 = fully out),
-    // collider-active flag and live z, plus the static footprint constants.
+    // Solid staircase state (tasks #25–#28, simplified to a static ramp):
+    // the footprint constants for the one-piece wedge + big flat roof.
     ugStairs: () => ({
       cfg: undergroundWorld.STAIRS,
-      tiers: undergroundWorld.stairs.map((st) => ({
-        i: st.index,
-        ext: +st.ext.toFixed(2),
-        active: st.active,
-        z: +st.mesh.position.z.toFixed(2),
-      })),
     }),
     // Padded-pole impact state (tasks #31–#32) for automated testing.
     ugPole: () => ({
@@ -3121,6 +3709,12 @@ if (location.search.includes('debug')) {
     }),
     // Task #35 off-slab recovery counter for automated testing.
     ugRecoveries: () => ugRecoveries,
+    // Spiral-tunnel tube material state (?debug) — the tunnel-ascent cine
+    // fades it translucent so the car is visible driving up inside it.
+    ugTube: () => ({
+      transparent: undergroundWorld.spiralTubeMat.transparent,
+      opacity: +undergroundWorld.spiralTubeMat.opacity.toFixed(2),
+    }),
     // Spiral-arrival cinematic state (?debug) for automated testing.
     spiralCine: () => ({
       active: spiralCine.active,
@@ -3130,11 +3724,97 @@ if (location.search.includes('debug')) {
     // Force-finish the arrival cinematic (?debug) — lets tests skip ahead
     // to the control handoff at the tunnel foot.
     finishSpiral: () => { if (spiralCine.active) finishSpiralCine(); },
+    // Mine-ascent cinematic state (?debug) for automated testing.
+    mineAscent: () => ({
+      active: mineAscent.active,
+      timer: +mineAscent.timer.toFixed(2),
+      car: mineAscent.active ? { x: +car.position.x.toFixed(1), y: +car.position.y.toFixed(1), z: +car.position.z.toFixed(1) } : null,
+    }),
+    // Force-finish the ascent cinematic (?debug) — lets tests skip ahead to
+    // the control handoff after the car lands clear of the mine shaft.
+    finishAscent: () => { if (mineAscent.active) finishMineAscent(); },
+    // Force-start the ascent cinematic (?debug) — lets tests stage the
+    // underground→city return without re-running the dive + spiral flow.
+    startAscent: () => { if (worldState === 'underground') startMineAscent(); },
+    // Tunnel-ascent cinematic state (?debug) for automated testing.
+    tunnelAscent: () => ({
+      active: tunnelAscentCine.active,
+      timer: +tunnelAscentCine.timer.toFixed(2),
+      s: +tunnelAscentCine.s.toFixed(3),
+      car: tunnelAscentCine.active ? { x: +car.position.x.toFixed(1), y: +car.position.y.toFixed(1), z: +car.position.z.toFixed(1) } : null,
+    }),
+    // Force-start the tunnel-ascent cinematic (?debug) — lets tests stage the
+    // underground→city return without re-running the dive + spiral flow.
+    startTunnelAscent: () => { if (worldState === 'underground') startTunnelAscentCine(); },
     // Camera readout (?debug) for verifying cinematic framing numerically.
     cam: () => ({ x: +camera.position.x.toFixed(1), y: +camera.position.y.toFixed(1), z: +camera.position.z.toFixed(1) }),
+    // TEMP debug: camera internals during the mine dive.
+    camDbg: () => _camDbg,
+    camDebug: () => ({
+      camOffset: { x: +camOffset.x.toFixed(2), y: +camOffset.y.toFixed(2), z: +camOffset.z.toFixed(2) },
+      camTarget: { x: +cameraTarget.x.toFixed(2), y: +cameraTarget.y.toFixed(2), z: +cameraTarget.z.toFixed(2) },
+      look: { x: +_lookTarget.x.toFixed(2), y: +_lookTarget.y.toFixed(2), z: +_lookTarget.z.toFixed(2) },
+      mineActive: minePortal.active,
+      mineTimer: +minePortal.timer.toFixed(2),
+      postCineTimer: +_postCineTimer.toFixed(2),
+      postCineHandoff: _postCineHandoff,
+    }),
+    // Mine-adit gem readout (?debug): positions of the excavation's facet
+    // gems (octahedrons/dodecahedrons/cones) so tests can confirm they line
+    // the shaft from the mouth down to the deep throat.
+    mineGems: () => {
+      const gems = [];
+      scene.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        const p = o.geometry.parameters;
+        const isGem =
+          (o.geometry.type === 'OctahedronGeometry' && p && p.radius === 0.5) ||
+          (o.geometry.type === 'DodecahedronGeometry' && p && p.radius === 0.5) ||
+          (o.geometry.type === 'ConeGeometry' && p && p.radius === 0.34 && p.height === 0.95);
+        if (isGem) gems.push({
+          x: +o.position.x.toFixed(1), y: +o.position.y.toFixed(1), z: +o.position.z.toFixed(1),
+          e: +o.material.emissiveIntensity.toFixed(2),
+        });
+      });
+      return gems;
+    },
+    // Mine-adit ceiling readout (?debug): positions of the descending rock
+    // plates that roof the excavation, so tests can confirm the car drives
+    // INTO a descending tunnel rather than below a flat plane.
+    mineCeil: () => {
+      const plates = [];
+      scene.traverse((o) => {
+        if (!o.isMesh || !o.geometry || o.geometry.type !== 'BoxGeometry') return;
+        const p = o.geometry.parameters;
+        if (!p || p.width !== 9.4 || p.height !== 0.5) return;
+        if (Math.abs(o.position.x + 55) > 0.5) return;
+        if (o.position.z < 32 || o.position.z > 55) return;
+        plates.push({ y: +o.position.y.toFixed(2), z: +o.position.z.toFixed(1) });
+      });
+      plates.sort((a, b) => a.z - b.z);
+      return plates;
+    },
+    // Mine-hole readout (?debug): raycasts straight down at (x,z) and reports
+    // the first surface hit, so tests can confirm the meadow plane is GONE
+    // over the excavation (the car descends into open shaft, not below grass).
+    rayDown: (x, z) => {
+      const raycaster = new THREE.Raycaster();
+      raycaster.set(new THREE.Vector3(x, 30, z), new THREE.Vector3(0, -1, 0));
+      const hits = raycaster.intersectObjects(scene.children, true);
+      if (!hits.length) return null;
+      const h = hits[0];
+      return {
+        y: +h.point.y.toFixed(2),
+        color: '#' + h.object.material.color.getHexString(),
+        type: h.object.geometry.type,
+      };
+    },
     // Ramp-world tire-pyramid state: live snapshot of every tire knockable
     // (position + knock state) for automated testing.
     tires: () => snapKnockables('tire'),
+    // Live snapshot of every knockable prop (position + knock state) for
+    // automated testing of knock distances.
+    knockables: () => snapKnockables(),
     // Task #36 perf probe: last frame's draw calls / triangles from the
     // renderer info struct (values reset each frame by three.js).
     perf: () => ({
@@ -3178,6 +3858,7 @@ window.addEventListener('pointermove', (event) => {
   if (!isDragging) return;
   const deltaX = event.clientX - dragStart.x;
   const deltaY = event.clientY - dragStart.y;
+  if (deltaX !== 0 || deltaY !== 0) cameraManualTimer = CAMERA_MANUAL_HOLD;
   cameraYawOffset = dragStart.yaw - deltaX * 0.005;
   cameraOrbit.phi = THREE.MathUtils.clamp(dragStart.phi + deltaY * 0.005, cameraOrbit.minPhi, cameraOrbit.maxPhi);
 });

@@ -21,13 +21,10 @@ const FLAME_GEO = {
 // Burning buildings next to the main road: x/z = building position, w/d =
 // footprint, h = roof height. Fire = roof plume + a few random windows + the
 // upper corners (no ground-floor fire). At most two buildings burn at once.
-// The truck parks on the road (z=0) and douses them. Spot 3 IS the portal
-// building (see map.js openBuildingSpec) — same centre/footprint/height so
-// every flame sits exactly on that building.
+// The truck parks on the road (z=0) and douses them.
 const FIRE_SPOTS = [
   { x: -28, z: 12, h: 8,  w: 8,  d: 8 },
   { x: 36,  z: 12, h: 7,  w: 8,  d: 7 },
-  { x: 56,  z: 27, h: 20, w: 28, d: 28 },   // the big portal levitation hall
   { x: 0,   z: -24, h: 13, w: 10, d: 8 },
 ];
 
@@ -241,8 +238,7 @@ export function addFiretruck(scene) {
     const dirWorld = dirLocal.clone().applyQuaternion(truck.quaternion);
 
     const n = Math.floor(delta * 90);
-    // Long shots (the truck fights from the road, and the portal hall stands
-    // far back from it) need extra airtime or the water dies mid-flight.
+    // Long shots need extra airtime or the water dies mid-flight.
     const life = Math.min(2.4, dist / DROP_SPEED + 0.3);
     for (let i = 0; i < n && droplets.length < 220; i++) {
       const d = {

@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { rectCircleIntersect } from './modules/world.js';
 
 // ===== Pedestrians =====
 // Simple low-poly people whose legs/arms swing while they walk. The model's
@@ -95,10 +96,15 @@ export function addPeople(scene) {
     });
   };
 
-  // Sidewalk promenades (patrol back and forth)
-  add(-40, 42, [{ x: -70, z: 42 }, { x: 70, z: 42 }], 1.5);
-  add(5, 42, [{ x: -70, z: 42 }, { x: 70, z: 42 }], 1.1);
-  add(55, 42, [{ x: -70, z: 42 }, { x: 70, z: 42 }], 1.7);
+  // Sidewalk promenades (patrol back and forth) — the z=42 walk detours north
+  // around the mine pit (x -61..-49, z 32..44) so nobody walks into the hole.
+  const promenade = [
+    { x: -70, z: 42 }, { x: -62, z: 42 }, { x: -62, z: 46 },
+    { x: -48, z: 46 }, { x: -48, z: 42 }, { x: 70, z: 42 },
+  ];
+  add(-40, 42, promenade, 1.5);
+  add(5, 42, promenade, 1.1);
+  add(55, 42, promenade, 1.7);
   add(-30, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.3);
   add(15, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.6);
   add(50, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.2);
@@ -188,8 +194,14 @@ export function addPeople(scene) {
           continue;
         }
         const move = Math.min(p.speed * delta, dist);
-        p.mesh.position.x += (dx / dist) * move;
-        p.mesh.position.z += (dz / dist) * move;
+        const nx = p.mesh.position.x + (dx / dist) * move;
+        const nz = p.mesh.position.z + (dz / dist) * move;
+        // Never walk into the mine pit (aiOnly colliders) — stop at the edge.
+        const aiOnly = threats.aiOnly || [];
+        if (!aiOnly.some((c) => rectCircleIntersect(nx, nz, c, 0.4))) {
+          p.mesh.position.x = nx;
+          p.mesh.position.z = nz;
+        }
         p.mesh.rotation.y = Math.atan2(dx, dz);   // model front is +Z
         // Walk cycle — legs and arms swing out of phase
         p.phase += delta * p.speed * 3.2;

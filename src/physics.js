@@ -6,6 +6,10 @@ import { tireRollOmega } from './modules/tireStack.js';
 // a car gets close and updateKnockables() every frame to animate the falls.
 
 const knockables = [];
+// Group whose children need world→local direction conversion (e.g. the mine
+// shaft group).  Set via setKnockableWorldGroup().  The inverse matrix is
+// recomputed fresh on every knock so it can never go stale.
+let _worldGroup = null;
 
 // Register a prop to be knockable.
 //   group  - the THREE.Group (or Mesh) for the prop
@@ -31,6 +35,7 @@ export function addKnockable(group, radius, opts = {}) {
     pushDir: new THREE.Vector3(1, 0, 0),
     fallTime: opts.fallTime || 0.4,
     slideDistance: opts.slideDistance || 1.6,
+    baseSlideDistance: opts.slideDistance || 1.6,  // original travel, for speed scaling
     flyHeight: opts.flyHeight || 0.9,   // arc peak for 'scatter' mode
     perp: new THREE.Vector3(1, 0, 0),    // sideways fan for 'scatter' mode
     spin: 0,                             // tumble rate for 'scatter' mode
@@ -42,6 +47,7 @@ export function addKnockable(group, radius, opts = {}) {
     shoveSpin: 0,                        // yaw spin rate while sliding
     shovePower: opts.shovePower ?? 8,           // slide speed when re-hit while down
     shoveSpinPower: opts.shoveSpinPower ?? 1.8, // yaw spin while sliding
+    shoveCd: 0,                                 // cooldown before a downed prop can be shoved again
     linked: null,                        // other knockables that fall together
     // 'domino' mode (ramp-world domino run): a falling domino tips over along
     // its pushDir and knocks any standing domino its body actually *touches*
@@ -112,11 +118,12 @@ function easeOut(t) {
   return 1 - (1 - t) * (1 - t);
 }
 
-const SHOVE_DECAY = 0.9;   // per-frame damping of a downed prop's shove slide
+const SHOVE_DECAY = 0.9;   // per-60fps-frame damping of a downed prop's shove slide
 
 export function updateKnockables(delta) {
   for (const k of knockables) {
     if (k.removed) continue;
+    if (k.shoveCd > 0) k.shoveCd -= delta;
     if (k.offscreen) {
       // Animate a quick downward fall; when deep enough, hide the object.
       k.group.position.y -= k.dropSpeed * delta;
@@ -262,13 +269,16 @@ export function updateKnockables(delta) {
     if (k.state === 'sliding') {
       // A knocked-over prop being shoved along the ground (traffic-car-style):
       // it stays lying flat but slides with a decaying velocity + yaw spin,
-      // then comes to rest wherever it stops.
+      // then comes to rest wherever it stops. The decay is applied per-second
+      // (scaled by delta) so a prop travels the same distance at any frame
+      // rate — a per-frame decay made low-fps browsers shove props too far.
       k.group.position.x += k.shoveVx * delta;
       k.group.position.z += k.shoveVz * delta;
       k.group.rotation.y += k.shoveSpin * delta;
-      k.shoveVx *= SHOVE_DECAY;
-      k.shoveVz *= SHOVE_DECAY;
-      k.shoveSpin *= SHOVE_DECAY;
+      const shoveDecay = Math.pow(SHOVE_DECAY, delta * 60);
+      k.shoveVx *= shoveDecay;
+      k.shoveVz *= shoveDecay;
+      k.shoveSpin *= shoveDecay;
       if (Math.hypot(k.shoveVx, k.shoveVz) < 0.06 && Math.abs(k.shoveSpin) < 0.02) {
         k.state = 'fallen';
       }
@@ -412,18 +422,24 @@ function satOverlap(cx, cy, cz, axes, hA, jc, jh) {
 // velocity and a little yaw spin, and settles where it stops. Re-hitting it
 // while it is still sliding re-shoves it, so you can bat the fallen dominoes
 // and bowling pins around like hockey pucks.
-function startShove(k, d) {
-  k.shoveVx = d.x * k.shovePower;
-  k.shoveVz = d.z * k.shovePower;
+function startShove(k, d, speedFactor = 1) {
+  k.shoveVx = d.x * k.shovePower * speedFactor;
+  k.shoveVz = d.z * k.shovePower * speedFactor;
   k.shoveSpin = (Math.random() < 0.5 ? 1 : -1) * k.shoveSpinPower;
   k.state = 'sliding';
 }
 
 // Start tipping one prop over. `d` is the (normalized) direction the impact
 // comes from, so the prop falls / flies away from it.
-function startFall(k, d) {
+function startFall(k, d, speedFactor = 1) {
   k.pushDir.copy(d);
   k.t = 0;
+  // Scale the travel by how fast the car was going: a slow bump barely
+  // nudges the prop, a full-speed hit sends it the full distance. The
+  // cooldown also starts here so a prop that just landed isn't immediately
+  // re-shoved while the car is still on top of it.
+  k.slideDistance = k.baseSlideDistance * speedFactor;
+  k.shoveCd = 0.5;
   if (k.mode === 'wobble') {
     // Rock the building around a horizontal axis perpendicular to the hit,
     // wobbling back and forth and settling upright again (it never falls).
@@ -499,16 +515,21 @@ function startFall(k, d) {
 // given, the map wraps like a torus (with separate spans per axis, since the
 // world is wider than it is tall), so a car on one edge can knock a prop near
 // the opposite edge (and never knocks far props across the seam).
-export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0) {
+export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0) {
+  // How hard the hit is: a slow bump barely nudges a prop, a full-speed hit
+  // sends it the full distance. 14 is the car's max forward speed.
+  const speedFactor = THREE.MathUtils.clamp(Math.abs(speed) / 14, 0.15, 1);
+  const _wp = new THREE.Vector3();   // reusable for world-position lookup
   for (const k of knockables) {
     // A prop that is already down (fallen or sliding) can still be hit — it
     // gets shoved along the ground, exactly like knocking a traffic car.
     const lying = k.state === 'fallen' || k.state === 'sliding';
     if (k.state !== 'standing' && !lying) continue;
-    // Measure from the prop's CURRENT spot (a shoved prop has moved away from
-    // its original base), so hits track where it actually lies right now.
-    let dx = k.group.position.x - point.x;
-    let dz = k.group.position.z - point.z;
+    // Measure from the prop's CURRENT WORLD spot (a shoved prop has moved
+    // away from its original base), so hits track where it actually lies.
+    k.group.getWorldPosition(_wp);
+    let dx = _wp.x - point.x;
+    let dz = _wp.z - point.z;
     if (worldSizeX) {
       const half = worldSizeX / 2;
       dx = ((dx + half) % worldSizeX + worldSizeX) % worldSizeX - half;
@@ -522,17 +543,36 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0) {
     let d = new THREE.Vector3(dx, 0, dz);
     if (d.lengthSq() < 1e-4) d.set(1, 0, 0);
     d.normalize();
+    // Convert the world-space push direction into the parent group's local
+    // space so the animation moves the child correctly.  Only applies to
+    // knockables inside the registered world group (e.g. the mine shaft).
+    // City props are direct children of the scene and must keep their
+    // world-space direction — applying the mine shaft's inverse world matrix
+    // (including translation) would inflate a unit vector into a 65-unit
+    // position vector, causing props to fly wildly off-course.
+    if (_worldGroup && k._inWorldGroup) {
+      _worldGroup.updateMatrixWorld(true);
+      const invRot = new THREE.Matrix3().setFromMatrix4(
+        new THREE.Matrix4().copy(_worldGroup.matrixWorld).invert()
+      );
+      d.applyMatrix3(invRot);
+    }
     // Already down: shove it along the ground instead of tipping it over.
+    // A short cooldown stops the car from re-shoving a prop every frame and
+    // carrying it along in front of the bumper.
     if (lying) {
-      startShove(k, d);
+      if (k.shoveCd <= 0) {
+        k.shoveCd = 0.5;
+        startShove(k, d, speedFactor);
+      }
       continue;
     }
-    startFall(k, d);
+    startFall(k, d, speedFactor);
     // Anything linked (e.g. the fruit on a table) goes down together, so a
     // whole stall collapses and its fruit scatter at the same moment.
     if (k.linked) {
       for (const lk of k.linked) {
-        if (lk.state === 'standing') startFall(lk, d);
+        if (lk.state === 'standing') startFall(lk, d, speedFactor);
       }
     }
   }
@@ -549,6 +589,8 @@ export function snapKnockables(mode = null) {
       y: +k.group.position.y.toFixed(2),
       z: +k.group.position.z.toFixed(2),
       state: k.state,
+      cd: +k.shoveCd.toFixed(2),
+      inGroup: !!k._inWorldGroup,
     }));
 }
 
@@ -557,6 +599,21 @@ export function snapKnockables(mode = null) {
 // vortex), so the city's lamp posts, benches, barrels, parked cars and the
 // ramp world's bowling pins and dominoes are all standing again when you
 // come back to that world.
+/** Register a group whose children need world→local direction conversion. */
+export function setKnockableWorldGroup(group) {
+  _worldGroup = group;
+  // Pre-mark every knockable that lives inside this group so knockAt can
+  // skip the conversion for props that are outside it (city cones, etc.).
+  for (const k of knockables) {
+    k._inWorldGroup = false;
+    let p = k.group.parent;
+    while (p) {
+      if (p === group) { k._inWorldGroup = true; break; }
+      p = p.parent;
+    }
+  }
+}
+
 export function resetKnockables() {
   for (const k of knockables) {
     k.state = 'standing';
@@ -566,6 +623,7 @@ export function resetKnockables() {
     k.shoveVx = 0;
     k.shoveVz = 0;
     k.shoveSpin = 0;
+    k.shoveCd = 0;
     k.rollVx = 0;
     k.rollVz = 0;
     k.rollT = 0;

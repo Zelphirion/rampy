@@ -14,13 +14,33 @@
 
 -give the neon glowing foam a texture so it looks more like foam
 
--
+
+
+
+-traffic cars drive too close together, they should give each other at lease two carlenghts between their bumpers so the don't ever touch.  they are good drivers, unlike our player who causes lots of accidents 
+
+
+-little car follows you into underground after about 30 seconds.  it drives out of the tunnel the same way you do, no forced camera movement, but if you are there you will see it
+
+
+
+
+rotating platter
+disco light up squares, color changing, disappearing? 
+candy waterfall 
+real ramp down in cave
+reallly in curve spiral 
+car should tilt when it goes up the stair like when it goes up a ramp, but be bumpy
+fix all the notes in the repo referrinng to cordinatants.  We know that the big arrows is pointing to X=0 and Y=0, and that is showing up correctly on the mini map.  make sure any cordinate references in comments match this updated layout.  (don't add new coordinates where we don't have them, I just don't want any lingering incorrect coordinates that will confuse future prompts)
+
+
+
+
+-don't make the tube trasparent in the animation entering the underground
+
 
 -
 
--after we fall through the mineshaft 
-
--The tire shape is good now
 
 
 
@@ -37,4 +57,3 @@ Core Subterranean Features & Kinetic Obstacles:
 
     Industrial Car Elevators & Sweeper Arms: Simple, continuous vertical platform lifts move up and down over deep foam pits, allowing drivers to ride their cars to elevated tiers and drive along upper ledges. High-altitude balance beams feature spinning, glowing mechanical sweeper arms at bumper height, forcing cars to time their runs or get knocked into the abyss.
 
-    Retracting Pyramid Stairs & Finish Ramp: A giant, tiered block staircase features individual steps that rhythmically extend and retract into the cavern walls. Vehicles must scale the shifting steps to reach a massive launch ramp at the peak, throwing cars into a padded vertical pole that triggers explosive light shows and sound effects upon impact.
