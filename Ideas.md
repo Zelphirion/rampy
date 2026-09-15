@@ -17,20 +17,35 @@
 
 
 
--traffic cars drive too close together, they should give each other at lease two carlenghts between their bumpers so the don't ever touch.  they are good drivers, unlike our player who causes lots of accidents 
+
+--
+
+
+
+
 
 
 -little car follows you into underground after about 30 seconds.  it drives out of the tunnel the same way you do, no forced camera movement, but if you are there you will see it
 
+more intereesting cars on teh train - logs, 
 
+a steamroller in traffic the triggers flat mode
+
+thumbnails for socail images for kidweb
+
+trigger more tiles - touching tiles
+
+abscrtact scupltures on the colorful tiles the fall down
 
 
 rotating platter
 disco light up squares, color changing, disappearing? 
-candy waterfall 
-real ramp down in cave
-reallly in curve spiral 
-car should tilt when it goes up the stair like when it goes up a ramp, but be bumpy
+
+
+
+
+
+
 fix all the notes in the repo referrinng to cordinatants.  We know that the big arrows is pointing to X=0 and Y=0, and that is showing up correctly on the mini map.  make sure any cordinate references in comments match this updated layout.  (don't add new coordinates where we don't have them, I just don't want any lingering incorrect coordinates that will confuse future prompts)
 
 

@@ -1,5 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { tireRollOmega } from './modules/tireStack.js';
+import { resolveLogCollision } from './modules/logCollision.js';
 
 // Simple knock-over physics for props (lampposts, signs, trees, parked cars, ...).
 // Props register themselves via addKnockable(); main.js calls knockAt() whenever
@@ -73,6 +74,7 @@ export function addKnockable(group, radius, opts = {}) {
     rollT: 0,
     rollDuration: opts.rollDuration ?? 4,
     rollRadius: opts.rollRadius || 2.1,
+    rollHalfLen: opts.rollHalfLen || 6.5,   // half the log length — capsule collision extent
     rollPower: opts.rollPower ?? 24,        // initial roll speed
     rollDecay: opts.rollDecay ?? 1.0,       // per-second exponential damping
     rollWrapX: opts.rollWrapX || 0,         // wrap span for x (180) so a log rolling off the west edge reappears on the east (torus seam)
@@ -220,6 +222,10 @@ export function updateKnockables(delta) {
       const decay = Math.exp(-k.rollDecay * delta);
       k.rollVx *= decay;
       k.rollVz *= decay;
+      // Log-vs-log collision: a rolling log that touches another log (at rest
+      // or rolling) separates from it and knocks it into rolling — so logs
+      // never overlap, never ghost through each other, and chain-react.
+      if (k.mode === 'roll') collideRollingLogs(k);
       // Keep a far-rolling log inside the playable band: wrap x around the
       // torus seam (span 180) so it never rolls off the world edge.
       if (k.rollWrapX) {
@@ -347,6 +353,57 @@ export function updateKnockables(delta) {
       }
     }
     if (k.isOffEdge && k.isOffEdge(k.group.position)) k.offscreen = true;
+  }
+}
+
+// Ramp-world timber logs: when a rolling log touches another log (standing or
+// rolling), they collide — the pair is separated so they never overlap or
+// ghost through each other, the struck log is knocked into rolling (chain
+// reaction), and the rolling log bounces off with restitution. Runs inside
+// the 'rolling' state update, so only moving logs drive collisions; a log at
+// rest is still a solid obstacle that gets knocked away when hit.
+function collideRollingLogs(k) {
+  const kState = {
+    x: k.group.position.x, z: k.group.position.z,
+    ax: k.rollAxis.x, az: k.rollAxis.z,
+    halfLen: k.rollHalfLen, radius: k.rollRadius,
+    vx: k.rollVx, vz: k.rollVz, rollPower: k.rollPower,
+  };
+  for (const j of knockables) {
+    if (j === k || j.mode !== 'roll' || j.removed) continue;
+    const jMoving = j.state === 'rolling';
+    const jState = {
+      x: j.group.position.x, z: j.group.position.z,
+      ax: j.rollAxis.x, az: j.rollAxis.z,
+      halfLen: j.rollHalfLen, radius: j.rollRadius,
+      vx: jMoving ? j.rollVx : 0, vz: jMoving ? j.rollVz : 0,
+      rollPower: j.rollPower,
+    };
+    const r = resolveLogCollision(kState, jState);
+    if (!r) continue;
+    k.group.position.x = r.kx;
+    k.group.position.z = r.kz;
+    k.rollVx = r.kvx;
+    k.rollVz = r.kvz;
+    if (jMoving) {
+      j.group.position.x = r.jx;
+      j.group.position.z = r.jz;
+      j.rollVx = r.jvx;
+      j.rollVz = r.jvz;
+    } else if (r.knocked) {
+      // A log at rest knocked into rolling by the collision.
+      j.group.position.x = r.jx;
+      j.group.position.z = r.jz;
+      j.rollVx = r.jvx;
+      j.rollVz = r.jvz;
+      j.pushDir.set(r.jvx, 0, r.jvz).normalize();
+      j.rollT = 0;
+      j.shoveCd = 0.5;
+      j.state = 'rolling';
+    }
+    // Keep k's state fresh for the next pair in this frame.
+    kState.x = r.kx; kState.z = r.kz;
+    kState.vx = r.kvx; kState.vz = r.kvz;
   }
 }
 

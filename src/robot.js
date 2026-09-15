@@ -297,7 +297,12 @@ export function addRobot(scene) {
     };
     consider('player', ctx.player.mesh);
     consider('bumper', ctx.bumper.mesh);
-    for (const t of ctx.traffic) consider('traffic', t.mesh, t);
+    // The steamroller is too heavy for the robot to pick up — it stays in
+    // traffic so it can keep flattening the player car.
+    for (const t of ctx.traffic) {
+      if (t.isSteamroller) continue;
+      consider('traffic', t.mesh, t);
+    }
     return best;
   }
 

@@ -703,11 +703,11 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
   const logMat = new THREE.MeshStandardMaterial({ map: woodTex, roughness: 0.9 });
   const logGeo = new THREE.CylinderGeometry(2.1, 2.1, 13, 14);
   const logs = [
-    { x: -84, z: 26, rotY: 0.3 },
-    { x: -76, z: 34, rotY: -0.2 },
-    { x: -88, z: 42, rotY: 1.1 },
-    { x: -72, z: 50, rotY: 0.6 },
-    { x: -80, z: 58, rotY: -0.9 },
+    { x: -88, z: 22, rotY: 0.3 },
+    { x: -74, z: 32, rotY: -0.2 },
+    { x: -92, z: 46, rotY: 1.1 },
+    { x: -70, z: 54, rotY: 0.6 },
+    { x: -82, z: 64, rotY: -0.9 },
   ];
   for (const L of logs) {
     const g = new THREE.Group();
@@ -725,7 +725,7 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
     g.position.set(L.x, at(L.x, L.z), L.z);
     scene.add(g);
     addKnockable(g, 8.0, {
-      mode: 'roll', rollRadius: 2.1, rollPower: 24, rollDecay: 1.0, rollWrapX: 180,
+      mode: 'roll', rollRadius: 2.1, rollHalfLen: 6.5, rollPower: 24, rollDecay: 1.0, rollWrapX: 180,
       spinGroup: spin,
       rollAxis: new THREE.Vector3(Math.sin(L.rotY), 0, Math.cos(L.rotY)),
       isOffEdge: rampIsOffEdge,

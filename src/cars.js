@@ -400,6 +400,83 @@ export function createChevy57Taxi() {
   return group;
 }
 
+// ===== Steamroller (yellow road roller) =====
+// A heavy road roller: a big flat drum up front that flattens the player car
+// when it drives over it, a cab at the rear, and a smokestack. Exposes the
+// same { wheels, wheelPivots } userData contract as createCar so the game
+// loop can spin the rear wheels. The front drum stays fixed.
+const rollerYellow = new THREE.MeshStandardMaterial({ color: 0xf2b705, roughness: 0.55 });
+const rollerDark = new THREE.MeshStandardMaterial({ color: 0x2b2b2b, roughness: 0.8 });
+
+export function createSteamroller() {
+  const group = new THREE.Group();
+  const box = (w, h, d, mat, x, y, z, rx = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat.clone());
+    m.position.set(x, y, z);
+    m.rotation.z = rz;
+    m.rotation.x = rx;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
+  };
+
+  // ===== Big flat drum (front, faces -X) =====
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 2.5, 24), rollerYellow.clone());
+  drum.rotation.order = 'YXZ';   // spin via rotation.y (traffic wheel roll) without tilting the axis
+  drum.rotation.x = Math.PI / 2;   // lay cylinder on its side, axis along Z
+  drum.position.set(-2.3, 1.15, 0);
+  drum.castShadow = true;
+  drum.receiveShadow = true;
+  group.add(drum);
+  // Drum axle hub
+  const drumHub = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 2.6, 12), rollerDark.clone());
+  drumHub.rotation.x = Math.PI / 2;
+  drumHub.position.set(-2.3, 1.15, 0);
+  group.add(drumHub);
+
+  // ===== Engine housing (between drum and cab) =====
+  box(1.6, 1.0, 2.2, rollerYellow, -0.85, 1.0, 0);
+  box(1.6, 0.15, 2.3, rollerDark, -0.85, 0.5, 0);   // chassis plate
+
+  // ===== Cab (rear) =====
+  box(2.2, 1.7, 2.1, rollerYellow, 1.35, 1.7, 0);
+  box(2.2, 0.15, 2.15, rollerDark, 1.35, 2.62, 0);   // cab roof
+  box(1.6, 0.55, 0.12, glassMat, 1.35, 2.0, 1.06);   // side windows
+  box(1.6, 0.55, 0.12, glassMat, 1.35, 2.0, -1.06);
+  box(0.9, 0.5, 1.6, glassMat, 2.2, 2.0, 0);         // rear window
+
+  // ===== Smokestack =====
+  const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.22, 1.6, 12), rollerDark.clone());
+  stack.position.set(0.35, 2.6, 0);
+  stack.castShadow = true;
+  group.add(stack);
+  const stackCap = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.12, 12), chromeMat.clone());
+  stackCap.position.set(0.35, 3.42, 0);
+  group.add(stackCap);
+
+  // ===== Rear wheels (two small) =====
+  const wheels = [];
+  const wheelPivots = [];
+  for (const z of [-1.0, 1.0]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(2.3, 0.55, z);
+    const wheel = new THREE.Mesh(truckWheelGeometry, wheelMaterial.clone());
+    wheel.rotation.x = Math.PI / 2;
+    wheel.castShadow = true;
+    wheel.receiveShadow = true;
+    pivot.add(wheel);
+    group.add(pivot);
+    wheels.push(wheel);
+    wheelPivots.push(pivot);
+  }
+  // The drum stays fixed — it doesn't spin with the rear wheels.
+  group.userData.wheels = wheels;
+  group.userData.wheelPivots = wheelPivots;
+
+  return group;
+}
+
 // ===== 1968 VW Bug (classic Beetle) =====
 // Almost entirely round: ellipsoid body, dome roof, bulbous fenders,
 // cylinder bumpers, torus trim — no flat rectangles. The real Beetle is
@@ -601,5 +678,14 @@ export function addTrafficCars(scene) {
       cars.push({ mesh, axis: lane.axis, dir: lane.dir, speed: lane.speed, speedCur: lane.speed, homeLat: lane.off, shove: 0, knock: null });
     }
   }
+  // A steamroller patrols the main road — its big drum flattens the player
+  // car when it drives over it (see main.js traffic update).  Placed between
+  // the regular traffic spawn points (every 20 units) so deOverlapTraffic
+  // doesn't immediately remove it.
+  const roller = createSteamroller();
+  roller.position.set(40, 0.15, -5.5);
+  roller.rotation.y = 0;   // heading -X (westbound)
+  scene.add(roller);
+  cars.push({ mesh: roller, axis: 'x', dir: -1, speed: 3.2, speedCur: 3.2, homeLat: -5.5, shove: 0, knock: null, isSteamroller: true });
   return cars;
 }
