@@ -117,6 +117,17 @@ export function createCar(color) {
   return group;
 }
 
+// ===== Little car (underground follower) =====
+// A smaller, cuter copy of the player car that follows you into the
+// underground through the spiral tunnel. Shares the same body + wheel rig
+// (so the game loop can spin the wheels), just scaled down so it reads as a
+// "little car" next to the full-size player car.
+export function createLittleCar(color) {
+  const group = createCar(color);
+  group.scale.setScalar(0.55);
+  return group;
+}
+
 // ===== Fire engine (big red pumper truck) =====
 // A long fire truck: roomy cab up front with glowing headlights, a warning
 // lightbar, a row of round valve knobs along each side, and a ladder rack on

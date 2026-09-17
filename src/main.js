@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1787160950001';
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1787180000001';
-import { createCar, addTrafficCars } from './cars.js?v=1789487308557';
+import { createCar, createLittleCar, addTrafficCars } from './cars.js?v=1789487308557';
 import { addFiretruck } from './firetruck.js?v=1787510500000';
 import { addPeople } from './people.js';
 import { addRobot } from './robot.js?v=1789487308555';
@@ -38,7 +38,7 @@ import {
 } from './modules/portalRules.js';
 import { resolveStuck, wallNormal } from './modules/unstick.js';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint } from './levels/underground/index.js';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js';
 
 // ===== World bounds / wrap helpers =====
 // Shared torus-map math lives in modules/world.js so main.js stays focused on
@@ -108,6 +108,15 @@ camera.position.set(startX, startY, startZ);
 const camOffset = new THREE.Vector3(startX, startY - 0.8, 0);
 let isDragging = false;
 let dragStart = { x: 0, y: 0, yaw: 0, phi: cameraOrbit.phi };
+// Pinch-to-zoom state: tracks every touch/pen pointer that lands on the
+// canvas so a second finger switches from orbit-drag into zoom (the touch
+// twin of the scroll-wheel zoom below). `pinchPointers` is keyed by
+// pointerId; `dragPointerId` marks the single pointer driving the orbit drag.
+const pinchPointers = new Map();   // pointerId -> { x, y } (client coords)
+let dragPointerId = null;          // pointerId currently driving the orbit drag
+let pinchActive = false;
+let pinchStartDist = 1;            // finger spacing when the pinch began
+let pinchStartRadius = cameraOrbit.radius;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1101,6 +1110,261 @@ const ugRamps = undergroundWorld.ramps || [];
 let stairGhostTimer = 0;
 let ugRecoveries = 0;
 
+// ===== Little car follower (underground) =====
+// A small car that follows the player into the underground: ~30s after the
+// player arrives it rides the spiral tunnel down and bursts out of the foot
+// the same way the player did, then follows the player around the course.
+// No camera involvement — you only see it if you happen to be near the
+// tunnel exit when it comes out.
+const LITTLE_CAR_DELAY = 30;        // seconds after entering underground before it appears
+const LITTLE_CAR_TUNNEL_DUR = 5.0;  // seconds riding the spiral (matches the player's arrival)
+const LITTLE_CAR_FOLLOW_SPEED = 9;  // cruise speed while following the player
+const LITTLE_CAR_STOP_DIST = 9;     // stop following this close to the player
+const LITTLE_CAR_RADIUS = 1.2;      // collision radius (scaled-down car)
+const littleCar = {
+  mesh: null,
+  phase: 'idle',   // 'idle' | 'waiting' | 'tunnel' | 'following'
+  timer: 0,
+  s: 0,
+};
+// Player-path trail the little car follows (underground only). The player's
+// position is recorded every few frames; the little car drives along the
+// trail, which lets it follow you up the ramps and around obstacles exactly
+// as you drove, instead of trying to navigate on its own (which gets stuck
+// against long walls like the grand ramp's side skirts).
+const littleCarTrail = [];
+let littleCarTrailTimer = 0;
+const LITTLE_CAR_TRAIL_STEP = 0.2;      // seconds between recorded points
+const LITTLE_CAR_TRAIL_MAX = 4000;      // ring-buffer cap (~13 min of driving)
+const LITTLE_CAR_TRAIL_CATCH = 1.5;     // how close before popping a point
+
+function spawnLittleCar() {
+  if (littleCar.mesh) return;
+  littleCar.mesh = createLittleCar(0x1e7ea6);   // same blue as the city's little blue car
+  littleCar.mesh.visible = false;
+  undergroundScene.add(littleCar.mesh);
+}
+
+// Remove the little car entirely (used when the player leaves the
+// underground — it stays behind in the cavern).
+function resetLittleCar() {
+  if (littleCar.mesh) {
+    undergroundScene.remove(littleCar.mesh);
+    littleCar.mesh = null;
+  }
+  littleCar.phase = 'idle';
+  littleCar.timer = 0;
+  littleCar.s = 0;
+  littleCarTrail.length = 0;
+  littleCarTrailTimer = 0;
+  littleCarWasOnRamp = false;
+}
+
+// Called when the player enters the underground: arm the 30s countdown.
+function startLittleCar() {
+  spawnLittleCar();
+  littleCar.phase = 'waiting';
+  littleCar.timer = 0;
+  littleCarTrail.length = 0;
+  littleCarTrailTimer = 0;
+  littleCarWasOnRamp = false;
+}
+
+// Record the player's path for the little car to follow. Runs every frame
+// while the player is in the underground; the trail is cleared when the
+// player leaves.
+function recordLittleCarTrail(delta) {
+  if (worldState !== 'underground') {
+    littleCarTrail.length = 0;
+    return;
+  }
+  littleCarTrailTimer -= delta;
+  if (littleCarTrailTimer <= 0) {
+    littleCarTrailTimer = LITTLE_CAR_TRAIL_STEP;
+    littleCarTrail.push({ x: car.position.x, z: car.position.z });
+    if (littleCarTrail.length > LITTLE_CAR_TRAIL_MAX) littleCarTrail.shift();
+  }
+}
+
+// Terrain height the little car should ride at (x, z), given its current
+// height. Mirrors the player's underground ground handling: course ramps
+// (the grand ramp / candy waterfall, the staircase's sibling ramps) first,
+// then soft surfaces (staircase steps, the elevator deck, the checkerboard
+// ceiling), then the cavern floor. The same proximity gates keep it from
+// snapping up to a surface it isn't near (e.g. the ceiling from the floor
+// below) or being yanked down off the ceiling by a ramp sitting underneath
+// it. On the ceiling, a crumbled tile is a hole — hold the current height
+// instead of dropping through; the steering logic nudges it sideways off
+// the gap.
+let littleCarWasOnRamp = false;   // was the little car riding a ramp last frame?
+function littleCarGroundY(x, z, currentY) {
+  if (currentY > CEIL_Y + 0.5 && ugTileGoneAt(x, z)) return currentY;
+  const r = ugRampInfoAt(x, z);
+  const rampSurf = r ? r.baseY + r.height * r.s : -Infinity;
+  if (r !== null && Math.abs(currentY - rampSurf) < 2.0) return rampSurf;
+  const eTop = ugElevatorTopAt(x, z, currentY);
+  if (eTop > 0.05 && Math.abs(currentY - eTop) < 1.4) return eTop;
+  // Just drove off the top of a ramp that reaches the ceiling (the grand
+  // ramp / candy waterfall): snap up onto the ceiling instead of dropping
+  // through the ramp-top seam. The little car's y can lag the ramp surface
+  // near the top (fast trail points / a big frame delta), leaving it just
+  // below the 1.4 snap gate — without this it would fall to the floor.
+  // Over a crumbled tile (a hole) hold height instead of falling through.
+  if (littleCarWasOnRamp && currentY > CEIL_Y - 1.0) {
+    if (ugTileGoneAt(x, z)) return currentY;
+    if (eTop > 0.05) return eTop;
+  }
+  return 0;
+}
+
+// Advance the little car's state machine. Runs every frame while the player
+// is in the underground.
+function updateLittleCar(delta) {
+  const lc = littleCar;
+  if (!lc.mesh) return;
+
+  if (lc.phase === 'waiting') {
+    // Count down the 30s, then start riding the spiral tunnel down.
+    lc.timer += delta;
+    if (lc.timer >= LITTLE_CAR_DELAY) {
+      lc.phase = 'tunnel';
+      lc.timer = 0;
+      lc.s = spiralCine.sStart;
+      lc.mesh.visible = true;
+    }
+  } else if (lc.phase === 'tunnel') {
+    // Ride the spiral from near the top to the foot — the same path the
+    // player's arrival cinematic uses. The opaque tube hides it while it's
+    // deep inside; it becomes visible as it rounds the corner toward the
+    // exit, then bursts out of the foot.
+    lc.timer += delta;
+    const u = Math.min(lc.timer / LITTLE_CAR_TUNNEL_DUR, 1);
+    lc.s = spiralCine.sStart + (1 - spiralCine.sStart) * u;
+    const pose = spiralPoseAt(lc.s);
+    lc.mesh.position.set(pose.x, pose.y, pose.z);
+    lc.mesh.rotation.set(0, pose.heading, pose.pitch);
+    const spin = 13 * delta * 2.6;
+    for (const w of lc.mesh.userData.wheels) w.rotation.y += spin;
+    if (u >= 1) {
+      // Burst out of the tunnel foot along its exit tangent, exactly like
+      // finishSpiralCine does for the player.
+      const p = tunnelPoint(1);
+      const q = tunnelPoint(0.994);
+      let ex = p.x - q.x, ez = p.z - q.z;
+      const elen = Math.hypot(ex, ez) || 1;
+      ex /= elen; ez /= elen;
+      lc.mesh.position.set(p.x + ex * 2.5, 0, p.z + ez * 2.5);
+      lc.mesh.rotation.set(0, Math.atan2(ez, -ex), 0);
+      // Trim the player-path trail to start from the point nearest the
+      // little car, so it follows the path FORWARD from where it is (not
+      // from the very beginning of the recording, which is the top of the
+      // spiral — chasing that would run it into the tunnel tube).
+      let bestI = 0, bestD = Infinity;
+      for (let i = 0; i < littleCarTrail.length; i++) {
+        const tp = littleCarTrail[i];
+        const d = Math.hypot(tp.x - lc.mesh.position.x, tp.z - lc.mesh.position.z);
+        if (d < bestD) { bestD = d; bestI = i; }
+      }
+      if (littleCarTrail.length > 0) littleCarTrail.splice(0, bestI);
+      lc.phase = 'following';
+      lc.timer = 0;
+    }
+  } else if (lc.phase === 'following') {
+    // Follow the player's recorded trail so the little car drives the same
+    // path you did — up the ramps, around obstacles, onto the ceiling.
+    // Drop trail points the little car has already reached, then drive
+    // toward the next one. If the trail is empty (e.g. right after a
+    // teleport), fall back to driving straight at the player. On the
+    // checkerboard ceiling, a crumbled tile is a hole — steer around it
+    // too, so the little car doesn't fall through a gap the player opened.
+    const onCeiling = lc.mesh.position.y > CEIL_Y + 0.5;
+    while (littleCarTrail.length > 0) {
+      const p = littleCarTrail[0];
+      // Skip trail points that sit over a crumbled ceiling tile (a hole) —
+      // the little car can't drive onto them, and chasing one leaves it
+      // stuck oscillating at the hole's edge. Target the next clear point
+      // instead so it drives around the gap.
+      const overHole = onCeiling && ugTileGoneAt(p.x, p.z);
+      if (overHole || Math.hypot(p.x - lc.mesh.position.x, p.z - lc.mesh.position.z) < LITTLE_CAR_TRAIL_CATCH) {
+        littleCarTrail.shift();
+      } else {
+        break;
+      }
+    }
+    let tx = car.position.x, tz = car.position.z;
+    if (littleCarTrail.length > 0) {
+      tx = littleCarTrail[0].x;
+      tz = littleCarTrail[0].z;
+    }
+    const dx = tx - lc.mesh.position.x;
+    const dz = tz - lc.mesh.position.z;
+    const dist = Math.hypot(dx, dz);
+    const pdx = car.position.x - lc.mesh.position.x;
+    const pdz = car.position.z - lc.mesh.position.z;
+    const pdy = car.position.y - lc.mesh.position.y;
+    // 3D distance to the player (not just 2D): if the player is on the
+    // ceiling and the little car is still on the floor, the height gap keeps
+    // it following instead of stopping far below.
+    const distToPlayer = Math.hypot(pdx, pdz, pdy);
+    const clear = (px, pz) => !isPositionBlocked(px, pz, LITTLE_CAR_RADIUS) && !(onCeiling && ugTileGoneAt(px, pz));
+    // Keep the usual follow gap from the player; while the player is further
+    // away, drive toward the next trail point even if it's close — the stop
+    // distance only applies to the player, not to intermediate trail points.
+    if (distToPlayer > LITTLE_CAR_STOP_DIST && dist > 0.15) {
+      const nx = dx / dist, nz = dz / dist;
+      const move = LITTLE_CAR_FOLLOW_SPEED * delta;
+      const nextX = lc.mesh.position.x + nx * move;
+      const nextZ = lc.mesh.position.z + nz * move;
+      if (clear(nextX, nextZ)) {
+        lc.mesh.position.x = nextX;
+        lc.mesh.position.z = nextZ;
+      } else {
+        // Direct line blocked — try sliding sideways around it.
+        const perpX = nz, perpZ = -nx;
+        const tryR = { x: lc.mesh.position.x + perpX * move, z: lc.mesh.position.z + perpZ * move };
+        const tryL = { x: lc.mesh.position.x - perpX * move, z: lc.mesh.position.z - perpZ * move };
+        if (clear(tryR.x, tryR.z)) {
+          lc.mesh.position.x = tryR.x;
+          lc.mesh.position.z = tryR.z;
+        } else if (clear(tryL.x, tryL.z)) {
+          lc.mesh.position.x = tryL.x;
+          lc.mesh.position.z = tryL.z;
+        }
+      }
+      // Face the player (car forward = local -X, so heading = atan2(nz, -nx)).
+      lc.mesh.rotation.y = Math.atan2(nz, -nx);
+    } else if (onCeiling && ugTileGoneAt(lc.mesh.position.x, lc.mesh.position.z)) {
+      // Parked on a crumbled tile (a hole) — nudge sideways off it so we
+      // don't fall through.
+      const ad = dist || 1;
+      const perpX = dz / ad, perpZ = -dx / ad;
+      const nudge = LITTLE_CAR_FOLLOW_SPEED * delta;
+      for (const s of [1, -1]) {
+        const tx = lc.mesh.position.x + perpX * nudge * s;
+        const tz = lc.mesh.position.z + perpZ * nudge * s;
+        if (clear(tx, tz)) {
+          lc.mesh.position.x = tx;
+          lc.mesh.position.z = tz;
+          break;
+        }
+      }
+    }
+    // Ride the terrain like the player: course ramps (the candy waterfall),
+    // soft surfaces (staircase steps, the elevator deck, the checkerboard
+    // ceiling), or the cavern floor. The little car never triggers the tile
+    // color changes — those only react to the player — so it drives over the
+    // colorful tiles without lighting them up.
+    lc.mesh.position.y = littleCarGroundY(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y);
+    // Remember whether the little car is riding a ramp, so the ground-height
+    // helper can snap it onto the ceiling when it drives off a ramp's top
+    // (instead of falling through the ramp-top/ceiling seam).
+    const rNow = ugRampInfoAt(lc.mesh.position.x, lc.mesh.position.z);
+    littleCarWasOnRamp = rNow !== null && Math.abs(lc.mesh.position.y - (rNow.baseY + rNow.height * rNow.s)) < 2.0;
+    const spin = 13 * delta * 2.6;
+    for (const w of lc.mesh.userData.wheels) w.rotation.y += spin;
+  }
+}
+
 // ===== Perf pass (task #36): cap shadow casting to key props =====
 // Every mesh that casts a shadow costs shadow-map fill rate, but tiny props
 // (glow bulbs, marker dots, edge stripes, debris) produce shadows nobody can
@@ -1258,7 +1522,12 @@ function ugElevatorTopAt(px, pz, carY) {
           if (ck.gone[tz * ck.tilesX + tx]) continue;
         }
       }
-      if (c.h <= carY + 1.2) top = Math.max(top, c.h);
+      // The ceiling collider's h is the checkerboard's underside ride height;
+      // the tiles' top face sits 0.3 higher (CEIL_Y + 1.3), so report that
+      // (matching buildingTopAt's +0.3) or the car's wheels sink into the
+      // tiles. The visibility filter still uses the raw h so the ceiling
+      // becomes reachable at the same height as before.
+      if (c.h <= carY + 1.2) top = Math.max(top, c.ceiling ? c.h + 0.3 : c.h);
     }
   }
   return top;
@@ -1525,6 +1794,9 @@ function enterUndergroundWorld() {
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  // The little car follows you in: arm its 30s countdown so it comes out of
+  // the tunnel a little while after you do.
+  startLittleCar();
   // Park the car at the top of the spiral — the cine update owns
   // positioning until the handoff at the tunnel foot. The car is genuinely
   // in the tunnel the whole time: the opaque tube hides it while it's deep
@@ -1628,6 +1900,9 @@ function startMineAscent() {
   worldState = 'city';
   resetKnockables();
   resetHydrantSprays();
+  // The little car stays behind in the underground — it doesn't follow you
+  // back up the mine shaft.
+  resetLittleCar();
   portalGrace = mineAscent.driveTotal + mineAscent.launchTotal + 2.0;
   velocity.value = 0;
   steering.value = 0;
@@ -2216,7 +2491,8 @@ function setPaused(p) {
 }
 
 // Scroll-wheel camera zoom: wheel up zooms in, wheel down zooms out. Works
-// paused or not, so you can zoom in on the action for a screenshot.
+// paused or not, so you can zoom in on the action for a screenshot. On touch
+// screens the two-finger pinch below drives the same cameraOrbit.radius.
 const CAM_ZOOM_MIN = 4;
 const CAM_ZOOM_MAX = 85;
 window.addEventListener('wheel', (event) => {
@@ -3922,6 +4198,11 @@ function animate() {
   // moment it gets a gentle nudge back north out onto open floor.
   if (worldState === 'underground') {
     undergroundWorld.update(delta, car.position);
+    // Record the player's path so the little car can follow it up the ramps
+    // and onto the ceiling, then advance the little car follower: waits ~30s,
+    // rides the spiral tunnel out, then follows the player around the cavern.
+    recordLittleCarTrail(delta);
+    updateLittleCar(delta);
     // Task #35a: off-slab recovery — the cavern floor mesh spans the slab
     // (292×276 centered at (0,41.5)) but nothing walls its edges, so a huge
     // knock can throw the car past the rim onto invisible floor. Settle it
@@ -4300,6 +4581,23 @@ if (location.search.includes('debug')) {
       undergroundWorld.checker.holeFrames.visible = v;
       return undergroundWorld.checker.holeFrames.visible;
     },
+    // ?debug: art deco statue states (standing / falling / landed) so tests
+    // can confirm a statue topples when its tile crumbles away.
+    ugStatues: () => undergroundWorld.statues.map((s) => ({
+      x: +s.x.toFixed(1),
+      z: +s.z.toFixed(1),
+      y: +s.group.position.y.toFixed(1),
+      state: s.state,
+      fallT: +s.fallT.toFixed(2),
+      tileGone: undergroundWorld.checker.gone[s.idx] === 1,
+    })),
+    // ?debug: force the tile under a statue to crumble (for testing the
+    // lean-and-fall without driving over the tile 5 times).
+    ugStatueCrumble: (n) => {
+      const s = undergroundWorld.statues[n];
+      if (!s) return false;
+      return undergroundWorld.forceCrumble(s.x, s.z);
+    },
     // ?debug: trace the underground physics state at the car's position.
     ugTrace: () => ({
       x: +car.position.x.toFixed(2),
@@ -4391,6 +4689,48 @@ if (location.search.includes('debug')) {
     }),
     // Task #35 off-slab recovery counter for automated testing.
     ugRecoveries: () => ugRecoveries,
+    // TEMP DEBUG: rendered geometry — checker tile bounding box, car + little
+    // car wheel world positions, and the ceiling collider h.
+    ugGeom: () => {
+      const ck = undergroundWorld.checker;
+      const grid = ck.grid;
+      if (!grid.geometry.boundingBox) grid.geometry.computeBoundingBox();
+      const bb = grid.geometry.boundingBox;
+      const tileTop = bb.max.y;
+      const carWheels = car.userData.wheels ? car.userData.wheels.map((w) => {
+        const p = new THREE.Vector3();
+        w.getWorldPosition(p);
+        return { y: +p.y.toFixed(3) };
+      }) : null;
+      const lcWheels = littleCar.mesh && littleCar.mesh.userData.wheels ? littleCar.mesh.userData.wheels.map((w) => {
+        const p = new THREE.Vector3();
+        w.getWorldPosition(p);
+        return { y: +p.y.toFixed(3) };
+      }) : null;
+      const ceilCollider = ugColliders.find((c) => c.ceiling);
+      return {
+        tileTop: +tileTop.toFixed(3),
+        tileBottom: +bb.min.y.toFixed(3),
+        carY: +car.position.y.toFixed(3),
+        carWheels,
+        lcY: littleCar.mesh ? +littleCar.mesh.position.y.toFixed(3) : null,
+        lcWheels,
+        ceilColliderH: ceilCollider ? ceilCollider.h : null,
+      };
+    },
+    // Little car follower state (?debug): phase, countdown, and the little
+    // car's live position/heading so tests can verify the tunnel exit event.
+    littleCar: () => ({
+      phase: littleCar.phase,
+      timer: +littleCar.timer.toFixed(2),
+      visible: littleCar.mesh ? littleCar.mesh.visible : false,
+      pos: littleCar.mesh ? {
+        x: +littleCar.mesh.position.x.toFixed(1),
+        y: +littleCar.mesh.position.y.toFixed(1),
+        z: +littleCar.mesh.position.z.toFixed(1),
+        heading: +littleCar.mesh.rotation.y.toFixed(2),
+      } : null,
+    }),
     // Vinyl floor state (?debug): confirms the cavern floor carries the
     // 1970s vinyl kitchen-floor canvas texture (map type, repeat, and the
     // set of pattern colours actually painted on the canvas).
@@ -4609,27 +4949,85 @@ if (location.search.includes('debug')) {
 }
 
 
-// ===== Camera drag / orbit =====
+// ===== Camera drag / orbit + pinch-to-zoom =====
+// One finger drags the orbit (same as the desktop drag); laying a second
+// finger down switches to pinch-to-zoom — the camera distance scales with the
+// finger spacing, exactly like the scroll-wheel zoom (same min/max clamp),
+// and holds the view while your fingers are moving. `touch-action: none` on
+// the canvas and body keeps the browser's own pinch/scroll out of the way so
+// the gestures reach these handlers.
 renderer.domElement.addEventListener('pointerdown', (event) => {
-  isDragging = true;
-  dragStart.x = event.clientX;
-  dragStart.y = event.clientY;
-  dragStart.yaw = cameraYawOffset;
-  dragStart.phi = cameraOrbit.phi;
+  pinchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+  if (pinchPointers.size === 1) {
+    // First finger: begin the orbit drag.
+    isDragging = true;
+    dragPointerId = event.pointerId;
+    dragStart.x = event.clientX;
+    dragStart.y = event.clientY;
+    dragStart.yaw = cameraYawOffset;
+    dragStart.phi = cameraOrbit.phi;
+  } else if (pinchPointers.size === 2) {
+    // Second finger: drop the orbit drag and start the pinch. The bare
+    // detector means a mid-drag second finger cleanly takes over.
+    isDragging = false;
+    dragPointerId = null;
+    if (!pinchActive) {
+      pinchActive = true;
+      const pts = [...pinchPointers.values()];
+      pinchStartDist = Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+      pinchStartRadius = cameraOrbit.radius;
+      cameraManualTimer = CAMERA_MANUAL_HOLD;
+    }
+  }
 });
 
 window.addEventListener('pointermove', (event) => {
-  if (!isDragging) return;
-  const deltaX = event.clientX - dragStart.x;
-  const deltaY = event.clientY - dragStart.y;
-  if (deltaX !== 0 || deltaY !== 0) cameraManualTimer = CAMERA_MANUAL_HOLD;
-  cameraYawOffset = dragStart.yaw - deltaX * 0.005;
-  cameraOrbit.phi = THREE.MathUtils.clamp(dragStart.phi + deltaY * 0.005, cameraOrbit.minPhi, cameraOrbit.maxPhi);
+  if (!pinchPointers.has(event.pointerId)) return;
+  pinchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+  if (pinchActive && pinchPointers.size >= 2) {
+    // Pinch-to-zoom: scale the camera distance by the finger-spacing ratio,
+    // clamped to the same bounds as the scroll-wheel zoom. Pinch out = zoom
+    // out, pinch in = zoom in.
+    const pts = [...pinchPointers.values()];
+    const dist = Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+    const factor = dist / pinchStartDist;
+    cameraOrbit.radius = THREE.MathUtils.clamp(pinchStartRadius * factor, CAM_ZOOM_MIN, CAM_ZOOM_MAX);
+    cameraManualTimer = CAMERA_MANUAL_HOLD;
+  } else if (isDragging && event.pointerId === dragPointerId) {
+    const deltaX = event.clientX - dragStart.x;
+    const deltaY = event.clientY - dragStart.y;
+    if (deltaX !== 0 || deltaY !== 0) cameraManualTimer = CAMERA_MANUAL_HOLD;
+    cameraYawOffset = dragStart.yaw - deltaX * 0.005;
+    cameraOrbit.phi = THREE.MathUtils.clamp(dragStart.phi + deltaY * 0.005, cameraOrbit.minPhi, cameraOrbit.maxPhi);
+  }
 });
 
-window.addEventListener('pointerup', () => {
-  isDragging = false;
-});
+function endPointer(event) {
+  pinchPointers.delete(event.pointerId);
+  if (pinchActive && pinchPointers.size < 2) {
+    // Pinch ended: if one finger is still down, re-arm the orbit drag from
+    // the current view so lifting one finger mid-pinch keeps you in control.
+    pinchActive = false;
+    isDragging = false;
+    dragPointerId = null;
+    const first = [...pinchPointers.entries()][0];
+    if (first) {
+      isDragging = true;
+      dragPointerId = first[0];
+      dragStart.x = first[1].x;
+      dragStart.y = first[1].y;
+      dragStart.yaw = cameraYawOffset;
+      dragStart.phi = cameraOrbit.phi;
+    }
+  } else if (pinchPointers.size === 0) {
+    isDragging = false;
+    dragPointerId = null;
+  }
+}
+
+window.addEventListener('pointerup', endPointer);
+window.addEventListener('pointercancel', endPointer);
 
 // ===== Resize =====
 window.addEventListener('resize', () => {

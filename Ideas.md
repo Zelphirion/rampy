@@ -25,11 +25,11 @@
 
 
 
--little car follows you into underground after about 30 seconds.  it drives out of the tunnel the same way you do, no forced camera movement, but if you are there you will see it
+-
 
 more intereesting cars on teh train - logs, 
 
-a steamroller in traffic the triggers flat mode
+
 
 thumbnails for socail images for kidweb
 

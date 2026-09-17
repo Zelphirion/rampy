@@ -357,6 +357,8 @@ export const TUNNEL = {
 };
 
 function easeSmooth(s) { return s * s * (3 - 2 * s); }
+function easeOutCubic(s) { return 1 - Math.pow(1 - s, 3); }
+function easeInQuad(s) { return s * s; }
 
 const N = 240;
 const pathSamples = [];
@@ -495,7 +497,13 @@ export function addUnderground(parent, opts = {}) {
   // dark-gray shades when first seen (the same rock gray as before, plus an
   // even darker one — a chessboard). Driving over a tile advances it one step
   // through a neon color sequence that ends on red; red is terminal and stays
-  // lit forever. One InstancedMesh = one draw call for the whole grid.
+  // lit forever. The color a tile turns into radiates a wave outward in
+  // concentric rings: green spreads green to touching tiles, orange spreads
+  // orange with blue beyond, and magenta/red spread a big three-ring circle
+  // (orange, then green, then blue). Each ring bumps its tiles toward the
+  // target color (or up one step if already at/past it), so the colored
+  // region keeps expanding. One InstancedMesh = one draw call for the whole
+  // grid.
   const TILE_SZ = 4;            // tile edge length (world units)
   const TILE_H = 1.15;          // tile thickness (ceiling underside → roof top)
   const TILE_GAP = 0.08;        // hairline grout so tiles read as individual squares
@@ -510,13 +518,17 @@ export function addUnderground(parent, opts = {}) {
   const CHECKER_DARK_A = 0x2b2627;   // same dark gray as the old rock ceiling
   const CHECKER_DARK_B = 0x1a1617;   // even darker gray (chessboard contrast)
   // Neon sequence — each drive-over advances one step; red is the last color
-  // and stays permanently.
+  // and stays permanently. The color a tile turns into radiates a wave of
+  // rings: green → touching green; orange → touching orange + blue beyond;
+  // magenta → touching orange + green + blue beyond (a big circle); red →
+  // the same big circle. Each ring bumps tiles toward its target color (or
+  // up one step if already at/past it), so the pattern expands outward.
   const CHECKER_NEON = [
-    0x35f0ff,   // cyan
-    0x9dff3f,   // lime
-    0xffb84d,   // amber
-    0xff3fd8,   // magenta
-    0xff3b3b,   // red (terminal)
+    0x35f0ff,   // cyan  (blue — first drive-over)
+    0x9dff3f,   // lime  (green — second drive-over, spreads green ring)
+    0xffb84d,   // amber (orange — third drive-over, spreads orange + blue rings)
+    0xff3fd8,   // magenta (spreads orange + green + blue rings)
+    0xff3b3b,   // red (terminal — spreads orange + green + blue rings)
   ];
   // Thin rock backing under the tiles so the hairline grout gaps never show
   // the surface world above the ceiling.
@@ -535,6 +547,12 @@ export function addUnderground(parent, opts = {}) {
   parent.add(checkerGrid);
   // Per-tile state: 0 = dark-A, 1 = dark-B, 2.. = index into CHECKER_NEON.
   const checkerState = new Int32Array(tileCount);
+  // Advance cooldown: after a tile changes color it must wait this long
+  // before it can change again — so one drive-over (front wheels, then back
+  // wheels, or a boundary jitter) can't advance a tile twice in a single
+  // pass. The car has to drive away and come back to trigger the next color.
+  const TILE_ADVANCE_COOLDOWN = 1.0;   // seconds between color changes
+  const checkerCooldown = new Float32Array(tileCount); // >0 = can't advance yet
   // Crumble state: when a tile reaches red it flashes red/white for a few
   // seconds (giving the car time to drive off), then shrinks and falls away,
   // leaving a hole the car can drop through.
@@ -548,6 +566,65 @@ export function addUnderground(parent, opts = {}) {
   const _v3a = new THREE.Vector3();
   const _v3b = new THREE.Vector3();
   const _quat = new THREE.Quaternion();
+  // Advance a tile toward `target` in the neon sequence: if it's below the
+  // target color it jumps straight to it (dark → blue, blue → green, …), and
+  // if it's already at or past the target it bumps up one more step — so the
+  // spreads keep pushing already-colored tiles forward and the colored region
+  // expands outward. Red is terminal and starts the crumble countdown.
+  // Returns the new state (or the current state if the tile is gone/red).
+  const setOrBump = (nIdx, target) => {
+    if (checkerGone[nIdx]) return checkerState[nIdx];
+    if (checkerCooldown[nIdx] > 0) return checkerState[nIdx];   // on cooldown → no double-dip
+    const st = checkerState[nIdx];
+    if (st >= 2 + CHECKER_NEON.length - 1) return st;   // already red
+    const newSt = st < target ? target : st + 1;
+    checkerState[nIdx] = newSt;
+    checkerCooldown[nIdx] = TILE_ADVANCE_COOLDOWN;   // any color change restarts the cooldown
+    _tileColor.set(CHECKER_NEON[newSt - 2]);
+    checkerGrid.setColorAt(nIdx, _tileColor);
+    checkerGrid.instanceColor.needsUpdate = true;
+    if (newSt >= 2 + CHECKER_NEON.length - 1) {
+      checkerCrumble[nIdx] = CEIL_FLASH_TIME + CEIL_FALL_TIME;
+      crumbleActive.add(nIdx);
+    }
+    return newSt;
+  };
+  // Radiate a wave of colors outward from tile `idx` in concentric rings.
+  // `rings` is an array of target colors, one per ring (ring 0 = the tiles
+  // touching `idx`, ring 1 = the tiles touching those, etc.). Each tile is
+  // bumped toward its ring's target color (or up one step if already at/past
+  // it), and each tile is only affected once per wave — the center tile is
+  // never re-bumped.
+  const spreadRings = (idx, rings) => {
+    const ix = idx % tilesX;
+    const iz = (idx - ix) / tilesX;
+    let frontier = [];
+    for (const [nx, nz] of [[ix + 1, iz], [ix - 1, iz], [ix, iz + 1], [ix, iz - 1]]) {
+      if (nx < 0 || nx >= tilesX || nz < 0 || nz >= tilesZ) continue;
+      frontier.push(nz * tilesX + nx);
+    }
+    const touched = new Set([idx]);
+    for (const target of rings) {
+      const bumped = [];
+      for (const fIdx of frontier) {
+        if (touched.has(fIdx)) continue;
+        touched.add(fIdx);
+        bumped.push(fIdx);
+        setOrBump(fIdx, target);
+      }
+      const next = [];
+      for (const fIdx of bumped) {
+        const fx = fIdx % tilesX;
+        const fz = (fIdx - fx) / tilesX;
+        for (const [nx, nz] of [[fx + 1, fz], [fx - 1, fz], [fx, fz + 1], [fx, fz - 1]]) {
+          if (nx < 0 || nx >= tilesX || nz < 0 || nz >= tilesZ) continue;
+          const nIdx = nz * tilesX + nx;
+          if (!touched.has(nIdx)) next.push(nIdx);
+        }
+      }
+      frontier = next;
+    }
+  };
   for (let iz = 0; iz < tilesZ; iz++) {
     for (let ix = 0; ix < tilesX; ix++) {
       const idx = iz * tilesX + ix;
@@ -1054,7 +1131,10 @@ export function addUnderground(parent, opts = {}) {
   // plowing through a torrent of bouncing candy (except the big heavy ones,
   // which knock YOU back).
   const GRAND = {
-    x: 80,             // centre of the x-span on the ceiling's north edge
+    x: 24,             // centre of the x-span on the ceiling's north edge —
+                       // moved west (48) so the candy waterfall sits right at
+                       // the tunnel foot / return portal (≈(-55, 83)) and you
+                       // see it immediately after bursting out of the tube.
     z: 65,             // centre of the z-span (z ∈ [48, 82])
     len: 34,           // half the staircase footprint → twice as steep
     width: 12,         // same width as the staircase
@@ -1311,6 +1391,153 @@ export function addUnderground(parent, opts = {}) {
     }
     return false;
   }
+
+  // ---- Art Deco German Expressionist statues (colorful-tile guardians) ----
+  // Abstract geometric sculptures standing on the checkerboard ceiling tiles
+  // (the "second roof"). Each is a tall angular obelisk: stepped ziggurat
+  // tiers (art deco), four splaying legs, sharp radiating fins, and EXTRA
+  // glowing neon rings circling the body. When the tile a statue stands on
+  // crumbles into a hole, the statue loses its footing — it leans over and
+  // falls down to the cavern floor below.
+  const TILE_TOP = CEIL_Y + 0.15 + TILE_H;   // 31.3 — top face of a ceiling tile
+  const STATUE_FALL_DUR = 2.4;               // seconds for the lean + fall
+  const statueColliders = [];
+  const statues = [];
+
+  function createArtDecoStatue(ringColor) {
+    const group = new THREE.Group();
+    const brass = new THREE.MeshStandardMaterial({
+      color: 0xd8b98a, roughness: 0.35, metalness: 0.6,
+      emissive: 0x4a3410, emissiveIntensity: 0.25,
+    });
+    const dark = new THREE.MeshStandardMaterial({
+      color: 0x241f2b, roughness: 0.75, metalness: 0.25,
+      emissive: 0x120d18, emissiveIntensity: 0.2,
+    });
+
+    // === Four angular legs splaying outward (hold the statue up) ===
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;   // offset 45° from the axes
+      const dx = Math.cos(a), dz = Math.sin(a);
+      // Lower segment — angled outward, ends in a small foot pad.
+      const lower = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.7, 0.18), dark);
+      lower.position.set(dx * 0.6, 0.85, dz * 0.6);
+      lower.rotation.z = dx * 0.32;
+      lower.rotation.x = -dz * 0.32;
+      lower.castShadow = true;
+      group.add(lower);
+      // Upper segment — tapers inward toward the body.
+      const upper = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.9, 0.24), brass);
+      upper.position.set(dx * 0.32, 2.4, dz * 0.32);
+      upper.castShadow = true;
+      group.add(upper);
+      // Foot pad — small angular plinth at the leg tip.
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.14, 0.4), dark);
+      foot.position.set(dx * 0.78, 0.07, dz * 0.78);
+      group.add(foot);
+    }
+
+    // === Central pedestal (between the legs, below the body) ===
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.85, 0.7, 8), dark);
+    pedestal.position.y = 0.35;
+    pedestal.castShadow = true;
+    group.add(pedestal);
+
+    // === Stepped ziggurat body (art deco tiers, alternating brass/dark) ===
+    const tiers = [
+      { w: 1.9, h: 1.2, d: 1.9, y: 3.5, mat: brass },
+      { w: 1.55, h: 1.0, d: 1.55, y: 4.6, mat: dark },
+      { w: 1.2, h: 0.9, d: 1.2, y: 5.55, mat: brass },
+      { w: 0.9, h: 0.8, d: 0.9, y: 6.4, mat: dark },
+    ];
+    for (const t of tiers) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(t.w, t.h, t.d), t.mat);
+      m.position.y = t.y;
+      m.castShadow = true;
+      m.receiveShadow = true;
+      group.add(m);
+    }
+
+    // === Spire — sharp expressionist obelisk on top ===
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(0.42, 2.3, 4), brass);
+    spire.position.y = 8.0;
+    spire.rotation.y = Math.PI / 4;   // diamond orientation
+    spire.castShadow = true;
+    group.add(spire);
+
+    // === Angular radiating fins (art deco sunburst, tilted for drama) ===
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.09, 2.7, 0.72), dark);
+      fin.position.set(Math.cos(a) * 0.78, 5.3, Math.sin(a) * 0.78);
+      fin.rotation.y = a;
+      fin.rotation.z = (i % 2 ? 0.18 : -0.18);   // slight tilt — expressionist asymmetry
+      fin.castShadow = true;
+      group.add(fin);
+    }
+
+    // === EXTRA glowing neon rings circling the body ===
+    // A sub-group so the rings can slowly spin around the statue while it
+    // stands (a living, humming feel) without rotating the whole sculpture.
+    const ringGroup = new THREE.Group();
+    group.add(ringGroup);
+    const ringColors = [ringColor || NEON.cyan, NEON.magenta, NEON.amber, NEON.lime];
+    for (let i = 0; i < 4; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.15 + i * 0.1, 0.07, 8, 28),
+        makeGlowMat(ringColors[i % ringColors.length])
+      );
+      ring.position.y = 3.7 + i * 0.95;
+      ring.rotation.x = Math.PI / 2;
+      ringGroup.add(ring);
+    }
+    // One extra tilted ring near the top — off-kilter for expressionist drama.
+    const tiltRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.68, 0.06, 8, 22),
+      makeGlowMat(NEON.magenta)
+    );
+    tiltRing.position.y = 7.3;
+    tiltRing.rotation.set(Math.PI / 3, 0.4, 0);
+    ringGroup.add(tiltRing);
+
+    return { group, ringGroup };
+  }
+
+  // Place a statue on a specific checkerboard tile (by grid index) so the
+  // level can watch exactly which tile supports it. Returns the live statue
+  // record (state machine + collider) for update().
+  function placeStatue(tileIx, tileIz, ringColor) {
+    const idx = tileIz * tilesX + tileIx;
+    const x = ceilMinX + tileIx * TILE_SZ + TILE_SZ / 2;
+    const z = gridZ0 + tileIz * TILE_SZ + TILE_SZ / 2;
+    const { group, ringGroup } = createArtDecoStatue(ringColor);
+    group.position.set(x, TILE_TOP, z);
+    parent.add(group);
+    // Solid collider so the car bumps into the standing statue; removed the
+    // moment the statue starts falling. `noRoof` keeps buildingTopAt from
+    // reporting the statue's top as a drivable surface (the car should bump
+    // into it, not stand on its head).
+    const collider = { x, z, halfW: 1.5, halfD: 1.5, h: TILE_TOP + 9, noRoof: true };
+    statueColliders.push(collider);
+    const tipAngle = Math.random() * Math.PI * 2;   // random topple direction
+    const statue = {
+      group, ringGroup, idx, x, z, collider,
+      state: 'standing',   // 'standing' | 'falling' | 'landed'
+      fallT: 0,
+      tipAngle,
+      // Axis perpendicular to the tip direction — rotating around it tips the
+      // statue toward (cos tipAngle, 0, sin tipAngle) and DOWN.
+      tipAxis: new THREE.Vector3(Math.sin(tipAngle), 0, -Math.cos(tipAngle)),
+    };
+    statues.push(statue);
+    return statue;
+  }
+
+  // Three statues spread across the ceiling, each on its own tile, clear of
+  // the staircase (x=12) and the grand ramp (z=48) approaches.
+  placeStatue(11, 25, NEON.cyan);      // (58, 6)   — centre-west
+  placeStatue(26, 14, NEON.magenta);   // (118, -38) — east-south
+  placeStatue(5, 5, NEON.amber);       // (34, -74)  — south-west
 
   // ---- The Holy Mountain (hollow snow-capped peak, west cavern) ----
   // A full cone rising off the open western floor: drive the pilgrim's road
@@ -1577,7 +1804,7 @@ export function addUnderground(parent, opts = {}) {
   // second roof and through crumbled holes. Purely decorative.
   const sky = addUndergroundSky(parent, mergeGeoms);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ceilingColliders, ...stairColliders, ...grandColliders, ...mountColliders, ...glassCity.colliders];
+  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ceilingColliders, ...stairColliders, ...grandColliders, ...mountColliders, ...statueColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
@@ -1631,6 +1858,7 @@ export function addUnderground(parent, opts = {}) {
     stairHeightAt, // bumpy stair pitch — height of the step surface at (x, z)
     holy,        // Holy Mountain live state (mystery-light pulse, entered flag)
     checker,
+    statues,     // art deco statues on the ceiling tiles (state machine + colliders)
     // ?debug: force the tile under (x, z) to reach red and start crumbling
     // (for testing the hole-fall + hole-outline visuals without 5 drive-overs).
     forceCrumble: (x, z) => {
@@ -1658,26 +1886,52 @@ export function addUnderground(parent, opts = {}) {
       // step through the neon sequence (dark → cyan → lime → amber → magenta
       // → red). Red is terminal — once a tile is red it stays lit forever.
       // Edge-triggered on the tile under the car so a tile advances once per
-      // visit, not every frame while the car sits on it.
+      // visit, not every frame while the car sits on it. A per-tile cooldown
+      // stops the same pass (front wheels then back wheels, or a boundary
+      // jitter) from advancing a tile twice — the car must drive away and
+      // come back before the tile can change color again.
       if (player) {
         checker.tick++;
-        const tx = Math.floor((player.x - ceilMinX) / TILE_SZ);
-        const tz = Math.floor((player.z - gridZ0) / TILE_SZ);
+        // Tick down tile advance cooldowns so a tile can be re-triggered
+        // once the car has driven away and come back.
+        for (let i = 0; i < tileCount; i++) {
+          if (checkerCooldown[i] > 0) checkerCooldown[i] -= delta;
+        }
+        // Only advance tiles when the car is actually driving ON the ceiling
+        // (the "second roof", top face at CEIL_Y + 1.3) — not when it's on
+        // the cavern floor underneath, even though the same x/z maps to a
+        // ceiling tile.
+        const onCeiling = player.y > CEIL_Y + 0.5;
+        const tx = onCeiling ? Math.floor((player.x - ceilMinX) / TILE_SZ) : -1;
+        const tz = onCeiling ? Math.floor((player.z - gridZ0) / TILE_SZ) : -1;
         if (tx >= 0 && tx < tilesX && tz >= 0 && tz < tilesZ) {
           const idx = tz * tilesX + tx;
           if (idx !== lastTileIdx) {
             lastTileIdx = idx;
             const st = checkerState[idx];
-            if (st < 2 + CHECKER_NEON.length - 1) {   // not yet red
-              checkerState[idx] = st + 1;
-              _tileColor.set(CHECKER_NEON[Math.max(0, st - 1)]);
-              checkerGrid.setColorAt(idx, _tileColor);
-              checkerGrid.instanceColor.needsUpdate = true;
-              // Just reached red → start the crumble countdown: flash
-              // red/white, then fall away, leaving a hole.
-              if (checkerState[idx] >= 2 + CHECKER_NEON.length - 1) {
-                checkerCrumble[idx] = CEIL_FLASH_TIME + CEIL_FALL_TIME;
-                crumbleActive.add(idx);
+            if (st < 2 + CHECKER_NEON.length - 1 && checkerCooldown[idx] <= 0) {   // not yet red, cooldown expired
+              // Advance one step: dark (0/1) → cyan (2), then cyan → lime →
+              // amber → magenta → red. The two dark shades share a single
+              // first step, so the SECOND drive-over is the green (lime)
+              // that spreads blue to its neighbors.
+              const newSt = setOrBump(idx, 2);
+              // The color the tile just turned into radiates a wave outward
+              // in concentric rings — each ring bumps its tiles toward a
+              // target color (or up one step if already at/past it), so the
+              // pattern expands outward:
+              //   green  → touching tiles turn green
+              //   orange → touching tiles turn orange, ring beyond turns blue
+              //   magenta→ touching tiles turn orange, ring beyond green,
+              //             ring beyond blue (a big circle around the tile)
+              //   red    → same big circle as magenta
+              if (newSt === 2 + 1) {
+                spreadRings(idx, [3]);
+              } else if (newSt === 2 + 2) {
+                spreadRings(idx, [4, 2]);
+              } else if (newSt === 2 + 3) {
+                spreadRings(idx, [4, 3, 2]);
+              } else if (newSt >= 2 + CHECKER_NEON.length - 1) {
+                spreadRings(idx, [4, 3, 2]);
               }
             }
           }
@@ -1741,6 +1995,41 @@ export function addUnderground(parent, opts = {}) {
       // the eye to the gap.
       if (holeFrameCount > 0) {
         holeFrameMat.emissiveIntensity = 2.0 + Math.sin(elapsed * 3.0) * 0.6;
+      }
+      // Art Deco statues: while standing, their glowing rings slowly spin
+      // around the body. The moment the tile a statue stands on crumbles
+      // into a hole (holeTiles flips on as the tile starts falling away),
+      // the statue loses its footing — it leans over and falls to the
+      // cavern floor below, drifting a little in its tip direction.
+      for (const s of statues) {
+        if (s.state === 'standing') {
+          s.ringGroup.rotation.y += delta * 0.5;
+          if (holeTiles[s.idx]) {
+            s.state = 'falling';
+            s.fallT = 0;
+            // The statue is no longer an obstacle — let the car drive
+            // through where it used to stand.
+            const ci = colliders.indexOf(s.collider);
+            if (ci >= 0) colliders.splice(ci, 1);
+          }
+        } else if (s.state === 'falling') {
+          s.fallT += delta;
+          const t = Math.min(1, s.fallT / STATUE_FALL_DUR);
+          // Lean: tip over fast at first (ease-out), past horizontal so it
+          // lands on its side.
+          const lean = easeOutCubic(t) * (Math.PI / 2 + 0.25);
+          // Fall: accelerate down to the cavern floor (ease-in), drifting a
+          // couple of units in the tip direction as it topples.
+          const groundY = 0.5;
+          const drop = easeInQuad(t);
+          s.group.quaternion.setFromAxisAngle(s.tipAxis, lean);
+          s.group.position.set(
+            s.x + Math.cos(s.tipAngle) * drop * 2.2,
+            TILE_TOP + (groundY - TILE_TOP) * drop,
+            s.z + Math.sin(s.tipAngle) * drop * 2.2
+          );
+          if (t >= 1) s.state = 'landed';
+        }
       }
       // Task #12: slide each conduit back and forth across its lane on a
       // sine of elapsed time — phase/speed are stored per pipe so placed
