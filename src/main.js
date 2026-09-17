@@ -91,6 +91,8 @@ const _mineAscentCamPos = new THREE.Vector3();  // emergence-shot camera positio
 const _mineAscentLookPos = new THREE.Vector3(); // emergence-shot look target (mine ascent)
 const _tunnelAscentCamTarget = new THREE.Vector3();  // tunnel-ascent camera target (underground → city)
 const _tunnelAscentLookTarget = new THREE.Vector3(); // tunnel-ascent look target
+const _chamberCam = new THREE.Vector3();             // holy-chamber cinematic camera position
+const _chamberLook = new THREE.Vector3();            // holy-chamber cinematic look target
 let _camDbg = {};   // TEMP debug: populated by updateCamera each frame
 // Fade-to-black overlay for the mine-shaft dive → underground transition.
 // Cuts to black when the car is about halfway sunk, then fades back in
@@ -818,6 +820,29 @@ const tunnelAscentCine = {
   s: 1,          // current path parameter (1 = foot → sStart = near the top)
   driveDur: 3.5, // seconds driving up the tunnel from foot to near the top
   sStart: 0.08,  // path parameter where the car ends (near the top)
+};
+
+// ===== Holy-chamber cinematic (drop through the summit skylight) =====
+// The chamber is too small to drive around, so rolling into the open summit
+// skylight plays a staged sequence (fall → pan → lift → flight): the car
+// drops in beside the man and his goats, the camera pans around the shrine,
+// then the mountain's light surges and the car is mysteriously lifted back
+// OUT through the skylight, arcing over the cone to land on the open floor
+// outside the base. Control hands back the moment it lands. There is no
+// other exit — the cave mouth is walled shut, so this is the only way in
+// AND the only way out.
+const chamberCine = {
+  active: false,
+  phase: 'fall',      // 'fall' → 'pan' → 'lift' → 'flight'
+  timer: 0,
+  fallDur: 1.7,       // drop through the shaft onto the chamber floor
+  panDur: 5.0,        // orbit the holy man and his goats
+  liftDur: 2.4,       // light surges; the car floats up through the skylight
+  flightDur: 2.1,     // ballistic arc out of the summit, over the cone
+  // Ejection: launch at the summit (y = peakY + 1) under the global gravity;
+  // fade down onto the open floor just east-south of the cone's base.
+  landX: -66, landZ: -6,
+  vx: 16.2, vy: 6.0, vz: -6.68,
 };
 // Orbit geometry for the arrival shot: sweep around the tunnel's centre axis
 // (TUNNEL.cx/cz) in the OPPOSITE direction to the tunnel's own spin, ending
@@ -1961,6 +1986,139 @@ function finishMineAscent() {
   _postCineTimer = 3.5;
 }
 
+// Start the holy-chamber drop: snag the car inside the skylight shaft (just
+// under the summit rim) and grip it through the staged sequence — fall into
+// the chamber, pan around the man and goats, mysterious lift back out, then
+// the ballistic arc to the ground outside the mountain.
+function startChamberCine() {
+  const M = undergroundWorld.holy.MOUNT;
+  chamberCine.active = true;
+  chamberCine.phase = 'fall';
+  chamberCine.timer = 0;
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  shake.intensity = 0;
+  // Snag the car into the shaft centre, just under the summit rim.
+  car.position.set(M.cx, M.peakY - 1.7, M.cz);
+}
+
+// End of the chamber cinematic: the car landed on open ground outside the
+// mountain — hand control back, already rolling AWAY from the mountain.
+function finishChamberCine() {
+  const M = undergroundWorld.holy.MOUNT;
+  chamberCine.active = false;
+  if (undergroundWorld.holy) undergroundWorld.holy.flare = 1;
+  car.position.set(chamberCine.landX, 0.02, chamberCine.landZ);
+  // Face directly AWAY from the mountain so the car rolls off across the open
+  // floor instead of roaming back up the pilgrim's road for a second lap.
+  const fxA = car.position.x - M.cx, fzA = car.position.z - M.cz;
+  car.rotation.set(0, Math.atan2(fzA, -fxA), 0);
+  mineAscentSettle = 4.0;   // stay level right after the scripted launch
+  velocity.value = 12;      // keep rolling toward the climb
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  portalGrace = 2.0;
+  shake.intensity = 0.3;
+  // Ease the camera from the exterior shot back to the chase view.
+  _postCineCamPos.copy(camera.position);
+  _postCineLookPos.copy(_lookTarget);
+  _postCineTimer = 3.5;
+}
+
+// Drive the chamber cinematic timeline and place the car every frame. The
+// phases own the car completely (the physics gate is off while it runs).
+function updateChamberCine(delta) {
+  const M = undergroundWorld.holy.MOUNT;
+  const P = chamberCine;
+  P.timer += delta;
+  const t = P.timer;
+
+  // Phase transitions (move on to the next phase once the current one ends).
+  if (P.phase === 'fall' && t >= P.fallDur) { P.phase = 'pan'; P.timer = 0; }
+  else if (P.phase === 'pan' && t >= P.panDur) { P.phase = 'lift'; P.timer = 0; }
+  else if (P.phase === 'lift' && t >= P.liftDur) { P.phase = 'flight'; P.timer = 0; }
+  else if (P.phase === 'flight' && t >= P.flightDur) { finishChamberCine(); return; }
+
+  const pT = P.timer;
+  const smoothp = (u) => u * u * (3 - 2 * u);
+  // Where the car settles on the chamber floor: south-east of the dais, at a
+  // worshipful distance — ~3 units back from the pedestal's edge (the shrine
+  // box is ±3.6), so the car beholds the holy man and his goats from afar
+  // instead of nudging the pedestal. Still inside the fall camera's frame with
+  // the man + goats behind it, and clear of the chamber wall ring (r 12.5).
+  const lA = (75 * Math.PI) / 180;
+  const landR = 6.8;
+  const lx = M.cx + landR * Math.cos(lA);
+  const lz = M.cz + landR * Math.sin(lA);
+
+  if (P.phase === 'fall') {
+    const e = smoothp(Math.min(pT / P.fallDur, 1));
+    car.position.set(
+      THREE.MathUtils.lerp(M.cx, lx, e),
+      THREE.MathUtils.lerp(M.peakY - 1.7, 0.3, e),
+      THREE.MathUtils.lerp(M.cz, lz, e)
+    );
+    // Face the holy man at the centre.
+    car.rotation.set(0, Math.atan2(M.cz - car.position.z, -(M.cx - car.position.x)), 0);
+  } else if (P.phase === 'pan') {
+    car.position.set(lx, 0.3, lz);
+    car.rotation.set(0, Math.atan2(M.cz - car.position.z, -(M.cx - car.position.x)), 0);
+    for (const w of car.userData.wheels) w.rotation.y += 0.2;   // idle
+  } else if (P.phase === 'lift') {
+    const e = smoothp(Math.min(pT / P.liftDur, 1));
+    // Float up off the floor, drift to the axis, and rise through the
+    // oculus/shaft out the open summit.
+    car.position.set(
+      THREE.MathUtils.lerp(lx, M.cx, e),
+      THREE.MathUtils.lerp(0.3, M.peakY + 1, e),
+      THREE.MathUtils.lerp(lz, M.cz, e)
+    );
+    car.rotation.set(
+      THREE.MathUtils.lerp(0, -0.3, e),
+      Math.atan2(M.cz - car.position.z, -(M.cx - car.position.x)),
+      0
+    );
+    for (const w of car.userData.wheels) w.rotation.y += 0.6;
+  } else if (P.phase === 'flight') {
+    // Ballistic arc: out of the summit overs the cone, landing on the open
+    // floor east-south of the base (same param style as the mine ascent).
+    car.position.set(
+      M.cx + P.vx * pT,
+      M.peakY + 1 + P.vy * pT - 0.5 * gravity * pT * pT,
+      M.cz + P.vz * pT
+    );
+    const vy = P.vy - gravity * pT;
+    const v2d = Math.hypot(P.vx, P.vz);
+    car.rotation.set(
+      THREE.MathUtils.clamp(Math.atan2(vy, v2d) * 0.6, -0.5, 0.9),
+      Math.atan2(P.vz, -P.vx),
+      0
+    );
+    for (const w of car.userData.wheels) w.rotation.y += 0.8;
+  }
+
+  // The mountain's mysterious light surges as the car is taken up and cast
+  // back out (the level's pulse multiplies this flare in).
+  const H = undergroundWorld.holy;
+  if (P.phase === 'lift') {
+    H.flare = 1 + 1.6 * smoothp(Math.min(pT / P.liftDur, 1));
+  } else if (P.phase === 'flight') {
+    H.flare = Math.max(1, 3.0 * (1 - pT / P.flightDur));
+  } else {
+    H.flare = 1;
+  }
+}
+
 // ===== Mine-ascent explosion FX =====
 // One flame cone in the blast: its own material so it can fade out on its
 // own schedule (the shared geometries are never disposed).
@@ -2893,6 +3051,54 @@ function updateCamera(delta) {
     cameraOrbit.radius = THREE.MathUtils.lerp(cameraOrbit.radius, 8, blend);
   }
 
+  // ===== Holy-chamber cinematic override =====
+  // The staged drop, the pan around the man and goats, the mysterious lift
+  // back up through the skylight, and a profile shot of the arc back out over
+  // the cone. This cutscene owns the frame end-to-end (see updateChamberCine
+  // for the car's path) — skip the chase cam entirely.
+  if (chamberCine.active) {
+    const M = undergroundWorld.holy.MOUNT;
+    const P = chamberCine;
+    const smoothp = (u) => u * u * (3 - 2 * u);
+    const dur = P.phase === 'fall' ? P.fallDur : P.phase === 'pan' ? P.panDur : P.phase === 'lift' ? P.liftDur : P.flightDur;
+    const e = smoothp(Math.max(0, Math.min(1, P.timer / dur)));
+    if (P.phase === 'fall') {
+      // Watch the car drop through the oculus, then ease down to the floor
+      // where the man and goats stand.
+      const az = Math.PI / 4;
+      _chamberCam.set(
+        M.cx + 12 * Math.cos(az),
+        THREE.MathUtils.lerp(6.6, 4.6, e),
+        M.cz + 12 * Math.sin(az)
+      );
+      _chamberLook.set(M.cx, THREE.MathUtils.lerp(19.5, 2.2, e), M.cz);
+    } else if (P.phase === 'pan') {
+      // A slow orbit (N/E → south) around the shrine at portrait height.
+      const az = Math.PI / 4 + ((170 * Math.PI) / 180 - Math.PI / 4) * e;
+      _chamberCam.set(M.cx + 11.5 * Math.cos(az), 2.6, M.cz + 11.5 * Math.sin(az));
+      _chamberLook.set(M.cx, 1.9, M.cz);
+    } else if (P.phase === 'lift') {
+      // Low witness angle across the chamber, tilting up the shaft after the
+      // rising car.
+      const az = (288 * Math.PI) / 180;
+      _chamberCam.set(M.cx + 13 * Math.cos(az), 1.7, M.cz + 13 * Math.sin(az));
+      _chamberLook.set(M.cx, Math.max(1.4, car.position.y + 0.8), M.cz);
+    } else {
+      // Flight: side-on profile of the ejection, panning with the arc.
+      _chamberCam.set(-55, 14, 18);
+      const panT = 0.2 + 0.8 * e;
+      _chamberLook.set(
+        THREE.MathUtils.lerp(M.cx, car.position.x, panT),
+        THREE.MathUtils.lerp(M.peakY, car.position.y, panT),
+        THREE.MathUtils.lerp(M.cz, car.position.z, panT)
+      );
+    }
+    camera.position.copy(_chamberCam);
+    _lookTarget.copy(_chamberLook);
+    camera.lookAt(_lookTarget);
+    return;   // skip chase cam entirely — nothing else touches the camera
+  }
+
   // ===== Spiral-tunnel arrival cinematic override =====
   // One continuous orbit around the spiral tunnel, in the OPPOSITE direction
   // to the tunnel's own spin. The camera starts high up, sweeps
@@ -3212,6 +3418,31 @@ function updateCamera(delta) {
   camOffset.lerp(desiredOffset, holeFallActive ? 0.6 : 0.12);
   camera.position.copy(cameraTarget).add(camOffset);
 
+  // Keep the chase camera OUT of the Holy Mountain. The cinematic overrides
+  // above all `return` early, so this only ever runs for the free chase cam:
+  // if it lands inside the cone's solid volume (below the summit and inside
+  // the shell radius) slide it straight out to the rock face. The mountain is
+  // solid to the CAR, so it must be solid to the camera too — otherwise the
+  // view sinks through the rock whenever the car hugs the base or climbs.
+  if (worldState === 'underground' && undergroundWorld.holy && undergroundWorld.holy.coneRadiusAt) {
+    const M = undergroundWorld.holy.MOUNT;
+    const cdx = camera.position.x - M.cx, cdz = camera.position.z - M.cz;
+    const cr = Math.hypot(cdx, cdz);
+    if (camera.position.y < M.peakY) {
+      const shellR = undergroundWorld.holy.coneRadiusAt(Math.max(0, camera.position.y)) + 1.0;
+      if (cr < shellR) {
+        if (cr < 1e-3) {
+          camera.position.x = M.cx + shellR;   // dead on the axis: push due east
+          camera.position.z = M.cz;
+        } else {
+          const s = shellR / cr;
+          camera.position.x = M.cx + cdx * s;
+          camera.position.z = M.cz + cdz * s;
+        }
+      }
+    }
+  }
+
   camera.lookAt(_lookTarget);
 }
 
@@ -3235,9 +3466,9 @@ function animate() {
 
   // While the giant robot has the player in its claw, the player's car is
   // inert — it just rides up to the robot's mouth. Physics resume on respawn.
-  // The spiral-arrival cinematic and the mine-ascent cinematic also own the
-  // car completely while they run.
-  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active) {
+  // The spiral-arrival, mine-ascent, tunnel-ascent and holy-chamber
+  // cinematics also own the car completely while they run.
+  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active) {
 
   let forward = 0;
   let reverse = 0;
@@ -3761,6 +3992,22 @@ function animate() {
 
   }  // end !robot.playerCaptured
 
+// ===== Holy-chamber cinematic trigger =====
+  // Rolling into the open summit skylight sends the car down the shaft into
+  // the chamber — but the chamber is too small to drive, so the instant the
+  // car is past the rim it cuts to the staged drop-and-eject sequence. The
+  // rim is a square annulus, so its open hole reaches r≈6.4 at the corners;
+  // the y-gate (car must be well below the summit plane) guarantees we only
+  // fire after a real drop, never out on the rim itself.
+  if (worldState === 'underground' && !chamberCine.active &&
+      !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active) {
+    const M = undergroundWorld.holy.MOUNT;
+    const dxc = car.position.x - M.cx, dzc = car.position.z - M.cz;
+    if (dxc * dxc + dzc * dzc < 42.5 && car.position.y < M.peakY - 1.5) {
+      startChamberCine();
+    }
+  }
+
   // ===== Spiral-tunnel arrival cinematic =====
   // The car drives through the opaque spiral tube from near the top to the
   // foot — the camera orbits the tunnel, then pulls way back to watch the
@@ -3858,6 +4105,10 @@ function animate() {
       startMineAscent();
     }
   }
+
+  // ===== Holy-chamber cinematic =====
+  // Owns the car position through the drop / pan / lift / flight sequence.
+  if (chamberCine.active) updateChamberCine(delta);
 
   // Bumper car AI: chases the NEAREST copy of you across the wrap seam, stops
   // ~1 foot from you, and only follows once you drive away. Skipped entirely
@@ -4201,7 +4452,9 @@ function animate() {
     // Record the player's path so the little car can follow it up the ramps
     // and onto the ceiling, then advance the little car follower: waits ~30s,
     // rides the spiral tunnel out, then follows the player around the cavern.
-    recordLittleCarTrail(delta);
+    // During the holy-chamber cinematic the car's scripted path goes inside
+    // the mountain — don't record that so the little car can't follow into it.
+    if (!chamberCine.active) recordLittleCarTrail(delta);
     updateLittleCar(delta);
     // Task #35a: off-slab recovery — the cavern floor mesh spans the slab
     // (292×276 centered at (0,41.5)) but nothing walls its edges, so a huge

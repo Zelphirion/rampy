@@ -3,7 +3,7 @@ import { addGlassCity } from '../../glasscity.js';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
-import { MOUNT, coneRadiusAt, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js';
+import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js';
 
 export const UNDERGROUND_Y = -30;
 
@@ -11,7 +11,7 @@ export const UNDERGROUND_Y = -30;
 // Rectangular zone on the 292×276 cavern slab (slab spans x ∈ [-146, 146],
 // z ∈ [-96.5, 179.5] around its center (0, 41.5)). Chosen to avoid:
 //   - Glass City footprint: z ∈ [132, 173] spanning x ∈ [-140, 140]
-//   - support pillars at (-72, 98) and (-40, 66)
+//   - support pillar at (-40, 66)
 //   - tunnel foot / return portal at ≈(-55, 83) (tube radius 5; kept >60 away)
 // Everything below sits in the clear south-east quadrant, with ~6 units of
 // margin to the slab edges so props never hang off the cavern floor.
@@ -468,7 +468,6 @@ export function addUnderground(parent, opts = {}) {
   }
 
   const pillars = [
-    { x: -72, z: 98 },
     { x: -40, z: 66 },
   ];
   const pillarColliders = [];
@@ -1503,14 +1502,240 @@ export function addUnderground(parent, opts = {}) {
     return { group, ringGroup };
   }
 
+  // ---- De Stijl / Vorticist Tree-Like Statue (Dark & Weird, with fruit-like dangling bits) ----
+  // A violent, wind-torn "tree": enormous cantilevered limbs crack out of the
+  // trunk at crazy angles and hang far out over the neighbouring ceiling tiles
+  // — some arms shoot almost straight up, others keel out nearly flat, and all
+  // of them droop back down into long overhanging branches strung with big
+  // glowing fruits that swing on thin stalks. Neon rings are threaded right
+  // onto the limbs (encircling each arm at its own jaunty angle), and a jagged
+  // shard-burst crowns the top.
+  function createVorticistTreeStatue(ringColor) {
+    const group = new THREE.Group();
+    const trunkMat = new THREE.MeshStandardMaterial({
+      color: 0x1d1a22, roughness: 0.8, metalness: 0.3,
+      emissive: 0x0a080f, emissiveIntensity: 0.2,
+    });
+    const woodAccentMat = new THREE.MeshStandardMaterial({
+      color: 0x8a5b3f, roughness: 0.6, metalness: 0.2,
+    });
+    // All rings + fruit use the tree's blue tone (NEON.cyan); the single
+    // largest tip fruit is the one reddish one (NEON.red) — see the limb loop.
+    const fruitColors = [NEON.cyan];
+    const ringColors = [NEON.cyan];
+
+    // Build a strut pointing outward-up at `ang` radians (0 = straight up):
+    // a box whose centre sits half its length along that direction. Local
+    // frame: +X = outward radial, +Y = up.
+    const strut = (len, th, ang, ox, oy, mat) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(th, len, th), mat);
+      m.position.set(ox + Math.sin(ang) * (len / 2), oy + Math.cos(ang) * (len / 2), 0);
+      m.rotation.z = -ang;
+      m.castShadow = true;
+      return m;
+    };
+
+    // === Gnarled twisted trunk: four tapering blocks, each kinked off-axis
+    // so the column bends like a wind-bent tree. ===
+    const trunkSegs = [
+      { s: 1.1, y: 1.7, ry: 0.12 },
+      { s: 0.88, y: 3.6, ry: 0.95 },
+      { s: 0.7, y: 5.5, ry: 0.45 },
+      { s: 0.55, y: 7.1, ry: 0.1 },
+    ];
+    for (const t of trunkSegs) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(t.s, 3.0, t.s), trunkMat);
+      b.position.y = t.y;
+      b.rotation.y = t.ry;
+      b.castShadow = true;
+      b.receiveShadow = true;
+      group.add(b);
+    }
+    // A knot where the trunk starts splitting into limbs.
+    const knot = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 0), trunkMat);
+    knot.position.y = 7.1;
+    knot.scale.set(1, 1.4, 1);
+    knot.castShadow = true;
+    group.add(knot);
+
+    // === Angular root-struts splaying out and clawing the ground ===
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + 0.3 + i * 0.11;
+      const yaw = new THREE.Group();
+      yaw.rotation.y = a;
+      yaw.add(strut(3.4 + (i % 2) * 0.7, 0.2, 1.0 + (i % 2) * 0.45, 0.42, 0.3, trunkMat));
+      group.add(yaw);
+    }
+
+    // === Long, overhanging cantilevered limbs ===
+    // Each limb keeps its own yaw group so +X is always "outward". An arm
+    // cracks out at a crazy vertical angle, then an overhang keels past the
+    // arm tip and droops back down — reaching 2-3 tiles out and hanging low
+    // over the tiles beside the statue. `ringT` is where the limb's three-ring
+    // cluster sits (a fraction along the arm, so it can differ per limb).
+    const limbDefs = [
+      { y: 3.9, az: 0.18,  phi: 0.35, len: 9.5, bend: 0.50, droop: 10.5, thick: 0.40, twist: 0.10, fruit: 0.62, ringT: 0.30 },
+      { y: 5.4, az: 1.22,  phi: 0.55, len: 10.5, bend: 0.42, droop: 9.0, thick: 0.36, twist: -0.16, fruit: 0.85, ringT: 0.50 },
+      { y: 7.0, az: 2.35,  phi: 0.90, len: 8.5, bend: 0.36, droop: 8.5, thick: 0.30, twist: 0.18, fruit: 0.90, ringT: 0.38 },
+      { y: 6.4, az: 3.05,  phi: 0.45, len: 11.5, bend: 0.50, droop: 10.0, thick: 0.32, twist: -0.22, fruit: 0.68, ringT: 0.62 },
+      { y: 4.7, az: 3.55,  phi: 1.15, len: 7.5, bend: 0.30, droop: 6.5, thick: 0.26, twist: 0.12, fruit: 0.72, ringT: 0.55 },
+      { y: 8.2, az: 0.75,  phi: 1.05, len: 7.0, bend: 0.40, droop: 7.0, thick: 0.28, twist: -0.10, fruit: 0.90, ringT: 0.72 },
+      { y: 6.0, az: 2.04,  phi: 0.25, len: 12.5, bend: 0.55, droop: 9.5, thick: 0.34, twist: 0.06, fruit: 0.55, ringT: 0.35 },
+    ];
+
+    // The biggest of the 7 limb-tip fruits turns reddish; every other ring and
+    // fruit on the tree stays blueish.
+    let bigFruitLimb = 0, bigFruitSize = -1;
+    for (let i = 0; i < limbDefs.length; i++) {
+      if (limbDefs[i].fruit > bigFruitSize) { bigFruitSize = limbDefs[i].fruit; bigFruitLimb = i; }
+    }
+    for (let li = 0; li < limbDefs.length; li++) {
+      const d = limbDefs[li];
+      const limb = new THREE.Group();
+      limb.position.set(0, d.y, 0);
+      limb.rotation.y = d.az;
+      limb.rotation.z = d.twist;   // fore/aft rake so the limbs spread in 3D
+      group.add(limb);
+
+      const armAng = d.phi;
+      const overAng = d.phi + Math.PI / 2 + d.bend;   // past vertical: down and out
+      const armEndX = Math.sin(armAng) * d.len;
+      const armEndY = Math.cos(armAng) * d.len;
+      const overDirX = Math.sin(overAng);
+      const overDirY = Math.cos(overAng);
+
+      // ==== Main arm: huge angular beam cracking out and up ====
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(d.thick, d.len, d.thick), woodAccentMat);
+      arm.position.set(armEndX / 2, armEndY / 2, 0);
+      arm.rotation.z = -armAng;
+      arm.castShadow = true;
+      limb.add(arm);
+
+      // ==== Three neon rings clustered together on each limb ====
+      // Every limb carries exactly three rings, always grouped in a tight trio
+      // right next to each other (a few % of the arm length apart). The trio
+      // sits at a different spot along each limb (d.ringT), but on any one
+      // limb the three rings never scatter.
+      for (let r = 0; r < 3; r++) {
+        const rt = d.ringT + (r - 1) * 0.06;
+        const limbRing = new THREE.Mesh(
+          new THREE.TorusGeometry(d.thick / 2 + 0.3 + (r % 2) * 0.12, 0.07, 8, 28),
+          makeGlowMat(ringColors[(Math.round(d.az * 3) + r) % ringColors.length])
+        );
+        limbRing.rotation.x = Math.PI / 2;
+        limbRing.position.set(0, (rt - 0.5) * d.len, 0);
+        arm.add(limbRing);
+      }
+
+      // Square joint where the arm turns into the overhang.
+      const joint = new THREE.Mesh(
+        new THREE.BoxGeometry(d.thick + 0.08, d.thick + 0.08, d.thick + 0.08),
+        trunkMat
+      );
+      joint.position.set(armEndX, armEndY, 0);
+      joint.rotation.z = -Math.PI / 4;
+      joint.scale.z = 1.3;
+      joint.castShadow = true;
+      limb.add(joint);
+
+      // ==== Overhang: keels past the arm tip and droops low behind it ====
+      const over = new THREE.Mesh(new THREE.BoxGeometry(d.thick, d.droop, d.thick), woodAccentMat);
+      over.position.set(armEndX + overDirX * (d.droop / 2), armEndY + overDirY * (d.droop / 2), 0);
+      over.rotation.z = -overAng;
+      over.castShadow = true;
+      limb.add(over);
+
+      // ==== Stiff twigs jabbing out along the arm ====
+      const twigs = [
+        { t: 0.4, rz: armAng - 0.95, len: 2.2, rx: 0.3 },
+        { t: 0.65, rz: armAng + 0.75, len: 3.0, rx: -0.25 },
+        { t: 0.9, rz: armAng - 1.25, len: 1.8, rx: 0.4 },
+      ];
+      for (const tw of twigs) {
+        const twig = new THREE.Mesh(new THREE.BoxGeometry(0.13, tw.len, 0.13), trunkMat);
+        twig.position.set(armEndX * tw.t, armEndY * tw.t, (tw.t - 0.5) * 1.2);
+        twig.rotation.z = -tw.rz;
+        twig.rotation.x = tw.rx;
+        twig.castShadow = true;
+        limb.add(twig);
+      }
+
+      // ==== Big glowing fruits swinging on thin stalks along the overhang ====
+      for (let p = 0; p < 3; p++) {
+        const t = 0.2 + p * 0.32;
+        const px = armEndX + overDirX * (d.droop * t);
+        const py = armEndY + overDirY * (d.droop * t) - d.thick / 2;
+        const zOff = p % 2 ? 0.26 : -0.26;
+        const hang = 0.8 + ((p + Math.round(d.az * 4)) % 3) * 0.5;
+        const r = d.fruit * (0.34 + p * 0.16);
+        const stalk = new THREE.Mesh(new THREE.BoxGeometry(0.08, hang, 0.08), trunkMat);
+        stalk.position.set(px, py - hang / 2, zOff);
+        limb.add(stalk);
+        const pod = new THREE.Mesh(
+          new THREE.OctahedronGeometry(r, 0),
+          makeGlowMat(fruitColors[(Math.round(d.az * 4) + p) % fruitColors.length])
+        );
+        pod.position.set(px, py - hang - r * 0.55, zOff);
+        pod.scale.set(1, 2, 1);   // cancel the group's Y-halve so the pod stays round
+        limb.add(pod);
+      }
+
+      // The big glowing fruit at the very tip of the limb.
+      const tipPod = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(d.fruit, 0),
+        makeGlowMat(li === bigFruitLimb ? NEON.red : NEON.cyan)
+      );
+      tipPod.position.set(armEndX + overDirX * d.droop, armEndY + overDirY * d.droop, 0);
+      tipPod.scale.set(1, 2, 1);   // cancel the group's Y-halve so the tip fruit stays round
+      limb.add(tipPod);
+    }
+
+    // === Angry shard-burst crown (abstract vorticist foliage) ===
+    const crownShards = [
+      { y: 8.6, rx: -0.55, rz: 0.35, s: 0.55, h: 3.2, mat: woodAccentMat },
+      { y: 9.6, rx: 0.75, rz: -0.6, s: 0.45, h: 2.6, mat: trunkMat },
+      { y: 9.1, rx: -0.1, rz: 1.45, s: 0.4, h: 3.4, mat: woodAccentMat },
+      { y: 10.3, rx: 1.15, rz: 0.25, s: 0.35, h: 2.4, mat: trunkMat },
+    ];
+    for (const c of crownShards) {
+      const shard = new THREE.Mesh(new THREE.BoxGeometry(c.s, c.h, c.s), c.mat);
+      shard.position.set(Math.sin(c.rz) * 0.3, c.y, Math.cos(c.rz) * 0.3);
+      shard.rotation.x = c.rx;
+      shard.rotation.z = c.rz;
+      shard.castShadow = true;
+      group.add(shard);
+    }
+    // A big glowing gem at the peak.
+    const gem = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.55, 1),
+      makeGlowMat(ringColor || NEON.magenta)
+    );
+    gem.position.y = 12.0;
+    gem.scale.set(1, 2, 1);   // cancel the group's Y-halve so the peak gem stays round
+    gem.castShadow = true;
+    group.add(gem);
+
+    // ringGroup is kept for the update/fall loops in this level, but the neon
+    // rings now live on the limbs themselves rather than around the trunk.
+    const ringGroup = new THREE.Group();
+    group.add(ringGroup);
+
+    // The tree is half as tall as its unbent proportions: squash every piece
+    // vertically (Y × 0.5) while leaving all widths untouched, so the trunk,
+    // limbs and crown keep reaching just as far out but only up half as high.
+    group.scale.set(1, 0.5, 1);
+
+    return { group, ringGroup };
+  }
+
   // Place a statue on a specific checkerboard tile (by grid index) so the
   // level can watch exactly which tile supports it. Returns the live statue
   // record (state machine + collider) for update().
-  function placeStatue(tileIx, tileIz, ringColor) {
+  function placeStatue(tileIx, tileIz, ringColor, isVorticist = false) {
     const idx = tileIz * tilesX + tileIx;
     const x = ceilMinX + tileIx * TILE_SZ + TILE_SZ / 2;
     const z = gridZ0 + tileIz * TILE_SZ + TILE_SZ / 2;
-    const { group, ringGroup } = createArtDecoStatue(ringColor);
+    const { group, ringGroup } = isVorticist ? createVorticistTreeStatue(ringColor) : createArtDecoStatue(ringColor);
     group.position.set(x, TILE_TOP, z);
     parent.add(group);
     // Solid collider so the car bumps into the standing statue; removed the
@@ -1533,50 +1758,58 @@ export function addUnderground(parent, opts = {}) {
     return statue;
   }
 
-  // Three statues spread across the ceiling, each on its own tile, clear of
-  // the staircase (x=12) and the grand ramp (z=48) approaches.
-  placeStatue(11, 25, NEON.cyan);      // (58, 6)   — centre-west
-  placeStatue(26, 14, NEON.magenta);   // (118, -38) — east-south
-  placeStatue(5, 5, NEON.amber);       // (34, -74)  — south-west
+  // Statues spread across the ceiling, each on its own tile
+  placeStatue(11, 25, NEON.cyan);      // (58, 6)   — centre-west (Art Deco)
+  placeStatue(26, 14, NEON.magenta);   // (118, -38) — east-south (Art Deco)
+  placeStatue(5, 5, NEON.amber);       // (34, -74)  — south-west (Art Deco)
+  placeStatue(18, 20, NEON.lime, true);   // center-east Vorticist tree statue
+  placeStatue(14, 10, NEON.cyan, true);   // south-central Vorticist tree statue
 
   // ---- The Holy Mountain (hollow snow-capped peak, west cavern) ----
   // A full cone rising off the open western floor: drive the pilgrim's road
-  // (a spiral of wedge ramps) up to its snowy summit pad — the highest point
-  // in the cavern. The mountain is HOLLOW: around on its far side (south-
-  // west, away from the road start) a cave mouth opens into a torch-lit
-  // chamber where a man in a huge brimmed white hat stands flanked by two
-  // goats under a mysterious pulsing light. The chamber roof has an oculus
-  // skylight — land on the peak-pad-adjacent roof and you can drop in.
-  // All layout numbers come from the pure module (and its tests); here we
-  // only shape meshes and register colliders.
+  // (a spiral of wedge ramps) up to its snowy summit skylight rim — the
+  // highest point in the cavern. The mountain is HOLLOW but has NO cave mouth:
+  // its base is solid rock all the way round. The only way in is the summit's
+  // OPEN skylight hole — drive up and roll over it, and the drop-in plays a
+  // staged sequence: the car falls into the torch-lit chamber beside a man in a
+  // huge brimmed white hat flanked by two goats under a mysterious pulsing
+  // light, the camera pans around the shrine, then the light surges and the car
+  // is mysteriously lifted back out through the skylight and cast over the cone
+  // onto the open floor. Getting in AND out is entirely the cinematic's job, so
+  // there is no exit geometry at all. All layout numbers come from the pure
+  // module (and its tests); here we only shape meshes and register colliders.
+  // The whole mountain is one thing at ONE place (MOUNT) — the cone shell,
+  // snowcap, chamber, shrine and road share the same centre.
   const mountColliders = [];
   const coneR = (y) => coneRadiusAt(y, MOUNT);
   const mountRockMat = new THREE.MeshStandardMaterial({ color: 0x4a4148, roughness: 1, side: THREE.DoubleSide });
-  const snowMat = new THREE.MeshStandardMaterial({ color: 0xf5f7fb, roughness: 0.95 });
+  const snowMat = new THREE.MeshStandardMaterial({ color: 0xf5f7fb, roughness: 0.95, side: THREE.DoubleSide });
   const caveMat = new THREE.MeshStandardMaterial({ color: 0x17131c, roughness: 1, side: THREE.DoubleSide });
   const roadStoneMat = new THREE.MeshStandardMaterial({ color: 0x6b6470, roughness: 0.95 });
   const frame = mouthFrame();
-  // Lathe phi → world angle: a lathe vertex sits at (r·sinφ, y, r·cosφ), so
-  // world azimuth β = π/2 − φ. Invert for the gap placement.
-  const phiForBeta = (beta) => Math.PI / 2 - beta;
 
-  // Lower rock band (y 0 → just above the lintel), full circle MINUS the
-  // mouth gap — the gap IS the cave-mouth opening.
+  // Lower rock band (y 0 → just above the lintel), FULL circle: the mountain
+  // has no cave mouth any more — getting in and out is the cinematic's job, so
+  // the base is solid rock all the way round. Its flat bottom face is the
+  // chamber floor, which means the vinyl cavern floor can NOT show through
+  // inside the mountain (the old mouth gap used to punch a wedge out of that
+  // floor and let the tiles show through).
   const bandTopY = MOUNT.archH + 0.1;
   const lowerBand = new THREE.Mesh(
     new THREE.LatheGeometry(
       [new THREE.Vector2(0.03, 0), new THREE.Vector2(MOUNT.baseR, 0), new THREE.Vector2(coneR(bandTopY), bandTopY)],
       48,
-      phiForBeta(frame.betaM) + MOUNT.archHalf,
-      Math.PI * 2 - MOUNT.archHalf * 2
+      0,
+      Math.PI * 2
     ),
     mountRockMat
   );
+  lowerBand.position.set(MOUNT.cx, 0, MOUNT.cz);
   lowerBand.castShadow = true;
   parent.add(lowerBand);
 
-  // Upper shell (lintel → snowline → summit rim), FULL circle: it overhangs
-  // the mouth gap from above, forming the arch's natural rock lintel.
+  // Upper shell (base → snowline → summit rim), FULL circle: the solid rock
+  // cone above the base band.
   const upperShell = new THREE.Mesh(
     new THREE.LatheGeometry(
       [
@@ -1590,27 +1823,13 @@ export function addUnderground(parent, opts = {}) {
     ),
     mountRockMat
   );
+  upperShell.position.set(MOUNT.cx, 0, MOUNT.cz);
   upperShell.castShadow = true;
   parent.add(upperShell);
 
-  // Throat side walls: flat quads closing the mouth tunnel between the
-  // chamber wall and the shell along each gap edge.
-  for (const beta of frame.edgeBeta) {
-    const dx = Math.cos(beta), dz = Math.sin(beta);
-    const quad = new THREE.BufferGeometry();
-    quad.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
-      frame.throatInnerR * dx, 0, frame.throatInnerR * dz,
-      MOUNT.baseR * dx, 0, MOUNT.baseR * dz,
-      frame.throatOuterR * dx, MOUNT.archH, frame.throatOuterR * dz,
-      frame.throatInnerR * dx, MOUNT.archH, frame.throatInnerR * dz,
-    ]), 3));
-    quad.setIndex([0, 1, 2, 0, 2, 3]);
-    quad.computeVertexNormals();
-    parent.add(new THREE.Mesh(quad, mountRockMat));
-  }
-
   // The hollow chamber: dark curved walls, a ceiling ring with an open
-  // oculus, and a short skylight shaft up into the peak's innards.
+  // oculus, and a skylight shaft tapering up to the open summit hole — the
+  // two holes line up, so the drop-from-the-top route is dead-straight.
   const CHAMBER_R = 14;
   const CHAMBER_H = 17;
   const OCULUS_R = 9.5;
@@ -1625,22 +1844,31 @@ export function addUnderground(parent, opts = {}) {
   chamberCeil.position.set(MOUNT.cx, CHAMBER_H, MOUNT.cz);
   parent.add(chamberCeil);
   const oculusShaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(OCULUS_R + 0.1, OCULUS_R + 0.1, 4, 40, 1, true),
+    new THREE.CylinderGeometry(MOUNT.skylightR + 1.0, OCULUS_R + 0.1, MOUNT.peakY - CHAMBER_H, 40, 1, true),
     caveMat
   );
-  oculusShaft.position.set(MOUNT.cx, CHAMBER_H + 2, MOUNT.cz);
+  oculusShaft.position.set(MOUNT.cx, CHAMBER_H + (MOUNT.peakY - CHAMBER_H) / 2, MOUNT.cz);
   parent.add(oculusShaft);
 
-  // Snow cap: a white frustum draped over everything above the snowline,
-  // its flat top face BEING the summit platform the road arrives on.
+  // Snow cap: a hollow white funnel draped over the rock above the snowline.
+  // Its top is OPEN (no cap) — the flat summit ring bridges the funnel rim,
+  // and the centre stays a dark open skylight straight down into the chamber.
   const snowBottomY = 16.9;
+  const snowTopR = MOUNT.padR + 0.4;
   const snowCap = new THREE.Mesh(
-    new THREE.CylinderGeometry(MOUNT.padR + 0.4, coneR(snowBottomY) + 0.75, MOUNT.peakY - snowBottomY, 48),
+    new THREE.CylinderGeometry(snowTopR, coneR(snowBottomY) + 0.75, MOUNT.peakY - snowBottomY, 48, 1, true),
     snowMat
   );
   snowCap.position.set(MOUNT.cx, (snowBottomY + MOUNT.peakY) / 2, MOUNT.cz);
   snowCap.castShadow = true;
   parent.add(snowCap);
+  // Summit skylight rim: the flat white ring the pilgrim's road lands on,
+  // running from the skylight edge out to the funnel rim.
+  const summitRing = new THREE.Mesh(new THREE.RingGeometry(MOUNT.skylightR, snowTopR, 48), snowMat);
+  summitRing.rotation.x = -Math.PI / 2;
+  summitRing.receiveShadow = true;
+  summitRing.position.set(MOUNT.cx, MOUNT.peakY, MOUNT.cz);
+  parent.add(summitRing);
 
   // The pilgrim's road: chained wedge ramps spiralling up the outside of the
   // cone (layout + soft ride colliders verified in the pure module's tests).
@@ -1648,6 +1876,15 @@ export function addUnderground(parent, opts = {}) {
   for (const seg of roadSegs) {
     addUgRamp(seg, roadStoneMat);
     mountColliders.push(seg.collider);
+  }
+  // Direct-climb skin: invisible ride-able ramps tiling the whole mountain
+  // face so you can drive straight up the rock anywhere (not just the spiral
+  // road). Registered AFTER the road so the road wins where footprints
+  // overlap. No meshes — the lathe cone + snowcap already supply the visuals,
+  // and every skin wedge's surface matches the cone generator exactly.
+  for (const s of coneSkinSegments()) {
+    ugRamps.push(s);
+    mountColliders.push(s.collider);
   }
   // Lantern posts mark where the road starts, so wanderers spot the climb.
   {
@@ -1667,10 +1904,11 @@ export function addUnderground(parent, opts = {}) {
     }
   }
 
-  // Invisible collision layout: flank rings that seal the rock against
-  // ground cars (mouth sector exempt), tunnel-wall staircases, the chamber
-  // wall ring, the shrine dais, plus the soft summit pad and the chamber-
-  // ceiling planks around the oculus hole (land up there, roll in, drop).
+  // Invisible collision layout: the chamber wall ring, the shrine dais, plus
+  // the soft summit skylight rim, the chamber-ceiling planks around the oculus
+  // hole (ride them, roll into the open centres, and drop down into the
+  // chamber) and the cone-skin colliders (overlaps the skin ramps so a falling
+  // car lands on the face too).
   const blockers = mountainBlockers();
   for (const r of blockers.solids) mountColliders.push(r);
   for (const r of blockers.softs) mountColliders.push(r);
@@ -1682,7 +1920,8 @@ export function addUnderground(parent, opts = {}) {
   const goatMat = new THREE.MeshStandardMaterial({ color: 0xdad5c9, roughness: 0.9 });
   const shrine = new THREE.Group();
   shrine.position.set(MOUNT.cx, 0, MOUNT.cz);
-  // Model built facing local +Z; turn it to face out through the mouth.
+  // Model built facing local +Z; turn it to face the old mouth azimuth (the
+  // man gazes out across the chamber the way the cave mouth used to open).
   shrine.rotation.y = Math.atan2(frame.dirX, frame.dirZ);
   parent.add(shrine);
   const dais = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.7, 0.7, 24), stoneMat);
@@ -1767,13 +2006,13 @@ export function addUnderground(parent, opts = {}) {
   orb.position.y = 6.2;
   shrine.add(orb);
   const beam = new THREE.Mesh(
-    new THREE.CylinderGeometry(8, 1.6, 14.5, 24, 1, true),
+    new THREE.CylinderGeometry(4.4, 1.6, 24.5, 24, 1, true),
     new THREE.MeshBasicMaterial({
       color: 0xfff3cf, transparent: true, opacity: 0.13,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
     })
   );
-  beam.position.y = 9.95;
+  beam.position.y = 12.25;
   beam.renderOrder = 5;
   shrine.add(beam);
   const mysteryLight = new THREE.PointLight(0xffe6ae, 2.0, 46, 2);
@@ -1786,12 +2025,16 @@ export function addUnderground(parent, opts = {}) {
   // Live state for update() + the ?debug hook.
   const holy = {
     MOUNT,
+    // Cone silhouette helper — main.js uses it to keep the chase camera
+    // outside the solid mountain (the cinematic overrides bypass it).
+    coneRadiusAt: (y) => coneRadiusAt(y, MOUNT),
     t: 0,
     entered: false,   // set once the car gets within 12 units of the shrine
     light: mysteryLight,
     orb,
     beam,
     candleMat,
+    flare: 1,   // mystery-light surge (1 = calm) driven by the chamber cinematic
   };
 
   const glassCity = addGlassCity(parent);
@@ -2236,9 +2479,9 @@ export function addUnderground(parent, opts = {}) {
       // candle flicker. Also flag the moment the car first reaches the
       // hollow chamber (within 12 units of the shrine).
       holy.t += delta;
-      holy.light.intensity = 1.7 + 0.9 * Math.sin(holy.t * 1.6);
+      holy.light.intensity = (1.7 + 0.9 * Math.sin(holy.t * 1.6)) * holy.flare;
       holy.orb.position.y = 6.2 + 0.35 * Math.sin(holy.t * 0.9);
-      holy.beam.material.opacity = 0.11 + 0.04 * Math.sin(holy.t * 1.6 + 1.2);
+      holy.beam.material.opacity = (0.11 + 0.04 * Math.sin(holy.t * 1.6 + 1.2)) * holy.flare;
       holy.candleMat.emissiveIntensity = 1.35 + 0.45 * Math.sin(holy.t * 7.3) + 0.2 * Math.sin(holy.t * 13.7 + 1.3);
       if (player && !holy.entered) {
         const dx = player.x - MOUNT.cx;

@@ -6,10 +6,11 @@ import {
   MOUNT,
   SLAB_BOUNDS,
   coneRadiusAt,
+  coneHeightAt,
+  coneSkinSegments,
   roadCenterRadiusAt,
   spiralSegments,
   mountainBlockers,
-  mouthFrame,
 } from './holyMountain.js';
 
 const EPS = 1e-9;
@@ -17,6 +18,15 @@ const EPS = 1e-9;
 // Axis-aligned rect vs point, with the rect expanded by `pad` on every side.
 function pointInRect(px, pz, r, pad = 0) {
   return Math.abs(px - r.x) <= r.halfW + pad && Math.abs(pz - r.z) <= r.halfD + pad;
+}
+
+// Is (px, pz) inside the sloped-plank footprint of a ramp def (the same test
+// ugRampInfoAt uses, without the height gate)?
+function onRampFootprint(px, pz, def) {
+  const dx = px - def.x, dz = pz - def.z;
+  const along = dx * def.runX + dz * def.runZ;
+  const perp = -dx * def.runZ + dz * def.runX;
+  return along >= -def.len / 2 && along <= def.len / 2 && Math.abs(perp) < def.width / 2;
 }
 
 test('cone profile runs baseR -> padR linearly and clamps', () => {
@@ -80,70 +90,90 @@ test('road and colliders stay inside the cavern slab', () => {
   }
 });
 
-test('mouth corridor is clear of solid blockers (car radius margin)', () => {
-  const CAR = 2.2;
+test('the cone base is solid to grounded cars but never fences off the climb', () => {
+  // There is no cave mouth any more, so the ONLY way in is the summit skylight
+  // drop and the only way out is the staged ejection. A GROUNDED car driving at
+  // the mountain must hit rock (the base skirt), not ghost through it. But the
+  // skirt must never deadlock the drivable face: a car riding the skin is
+  // `elevated` (car.y > 0.5) once it is inside rElev, and `elevated` skips
+  // solids in main.js — so every box must stop a grounded car only at a radius
+  // where a riding car would already be elevated.
   const { solids } = mountainBlockers();
-  const f = mouthFrame();
-  for (let di = 13; di <= 26; di += 0.5) {
-    const halfOpen = di * Math.sin(MOUNT.archHalf) * 0.35;   // drivable core
-    for (const lat of [-halfOpen, 0, halfOpen]) {
-      const px = MOUNT.cx + f.dirX * di + (-f.dirZ) * lat;
-      const pz = MOUNT.cz + f.dirZ * di + f.dirX * lat;
-      for (const r of solids) {
-        assert.ok(!pointInRect(px, pz, r, CAR),
-          `corridor point d=${di} lat=${lat.toFixed(1)} blocked by rect at (${r.x},${r.z})`);
-      }
+  // Radius where the cone surface reaches the 0.5 elevation threshold:
+  // coneHeightAt(r) = 0.5  ->  r = baseR - 0.5 * (baseR - padR) / peakY.
+  const rElev = MOUNT.baseR - 0.5 * (MOUNT.baseR - MOUNT.padR) / MOUNT.peakY;
+  const PLAYER_R = 2.2;
+  const STEPS = 720;
+  for (let k = 0; k < STEPS; k++) {
+    const phi = (k / STEPS) * Math.PI * 2;
+    const dx = Math.cos(phi), dz = Math.sin(phi);
+    // Outermost solid along a ground ray: where the skirt's outer face is.
+    let faceR = null;
+    for (let r = MOUNT.baseR; r > 18; r -= 0.1) {
+      const px = MOUNT.cx + r * dx, pz = MOUNT.cz + r * dz;
+      if (solids.some((s) => pointInRect(px, pz, s, 0))) { faceR = r; break; }
+    }
+    assert.ok(faceR !== null,
+      `no base solid at azimuth ${(phi * 180 / Math.PI).toFixed(1)}° — a grounded car can drive into the mountain`);
+    // The car center stops ~PLAYER_R outside the box face.
+    assert.ok(faceR + PLAYER_R < rElev,
+      `base skirt deadlocks the climb at ${(phi * 180 / Math.PI).toFixed(1)}°: stops at ${(faceR + PLAYER_R).toFixed(2)}, elevation radius is ${rElev.toFixed(2)}`);
+  }
+});
+
+test('cone skin tiles the whole face with no seams', () => {
+  const skin = coneSkinSegments();
+  assert.ok(skin.length > 0, 'skin must produce ramps');
+  const BANDS = 12, STEPS = 36;
+  for (let b = 0; b < BANDS; b++) {
+    const y0 = b * MOUNT.peakY / BANDS;
+    const r0 = coneRadiusAt(y0), r1 = coneRadiusAt(y0 + MOUNT.peakY / BANDS);
+    for (let k = 0; k < STEPS; k++) {
+      const phi = (k / STEPS) * Math.PI * 2;
+      const r = (r0 + r1) / 2;
+      const px = MOUNT.cx + r * Math.cos(phi);
+      const pz = MOUNT.cz + r * Math.sin(phi);
+      const hit = skin.find((s) => onRampFootprint(px, pz, s));
+      assert.ok(hit, `skin seam at band ${b} φ=${(phi * 180 / Math.PI).toFixed(1)}° r=${r.toFixed(1)}`);
+      // The ramp's surface under the sample matches the cone profile (a sloped
+      // plank standing on the real cone surface, not a phantom floor).
+      const along = (px - hit.x) * hit.runX + (pz - hit.z) * hit.runZ;
+      const surfY = hit.baseY + hit.height * (along + hit.len / 2) / hit.len;
+      const wantY = coneHeightAt(r);
+      assert.ok(Math.abs(surfY - wantY) < 1.5, `skin off-cone at b=${b} φ=${(phi * 180 / Math.PI).toFixed(1)}°: got ${surfY.toFixed(2)} want ~${wantY.toFixed(2)}`);
     }
   }
 });
 
-test('chamber interior is reachable from the mouth (only the shrine blocks)', () => {
-  const { solids } = mountainBlockers();
-  const shrine = solids[solids.length - 1];   // pushed last
-  const f = mouthFrame();
-  for (let di = 12.6; di >= 4.5; di -= 0.5) {
-    const px = MOUNT.cx + f.dirX * di;
-    const pz = MOUNT.cz + f.dirZ * di;
-    for (const r of solids) {
-      if (r === shrine) continue;
-      assert.ok(!pointInRect(px, pz, r, 0),
-        `path to shrine blocked at d=${di} by rect at (${r.x},${r.z})`);
-    }
-  }
-  // And the shrine itself stops the car before the exact centre.
-  assert.ok(pointInRect(MOUNT.cx + f.dirX * 3, MOUNT.cz + f.dirZ * 3, shrine, 0));
-});
-
-test('flank ring seals the perimeter except at the mouth', () => {
-  const CAR = 2.2;
-  const { solids } = mountainBlockers();
-  const f = mouthFrame();
-  // The AABB ring's scallop valleys guarantee a wall by r≈30 worst-case —
-  // well inside the visual base (34), so rock can never be driven through.
-  for (let deg = 0; deg < 360; deg += 3) {
-    const beta = deg * Math.PI / 180;
-    let d = Math.abs(beta - f.betaM);
-    while (d > Math.PI) d = Math.PI * 2 - d;
-    if (d <= MOUNT.archHalf + 10 * Math.PI / 180) continue;   // the mouth gap
-    for (const rad of [27, 29]) {
-      const px = MOUNT.cx + rad * Math.cos(beta);
-      const pz = MOUNT.cz + rad * Math.sin(beta);
-      assert.ok(solids.some((r) => pointInRect(px, pz, r, CAR)),
-        `perimeter point β=${deg}° r=${rad} not sealed`);
-    }
+test('cone skin wraps the full face and fits the slab', () => {
+  for (const s of coneSkinSegments()) {
+    // Driving collider (same AABB the level registers) stays inside the slab.
+    const c = s.collider;
+    assert.ok(c.x - c.halfW >= SLAB_BOUNDS.minX && c.x + c.halfW <= SLAB_BOUNDS.maxX, `skin x bounds at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`);
+    assert.ok(c.z - c.halfD >= SLAB_BOUNDS.minZ && c.z + c.halfD <= SLAB_BOUNDS.maxZ, `skin z bounds at (${s.x.toFixed(1)}, ${s.z.toFixed(1)})`);
   }
 });
 
-test('summit pad catches the road apron; ceiling has a drivable hole', () => {
+test('summit skylight rim catches the road apron; its centre stays open', () => {
   const segs = spiralSegments();
   const apron = segs[segs.length - 1];
   const endX = apron.x + apron.runX * apron.len / 2;
   const endZ = apron.z + apron.runZ * apron.len / 2;
   const { softs } = mountainBlockers();
-  const pad = softs[0];
-  assert.ok(pointInRect(endX, endZ, pad, 1.6), 'road end misses the summit pad');
+  const rim = softs.slice(0, 4);                      // the summit rim ring
+  assert.equal(rim.length, 4);
+  assert.ok(rim.some((r) => pointInRect(endX, endZ, r, 1.6)), 'road end misses the summit rim');
 
-  const planks = softs.slice(1);
+  const outer = MOUNT.padR + 0.4;                     // 9.9
+  // Outer edge of the rim is landable…
+  assert.ok(rim.some((r) => pointInRect(MOUNT.cx + outer - 1, MOUNT.cz, r, 0)));
+  assert.ok(rim.some((r) => pointInRect(MOUNT.cx, MOUNT.cz - outer + 1, r, 0)));
+  // …the centre is the OPEN skylight hole you drop through.
+  assert.ok(!rim.some((r) => pointInRect(MOUNT.cx, MOUNT.cz, r, 0)), 'skylight hole must stay open');
+  assert.ok(!rim.some((r) => pointInRect(MOUNT.cx + MOUNT.skylightR - 0.1, MOUNT.cz, r, 0)),
+    'skylight hole must be clear of the rim ring');
+
+  const planks = softs.slice(4);                      // chamber ceiling ring
   assert.equal(planks.length, 4);
   // Centre of the roof is OPEN — that's the oculus you drop through.
   assert.ok(!planks.some((r) => pointInRect(MOUNT.cx + 5, MOUNT.cz + 5, r, 0)),
