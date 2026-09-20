@@ -27,6 +27,10 @@ scores, or timers — pure kinetic playground.
 
 ## Industrial Car Elevators & Sweeper Arms
 
+> REMOVED (2026-09-18): the entire elevator situation was deleted — twin decks,
+> hydraulic tubes, roof shaft hole, y=9 ledges, roof beam and sweepers are gone
+> (see `underground_ideas.md` #8/#9/#32). The foam pit (item 15) remains.
+
 15. [x] Dig a deep foam pit: recessed padded zone (visual only — dark soft-looking floor patch with raised rim walls that have colliders).
 16. [x] Build one elevator platform prototype: flat industrial platform (metal box + hazard-stripe edge) that moves vertically in a smooth up/down loop over the pit.
 17. [x] Make the elevator drivable: while the car is on the platform, carry the car with it (track platform delta-Y per frame and offset car.position.y when the car's x/z is within the platform footprint).

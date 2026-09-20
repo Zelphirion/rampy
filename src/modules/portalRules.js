@@ -20,8 +20,13 @@ export function isStillWithinLevitationHall(px, pz, building) {
 }
 
 export function isInMineDiveTrigger(px, pz, portal) {
+  // Bounded to the OPEN pit only: triggerZ is the mouth lip, triggerZ1 is the
+  // back wall of the visible excavation (z=44, where the quarried banks end).
+  // Beyond that the tunnel crown is sealed meadow — you can only reach the
+  // back of the shaft inside the scripted dive, so nothing there should trip
+  // this zone (a car cruising the grass behind/over the shaft never triggers).
   return Math.abs(px - portal.triggerX) < portal.triggerXHalf &&
-    pz > portal.triggerZ;
+    pz > portal.triggerZ && pz < portal.triggerZ1;
 }
 
 export function isInUndergroundReturnZone(px, pz, tunnelX, tunnelZ, radius) {

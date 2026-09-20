@@ -168,7 +168,7 @@ function makeOrchardPlaza(scene, cx, cz) {
   return trees;
 }
 
-// ---- Tableau 3: figures locked in motionless tableaux ----
+// ---- Tableau 3: figures that slowly "change pose" on a clock (idea #26) ----
 function makeMannequin(color) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
@@ -195,7 +195,7 @@ function makeMannequin(color) {
   const legR = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.7, 0.16), mat);
   legR.position.set(0.18, 0.35, 0);
   g.add(legR);
-  return g;
+  return { g, head, hat, armL, armR };
 }
 
 function makeTableauShop(scene, x, z, color, colors) {
@@ -213,15 +213,32 @@ function makeTableauShop(scene, x, z, color, colors) {
   const sign = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.8, 0.3), goldMat);
   sign.position.set(0, 5.3, 3.5);
   g.add(sign);
+  const figures = [];
   for (let i = 0; i < colors.length; i++) {
     const m = makeMannequin(colors[i]);
-    m.position.set((i - 1) * 1.4, 0.05, 0);
-    m.rotation.y = 0.2 + (i % 2) * 0.5;
-    g.add(m);
+    m.g.position.set((i - 1) * 1.4, 0.05, 0);
+    const baseYaw = 0.2 + (i % 2) * 0.5;
+    m.g.rotation.y = baseYaw;
+    g.add(m.g);
+    figures.push({ ...m, baseYaw, phase: i * 2.1 + x * 0.03, speed: 0.5 + (i % 3) * 0.25 });
   }
   g.position.set(x, 0, z);
   scene.add(g);
-  return { x, z, halfW: 3.5, halfD: 3.5, h: 6 };
+  return {
+    x, z, halfW: 3.5, halfD: 3.5, h: 6,
+    // Slow living-exhibit motion: arms drift, the body turns a little, head
+    // scans — each figure on its own phase so they don't move in lockstep.
+    update(delta, t) {
+      for (const f of figures) {
+        const w = t * f.speed + f.phase;
+        f.armL.rotation.z = 0.5 + Math.sin(w) * 0.4;
+        f.armR.rotation.z = -0.6 + Math.sin(w * 0.8 + 1.3) * 0.35;
+        f.g.rotation.y = f.baseYaw + Math.sin(w * 0.4) * 0.4;
+        f.head.rotation.y = Math.sin(w * 0.7 + 2) * 0.35;
+        f.hat.rotation.z = Math.sin(w * 0.5 + 0.5) * 0.12;
+      }
+    },
+  };
 }
 
 // A canvas marble floor with a faint grid, repeated across the whole region.
@@ -253,7 +270,46 @@ function redBandMat() {
   return new THREE.MeshStandardMaterial({ color: 0xb84040, roughness: 0.6 });
 }
 
-export function addGlassCity(scene) {
+// ---- Crystals (idea #25) ----
+// Glowing crystal clusters along the streets (like the mine gems) that POP when
+// the car runs into them, plus one big central citadel crystal the towers ring.
+const crystalColors = [0x7ef9ff, 0xff8ad8, 0x9dff8f, 0xffd27e, 0xb48cff];
+
+function makeCrystalCluster(color) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color, emissive: color, emissiveIntensity: 0.95,
+    transparent: true, opacity: 0.85, roughness: 0.12, metalness: 0.25,
+    flatShading: true,
+  });
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.0, 1.25, 0.4, 7),
+    new THREE.MeshStandardMaterial({ color: 0x3a3548, roughness: 0.9 })
+  );
+  base.position.y = 0.2;
+  base.castShadow = true;
+  g.add(base);
+  const n = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
+    const h = 1.4 + Math.random() * 1.8;
+    const shard = new THREE.Mesh(new THREE.ConeGeometry(0.22 + Math.random() * 0.22, h, 6), mat);
+    shard.position.set(Math.cos(a) * 0.55, 0.35 + h / 2, Math.sin(a) * 0.55);
+    shard.rotation.set((Math.random() - 0.5) * 0.7, 0, (Math.random() - 0.5) * 0.7);
+    shard.castShadow = true;
+    g.add(shard);
+  }
+  const core = new THREE.Mesh(new THREE.ConeGeometry(0.34, 2.6 + Math.random(), 6), mat);
+  core.position.y = 0.35 + (2.6 + Math.random()) / 2;
+  core.castShadow = true;
+  g.add(core);
+  g.userData.color = color;
+  g.userData.mat = mat;
+  return g;
+}
+
+export function addGlassCity(scene, opts = {}) {
+  const onCrystalPop = typeof opts.onCrystalPop === 'function' ? opts.onCrystalPop : null;
   makeCityFloor(scene);
 
   const colliders = [];
@@ -275,22 +331,158 @@ export function addGlassCity(scene) {
 
   // Tableaux (colliders for the shops, decorations inside them) — set in the
   // wide corridor gaps of the tower grid.
-  colliders.push(makeTableauShop(scene, -96, 143, 0x4a7fd4, [0xe8d3a0, 0xb0c4e8, 0xe8a0b4]));
-  colliders.push(makeTableauShop(scene, 84, 161, 0x7a5ac8, [0xffffff, 0xe0d8a8, 0xb0c4e8]));
+  const tableauA = makeTableauShop(scene, -96, 143, 0x4a7fd4, [0xe8d3a0, 0xb0c4e8, 0xe8a0b4]);
+  colliders.push(tableauA);
+  const tableauB = makeTableauShop(scene, 84, 161, 0x7a5ac8, [0xffffff, 0xe0d8a8, 0xb0c4e8]);
+  colliders.push(tableauB);
   const birdShop = makeBirdShop(scene, -16, 143);
   colliders.push({ x: -16, z: 143, halfW: 3.5, halfD: 3.5, h: 6, noGhost: true });
 
   const blueTrees = makeOrchardPlaza(scene, 44, 154);
 
+  // ---- Central citadel crystal (idea #25) ----
+  // One big double-terminated crystal in the corridor the towers ring, with a
+  // glowing halo and a bright light so it reads as the city's heart.
+  const spireX = 4, spireZ = 152;
+  const spireMat = new THREE.MeshStandardMaterial({
+    color: 0xaee6ff, emissive: 0x5fb9ff, emissiveIntensity: 1.2,
+    transparent: true, opacity: 0.72, roughness: 0.06, metalness: 0.3, flatShading: true,
+  });
+  const spire = new THREE.Group();
+  const spireBody = new THREE.Mesh(new THREE.OctahedronGeometry(2.6, 0), spireMat);
+  spireBody.scale.set(1, 4.4, 1);
+  spireBody.position.y = 11.5;
+  spireBody.castShadow = true;
+  spire.add(spireBody);
+  const spireBase = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.6, 3.4, 1.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0x2b2838, roughness: 0.85, metalness: 0.2 })
+  );
+  spireBase.position.y = 0.6;
+  spireBase.castShadow = true;
+  spire.add(spireBase);
+  const spireHalo = new THREE.Mesh(
+    new THREE.TorusGeometry(3.6, 0.14, 10, 40),
+    new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  spireHalo.rotation.x = Math.PI / 2;
+  spireHalo.position.y = 1.4;
+  spire.add(spireHalo);
+  const spireLight = new THREE.PointLight(0x7fd0ff, 3.2, 60, 2);
+  spireLight.position.set(0, 8, 0);
+  spire.add(spireLight);
+  spire.position.set(spireX, 0, spireZ);
+  scene.add(spire);
+  colliders.push({ x: spireX, z: spireZ, halfW: 2.6, halfD: 2.6, h: 20 });
+
+  // ---- Crystal clusters along the streets ----
+  const CRYSTAL_SPOTS = [
+    [-116, 143], [-76, 143], [-36, 143], [24, 143], [64, 143], [104, 143], [124, 143],
+    [-116, 161], [-76, 161], [-36, 161], [24, 161], [64, 161], [104, 161], [124, 161],
+  ];
+  const crystals = [];
+  for (let i = 0; i < CRYSTAL_SPOTS.length; i++) {
+    const [x, z] = CRYSTAL_SPOTS[i];
+    const color = crystalColors[i % crystalColors.length];
+    const group = makeCrystalCluster(color);
+    group.position.set(x, 0, z);
+    scene.add(group);
+    crystals.push({ group, x, z, color, radius: 2.8, alive: true, respawn: 0 });
+  }
+
+  // Shard bursts for a popped cluster — small flying cones that fade out.
+  const crystalBursts = [];
+  function spawnCrystalBurst(x, z, color) {
+    const mat = new THREE.MeshStandardMaterial({
+      color, emissive: color, emissiveIntensity: 1.1, transparent: true, opacity: 1,
+      roughness: 0.15, metalness: 0.2, flatShading: true,
+    });
+    const shards = [];
+    for (let i = 0; i < 10; i++) {
+      const s = new THREE.Mesh(new THREE.ConeGeometry(0.14 + Math.random() * 0.12, 0.5 + Math.random() * 0.6, 5), mat.clone());
+      s.position.set(x + (Math.random() - 0.5) * 1.2, 1.0 + Math.random() * 2.2, z + (Math.random() - 0.5) * 1.2);
+      s.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
+      scene.add(s);
+      const a = Math.random() * Math.PI * 2;
+      const sp = 3 + Math.random() * 5;
+      shards.push({ mesh: s, vx: Math.cos(a) * sp, vz: Math.sin(a) * sp, vy: 4 + Math.random() * 5, spin: (Math.random() - 0.5) * 8, life: 0, max: 0.7 + Math.random() * 0.5 });
+    }
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.6, 1.0, 28),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 1.0, z);
+    scene.add(ring);
+    crystalBursts.push({ shards, ring, life: 0, max: 0.75 });
+  }
+
   function update(delta, player) {
     // Only animate when the player is in/near the Glass City.
     if (Math.abs(player.z - ((Z0 + Z1) / 2)) > 60) return;
     birdShop.update(delta, clockT);
+    tableauA.update(delta, clockT);
+    tableauB.update(delta, clockT);
     clockT += delta;
     for (const t of blueTrees) {
       t.rotation.y += delta * 0.05;   // the blue trees turn slowly, like living things
     }
+    // The citadel crystal slowly turns and its halo pulses.
+    spire.rotation.y += delta * 0.25;
+    spireHalo.rotation.z += delta * 0.6;
+    spireLight.intensity = 2.6 + 0.9 * Math.sin(clockT * 1.8);
+    spireHalo.material.opacity = 0.5 + 0.25 * Math.sin(clockT * 1.8);
+    // Crystals pop when the car drives into them, then regrow after a beat.
+    for (const c of crystals) {
+      if (c.alive) {
+        if (c.group.visible && player.y < 3) {
+          const dx = player.x - c.x;
+          const dz = player.z - c.z;
+          if (dx * dx + dz * dz < c.radius * c.radius) {
+            c.alive = false;
+            c.group.visible = false;
+            c.respawn = 6;
+            spawnCrystalBurst(c.x, c.z, c.color);
+            if (onCrystalPop) onCrystalPop(c);
+          }
+        }
+      } else {
+        c.respawn -= delta;
+        if (c.respawn <= 0) {
+          c.alive = true;
+          c.group.visible = true;
+          c.group.scale.setScalar(0.001);
+        }
+      }
+      if (c.alive && c.group.scale.x < 1) {
+        c.group.scale.setScalar(Math.min(1, c.group.scale.x + delta * 2.5));
+      }
+    }
+    // Animate the shard bursts.
+    for (let i = crystalBursts.length - 1; i >= 0; i--) {
+      const b = crystalBursts[i];
+      b.life += delta;
+      const t = b.life / b.max;
+      for (const s of b.shards) {
+        s.vy -= 16 * delta;
+        s.mesh.position.x += s.vx * delta;
+        s.mesh.position.y += s.vy * delta;
+        s.mesh.position.z += s.vz * delta;
+        s.mesh.rotation.x += s.spin * delta;
+        s.mesh.rotation.z += s.spin * delta;
+        s.mesh.material.opacity = Math.max(0, 1 - t);
+      }
+      b.ring.scale.setScalar(1 + t * 5);
+      b.ring.material.opacity = Math.max(0, 0.9 * (1 - t));
+      if (b.life >= b.max) {
+        for (const s of b.shards) { scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); }
+        scene.remove(b.ring);
+        b.ring.geometry.dispose();
+        b.ring.material.dispose();
+        crystalBursts.splice(i, 1);
+      }
+    }
   }
   let clockT = 0;
-  return { colliders, update };
+  return { colliders, update, crystals, spire };
 }

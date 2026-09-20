@@ -123,9 +123,155 @@
           max-width: 72vw;
         }
       }
+
+      /* ===== Loading screen ===== */
+      #loader {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        background: #000;
+        color: #e8ecff;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        font-family: Arial, sans-serif;
+        text-align: center;
+        transition: opacity 0.5s ease, visibility 0.5s ease;
+      }
+
+      #loader.loader-done {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      #loader img {
+        width: 340px;
+        max-width: 74vw;
+        height: auto;
+      }
+
+      #loader-word {
+        font-size: 26px;
+        letter-spacing: 0.4em;
+        text-indent: 0.4em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #fff;
+        text-shadow: 0 0 18px rgba(120, 200, 255, 0.6);
+        animation: loaderPulse 1.1s ease-in-out infinite;
+      }
+
+      @keyframes loaderPulse {
+        0%, 100% { opacity: 0.3; transform: scale(0.96); }
+        50% { opacity: 1; transform: scale(1.04); }
+      }
+
+      #loader-percent {
+        font-size: 15px;
+        color: #9fb4d8;
+        min-height: 1.2em;
+      }
+
+      #loader-item {
+        font-size: 14px;
+        color: #6f87ad;
+        min-height: 1.3em;
+        padding: 0 24px;
+      }
     </style>
   </head>
   <body>
+    <!-- ===== Loading screen (visible immediately, before any modules run) ===== -->
+    <div id="loader">
+      <img src="rampy_logo.png" alt="Crankshaft and Rampy's Wreck-less Ramble" />
+      <div id="loader-word">Loading</div>
+      <div id="loader-percent"></div>
+      <div id="loader-item"></div>
+    </div>
+    <script>
+      // Fake loader. The module build below runs synchronously, so this animates
+      // progress while the modules fetch/parse, then main.js calls
+      // window.__loadingDone() when the first frame is ready to render.
+      window.__loaderItems = [
+        'the city streets',
+        'the traffic lights',
+        'the office buildings',
+        'the centre fountain plaza',
+        'the park and flowerbeds',
+        'the fruit-market stalls',
+        'the mine shaft entrance',
+        'the hilltop hoverspace portal',
+        'the traffic cars',
+        'the fire engine',
+        'the giant eating robot',
+        'the freight train',
+        'the flame lizard',
+        'the steamroller',
+        'the bronze and stone statues',
+        'the pedestrians',
+        'the ramp world hills',
+        'the launch ramps',
+        'the vortex',
+        'the wheel of death',
+        'the swinging hammers',
+        'the trebuchet',
+        'the rolling boulder',
+        'the bowling pins and dominoes',
+        'the tire pyramid',
+        'the timber yard',
+        'the spiral tunnel',
+        'the underground sky',
+        'the glass city skyline',
+        'the colorful ceiling tiles',
+        'the candy waterfall',
+        'the art deco statues',
+        'the big staircase',
+        'the trampolines',
+        'the rotating platter',
+        'the padded pole',
+        'the conduit pipes',
+        'the foam pit',
+        'the holy mountain',
+        'the finish line',
+      ];
+      (function () {
+        const loader = document.getElementById('loader');
+        const pctEl = document.getElementById('loader-percent');
+        const itemEl = document.getElementById('loader-item');
+        const items = window.__loaderItems;
+        const DURATION = 3200; // ms of fake loading animation
+        const start = performance.now();
+        let done = false;
+        let lastIdx = -1;
+
+        function tick(now) {
+          if (done) return;
+          const frac = Math.min(1, (now - start) / DURATION);
+          const pct = Math.floor(frac * 97);
+          const idx = Math.min(items.length - 1, Math.floor(frac * items.length));
+          if (idx !== lastIdx) {
+            lastIdx = idx;
+            itemEl.textContent = 'Loading ' + items[idx] + '…';
+          }
+          pctEl.textContent = pct + '%';
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+
+        window.__loadingDone = function () {
+          if (done) return;
+          done = true;
+          pctEl.textContent = '100%';
+          itemEl.textContent = 'Ready to drive!';
+          loader.classList.add('loader-done');
+          setTimeout(() => { try { loader.remove(); } catch (e) {} }, 600);
+        };
+      })();
+    </script>
+
     <canvas id="minimap" width="160" height="160"
       style="position:fixed;left:16px;bottom:16px;pointer-events:none;
              background:rgba(5,10,18,0.68);border:1px solid rgba(255,255,255,0.15);border-radius:12px;"></canvas>
@@ -149,6 +295,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1789570000028"></script>
+    <script type="module" src="./src/main.js?v=1789754557000"></script>
   </body>
 </html>

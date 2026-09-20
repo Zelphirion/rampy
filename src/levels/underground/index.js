@@ -11,8 +11,8 @@ export const UNDERGROUND_Y = -30;
 // Rectangular zone on the 292×276 cavern slab (slab spans x ∈ [-146, 146],
 // z ∈ [-96.5, 179.5] around its center (0, 41.5)). Chosen to avoid:
 //   - Glass City footprint: z ∈ [132, 173] spanning x ∈ [-140, 140]
-//   - support pillar at (-40, 66)
 //   - tunnel foot / return portal at ≈(-55, 83) (tube radius 5; kept >60 away)
+//   - (support pillar at (-40, 66) — REMOVED 2026-09-18, was a plain black cube)
 // Everything below sits in the clear south-east quadrant, with ~6 units of
 // margin to the slab edges so props never hang off the cavern floor.
 export const BUILD_ZONE = {
@@ -316,6 +316,34 @@ function addUndergroundSky(parent, mergeGeoms) {
     constellations.push({ stars });
   }
 
+  // Shooting stars (idea #15): a small pool of meteors streaks across the sky
+  // on a timer. They live well above the ceiling, so they read from the second
+  // roof and through any hole in the checkerboard. Purely decorative.
+  const METEOR_COLORS = [0xffffff, 0xffffff, 0xbfd8ff, 0xffe9b0, 0xcaffff, 0xffc0e8];
+  const meteors = [];
+  for (let i = 0; i < 6; i++) {
+    const g = new THREE.Group();
+    const parts = [];
+    const head = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: starTex, color: 0xffffff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+    }));
+    head.scale.set(3.2, 3.2, 1);
+    g.add(head);
+    parts.push({ sprite: head, frac: 0, alpha: 1 });
+    for (let k = 0; k < 4; k++) {
+      const sp = new THREE.Sprite(head.material.clone());
+      const s = 2.4 * (1 - k * 0.18);
+      sp.scale.set(s, s, 1);
+      g.add(sp);
+      parts.push({ sprite: sp, frac: 0.07 + k * 0.075, alpha: 0.6 * (1 - k * 0.2) });
+    }
+    g.visible = false;
+    sky.add(g);
+    meteors.push({ group: g, parts, active: false, timer: Math.random() * 3, life: 0, maxLife: 1, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, trailLen: 16 });
+  }
+  let nextMeteor = 0.6 + Math.random() * 2.0;
+
   // Attach the per-frame animation to the group itself so the caller gets a
   // single handle (the group) that also carries its own update().
   sky.update = function update(delta, elapsed, player) {
@@ -339,7 +367,56 @@ function addUndergroundSky(parent, mergeGeoms) {
         s.sprite.material.opacity = 0.7 + 0.3 * Math.sin(elapsed * s.speed + s.phase);
       }
     }
+    // Shooting stars: fire one every few seconds, then streak and fade. Spawned
+    // around the car so they always sit inside the car-following dome.
+    nextMeteor -= delta;
+    if (nextMeteor <= 0) {
+      nextMeteor = 1.6 + Math.random() * 3.0;
+      const m = meteors.find((q) => !q.active) || meteors[0];
+      m.active = true;
+      m.life = 0;
+      m.maxLife = 0.9 + Math.random() * 0.8;
+      const ang = Math.random() * Math.PI * 2;
+      const speed = 90 + Math.random() * 80;
+      m.vx = Math.cos(ang) * speed;
+      m.vz = Math.sin(ang) * speed;
+      m.vy = -(24 + Math.random() * 42);
+      const px = player ? player.x : 0;
+      const pz = player ? player.z : 0;
+      m.x = px + (Math.random() - 0.5) * 200;
+      m.z = pz + (Math.random() - 0.5) * 200;
+      m.y = 44 + Math.random() * 12;
+      m.trailLen = 14 + Math.random() * 12;
+      const c = new THREE.Color(METEOR_COLORS[(Math.random() * METEOR_COLORS.length) | 0]);
+      for (const p of m.parts) p.sprite.material.color.copy(c);
+      m.group.visible = true;
+    }
+    for (const m of meteors) {
+      if (!m.active) continue;
+      m.life += delta;
+      m.x += m.vx * delta;
+      m.y += m.vy * delta;
+      m.z += m.vz * delta;
+      if (m.life >= m.maxLife) {
+        m.active = false;
+        m.group.visible = false;
+        continue;
+      }
+      const t = m.life / m.maxLife;
+      const fade = Math.sin(Math.min(1, t * 3) * Math.PI * 0.5) * (1 - t);
+      const d = Math.hypot(m.vx, m.vy, m.vz) || 1;
+      const ux = m.vx / d, uy = m.vy / d, uz = m.vz / d;
+      for (const p of m.parts) {
+        p.sprite.position.set(
+          m.x - ux * m.trailLen * p.frac,
+          m.y - uy * m.trailLen * p.frac,
+          m.z - uz * m.trailLen * p.frac
+        );
+        p.sprite.material.opacity = Math.max(0, p.alpha * fade);
+      }
+    }
   };
+  sky.meteors = meteors;   // exposed for the ?debug hook (idea #15)
   return sky;
 }
 
@@ -386,18 +463,24 @@ export function addUnderground(parent, opts = {}) {
   // Optional callbacks fired from update(): onBlockBump when an airborne car
   // bumps a prompt-block (task #6), onPipeShove(dirX) when a sliding conduit
   // sweeps through the car (task #13, dirX = ±1 travel direction),
-  // onSweeperHit(dirX,dirZ) when a rotating sweeper arm clips the car
-  // (task #23, unit vector pointing radially away from the arm's pivot),
   // onPoleHit(nx,nz,speed) when a fast-enough car slams the padded pole
   // (task #32; nx/nz point from the pole toward the car), and
   // onGemSlam(dirX,dirZ) when the car plows into a large heavy candy gem
   // (dirX/dirZ point back down the grand ramp). Lets the callers own the
   // physics/audio response without the level knowing how.
+  // onPlatterEject(nx,nz,s) fires when the rotating platter flings the car
+  // off its edge (nx/nz = tangent of the spin at the exit point, s ∈ [0,1]
+  // scaled by how fast the ride was carrying the car when it let go).
+  // onTrampoline() fires when the car drives onto a launch pad; main.js sets
+  // the big vertical launch that throws it onto the second roof.
   const onBlockBump = typeof opts.onBlockBump === 'function' ? opts.onBlockBump : null;
   const onPipeShove = typeof opts.onPipeShove === 'function' ? opts.onPipeShove : null;
-  const onSweeperHit = typeof opts.onSweeperHit === 'function' ? opts.onSweeperHit : null;
   const onPoleHit = typeof opts.onPoleHit === 'function' ? opts.onPoleHit : null;
   const onGemSlam = typeof opts.onGemSlam === 'function' ? opts.onGemSlam : null;
+  const onPlatterEject = typeof opts.onPlatterEject === 'function' ? opts.onPlatterEject : null;
+  const onTrampoline = typeof opts.onTrampoline === 'function' ? opts.onTrampoline : null;
+  const onStatueTopple = typeof opts.onStatueTopple === 'function' ? opts.onStatueTopple : null;
+  const onFinishLine = typeof opts.onFinishLine === 'function' ? opts.onFinishLine : null;
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -467,22 +550,77 @@ export function addUnderground(parent, opts = {}) {
     for (const g of markerParts) g.dispose();
   }
 
-  const pillars = [
-    { x: -40, z: 66 },
-  ];
-  const pillarColliders = [];
-  for (const p of pillars) {
-    const w = 3.0, h = 14;
-    const pil = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), pillarMat);
-    pil.position.set(p.x, h / 2, p.z);
-    pil.castShadow = true;
-    parent.add(pil);
-    pillarColliders.push({ x: p.x, z: p.z, halfW: w / 2, halfD: w / 2, h });
+  // ===== Spiral-tunnel mouth clouds + fog (2026-09-18) =====
+  // The spiral tube's TOP end is an open ring centred on tunnelPoint(0) — the
+  // rim of the helix, NOT the spiral axis — rising to local y≈30-40, and the
+  // arrival camera orbits at mouth height, so without this you can see
+  // straight down the throat from above. A rolling cloud bank seals that
+  // opening and a soft luminous mist spills over the rim and down into the
+  // shaft, hiding the top of the tunnel. Purely decorative — no colliders.
+  const mouthPt = tunnelPoint(0);
+  const mouthX = mouthPt.x, mouthZ = mouthPt.z;
+  const mouthY = localY(mouthPt.y) + TUNNEL.tubeR;   // centreline y of the open end
+  const spiralMouth = { group: new THREE.Group(), haze: [] };
+  spiralMouth.group.position.set(mouthX, 0, mouthZ);
+  {
+    // Dense pile of flattened cloud puffs mounding over the opening — blocks
+    // top-down sight into the tube. Outer puffs ride higher, so it mounds
+    // like a rolling cloud rather than a flat lid.
+    const bankMat = new THREE.MeshStandardMaterial({
+      color: 0x3a3350,
+      emissive: 0x453a62,
+      emissiveIntensity: 0.5,
+      roughness: 1,
+    });
+    const bankParts = [];
+    for (let i = 0; i < 30; i++) {
+      const a = (i / 30) * Math.PI * 2 + Math.random() * 1.2;
+      const rr = Math.cbrt(Math.random()) * 14;       // denser toward the centre
+      const g = new THREE.SphereGeometry(2.2 + Math.random() * 3.8, 10, 8).toNonIndexed();
+      g.scale(1, 0.55, 1);                            // flatten BEFORE placing
+      g.translate(Math.cos(a) * rr, mouthY - 3 + rr * 0.55 + Math.random() * 5, Math.sin(a) * rr);
+      bankParts.push(g);
+    }
+    // Rounder puffs stuffed down INSIDE the mouth so the throat below the rim
+    // is fogged too — the car dives through them at the start of the shot.
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.random() * 3.5;
+      const g = new THREE.SphereGeometry(1.8 + Math.random() * 2.4, 8, 7).toNonIndexed();
+      g.scale(1, 0.85, 1);
+      g.translate(Math.cos(a) * rr, mouthY - 3 - Math.random() * 5, Math.sin(a) * rr);
+      bankParts.push(g);
+    }
+    const bank = new THREE.Mesh(mergeGeoms(bankParts), bankMat);
+    spiralMouth.group.add(bank);
+    for (const g of bankParts) g.dispose();
   }
+  // Soft additive haze hugging the rim — reads as fog on top of the cloud.
+  // (The same radial soft-glow texture the stars and meteors use.)
+  const mistTex = makeStarTexture();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.random() * 0.6;
+    const rr = 6 + Math.random() * 10;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: mistTex,
+      color: 0xb8c2ea,
+      transparent: true,
+      opacity: 0.22,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      fog: false,
+    }));
+    sp.position.set(Math.cos(a) * rr, mouthY - 3 + Math.random() * 9, Math.sin(a) * rr);
+    sp.scale.set(16 + Math.random() * 8, 16 + Math.random() * 8, 1);
+    spiralMouth.group.add(sp);
+    spiralMouth.haze.push({ sprite: sp, phase: Math.random() * Math.PI * 2 });
+  }
+  parent.add(spiralMouth.group);
 
   // Cavern ceiling over the course zone (underside at CEIL_Y), clamped to the
-  // slab so it never overhangs the void, plus support columns floor → ceiling
-  // kept near the zone perimeter so the middle stays open for the course.
+  // slab so it never overhangs the void. (The old floor→ceiling support pillar
+  // at (-40, 66) and the four course-zone columns were plain black ground cubes —
+  // REMOVED 2026-09-18.)
   const CEIL_MARGIN = 8;
   const ceilMinX = Math.max(SLAB.minX, BUILD_ZONE.minX - CEIL_MARGIN);
   const ceilMaxX = Math.min(SLAB.maxX, BUILD_ZONE.maxX + CEIL_MARGIN);
@@ -530,13 +668,9 @@ export function addUnderground(parent, opts = {}) {
     0xff3b3b,   // red (terminal — spreads orange + green + blue rings)
   ];
   // Thin rock backing under the tiles so the hairline grout gaps never show
-  // the surface world above the ceiling.
-  const ceilingBack = new THREE.Mesh(
-    new THREE.BoxGeometry(ceilW, 0.15, ceilD),
-    rockMat
-  );
-  ceilingBack.position.set((ceilMinX + ceilMaxX) / 2, CEIL_Y + 0.075, (ceilMinZ + ceilMaxZ) / 2);
-  parent.add(ceilingBack);
+  // the surface world above the ceiling. It's built as ONE backing patch per
+  // tile (ceilingBacks, below), and the patch is hidden with its crumbled
+  // tile — so a roof hole looks straight down instead of a flat black layer.
   const checkerGrid = new THREE.InstancedMesh(
     new THREE.BoxGeometry(TILE_SZ - TILE_GAP, TILE_H, TILE_SZ - TILE_GAP),
     new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.1, side: THREE.DoubleSide }),
@@ -641,6 +775,33 @@ export function addUnderground(parent, opts = {}) {
   }
   checkerGrid.instanceMatrix.needsUpdate = true;
   checkerGrid.instanceColor.needsUpdate = true;
+
+  // Per-tile rock backing: same grid as the checkerboard, each patch slightly
+  // oversized so the hairline grout gaps stay covered from below — but the
+  // patch for a tile is hidden the moment that tile starts falling, so the
+  // second-roof holes let you see straight down through the cavern instead
+  // of a flat black backing slab (2026-09-18).
+  const BACK_OVERHANG = 0.06;   // patch extends past each tile edge, covering the 0.08 grout gaps
+  const backSize = TILE_SZ + BACK_OVERHANG * 2;
+  const ceilingBacks = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(backSize, 0.15, backSize),
+    rockMat,
+    tileCount
+  );
+  for (let iz = 0; iz < tilesZ; iz++) {
+    for (let ix = 0; ix < tilesX; ix++) {
+      _tileMat.makeTranslation(
+        ceilMinX + ix * TILE_SZ + TILE_SZ / 2,
+        CEIL_Y + 0.075,
+        gridZ0 + iz * TILE_SZ + TILE_SZ / 2
+      );
+      ceilingBacks.setMatrixAt(iz * tilesX + ix, _tileMat);
+    }
+  }
+  ceilingBacks.instanceMatrix.needsUpdate = true;
+  ceilingBacks.frustumCulled = false;   // like holeFrames — instances sit far from the local bounding sphere
+  parent.add(ceilingBacks);
+
   // Glowing orange hole outlines: when a tile crumbles away it leaves a hole
   // in the checkerboard ceiling. A thin glowing orange frame around the
   // hole's perimeter makes the gap obvious from both the roof (driving) and
@@ -757,30 +918,15 @@ export function addUnderground(parent, opts = {}) {
     holeFrameCount = slot;
     holeFrames.instanceMatrix.needsUpdate = true;
   };
-  // The ceiling top is the "second roof" — a drivable surface the elevator
-  // and the big staircase deliver the car to. Soft collider at the ceiling's
-  // top face (CEIL_Y + 1) so buildingTopAt/ugElevatorTopAt seat the car on it.
+  // The ceiling top is the "second roof" — a drivable surface the big
+  // staircase (and the trampolines) deliver the car to. Soft collider at the
+  // ceiling's top face (CEIL_Y + 1) so buildingTopAt/ugElevatorTopAt seat the
+  // car on it.
   const ceilingColliders = [{
     x: (ceilMinX + ceilMaxX) / 2, z: (ceilMinZ + ceilMaxZ) / 2,
     halfW: (ceilMaxX - ceilMinX) / 2, halfD: (ceilMaxZ - ceilMinZ) / 2,
     h: CEIL_Y + 1, soft: true, ceiling: true,
   }];
-
-  const COL_W = 3.5;
-  const courseColumns = [
-    { x: BUILD_ZONE.minX + 10, z: BUILD_ZONE.minZ + 10 },
-    { x: BUILD_ZONE.maxX - 10, z: BUILD_ZONE.minZ + 10 },
-    { x: BUILD_ZONE.minX + 10, z: BUILD_ZONE.maxZ - 10 },
-    { x: BUILD_ZONE.maxX - 10, z: BUILD_ZONE.maxZ - 10 },
-  ];
-  const columnColliders = [];
-  for (const c of courseColumns) {
-    const col = new THREE.Mesh(new THREE.BoxGeometry(COL_W, CEIL_Y, COL_W), pillarMat);
-    col.position.set(c.x, CEIL_Y / 2, c.z);
-    col.castShadow = true;
-    parent.add(col);
-    columnColliders.push({ x: c.x, z: c.z, halfW: COL_W / 2, halfD: COL_W / 2, h: CEIL_Y });
-  }
 
   // Dim neon PointLights along the course zone: enough colored light for the
   // glowing props to read against dark rock, but short-range and dim so they
@@ -879,6 +1025,57 @@ export function addUnderground(parent, opts = {}) {
   const FOAM_BOUNCE = 0.45;     // vertical restitution per floor hit
   const FOAM_MAX = 12;          // live-piece cap — beyond this, recycle the oldest
   const foamPieces = [];
+  // ---- Foam that looks like foam ----
+  // The bump-pop collectibles used to be plain pastel spheres. Each colour now
+  // gets a canvas "foam" texture: a bubbly speckle of soft light cells on a
+  // slightly darker base — so the balls read as lumpy cushion foam, not
+  // balloons. One texture per colour, cached and shared by every piece.
+  const foamTexCache = new Map();
+  function makeFoamTexture(color) {
+    const cached = foamTexCache.get(color);
+    if (cached) return cached;
+    const S = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    const c = new THREE.Color(color);
+    const r = (c.r * 255) | 0, g = (c.g * 255) | 0, b = (c.b * 255) | 0;
+    // Base: a slightly darker mid-tone so the pale bubbles pop on top.
+    ctx.fillStyle = `rgb(${Math.max(0, r - 46)},${Math.max(0, g - 46)},${Math.max(0, b - 46)})`;
+    ctx.fillRect(0, 0, S, S);
+    // Soft pale cells scattered densely — the classic foam-in-a-ball look.
+    for (let i = 0; i < 90; i++) {
+      const x = Math.random() * S, y = Math.random() * S;
+      const rad = 6 + Math.random() * 16;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
+      grad.addColorStop(0, `rgba(255,255,255,${0.16 + Math.random() * 0.14})`);
+      grad.addColorStop(0.7, `rgba(255,255,255,${0.05 + Math.random() * 0.06})`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // A few bright glints — the largest cells catch the neon light.
+    for (let i = 0; i < 18; i++) {
+      const x = Math.random() * S, y = Math.random() * S;
+      const rad = 3 + Math.random() * 5;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
+      grad.addColorStop(0, `rgba(255,255,255,0.8)`);
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 1.6);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    foamTexCache.set(color, tex);
+    return tex;
+  }
   function disposeFoamPiece(f) {
     parent.remove(f.mesh);
     f.mesh.geometry.dispose();
@@ -890,7 +1087,13 @@ export function addUnderground(parent, opts = {}) {
     // (removed + disposed) immediately to make room for the new one.
     while (foamPieces.length >= FOAM_MAX) disposeFoamPiece(foamPieces.shift());
     const color = FOAM_COLORS[(Math.random() * FOAM_COLORS.length) | 0];
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+    const mat = new THREE.MeshStandardMaterial({
+      map: makeFoamTexture(color),
+      color,
+      emissive: color,
+      emissiveIntensity: 0.18,
+      roughness: 0.85,
+    });
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(FOAM_R, 18, 14), mat);
     mesh.position.set(x, y, z);
     mesh.castShadow = true;
@@ -902,6 +1105,7 @@ export function addUnderground(parent, opts = {}) {
       vz: (Math.random() - 0.5) * 6,
       age: 0,
       bounces: 0,
+      nudgeCd: 0,   // idea #28: cooldown between car nudges
     });
   }
   // Test ramp aimed at the block row — analytic jump apex at full throttle
@@ -913,7 +1117,7 @@ export function addUnderground(parent, opts = {}) {
   // Heights follow the test-ramp flight profile — tall blocks sit near the
   // apex line (z ≈ -20), shorter ones further along the descent (z ≈ -14) —
   // so different jumps (speed, mid-air steer) clip different blocks. The row
-  // spans the whole zone so later features (conduit lanes, elevator ledges,
+  // spans the whole zone so later features (conduit lanes, the foam pit,
   // the pyramid launch ramp) each have targets within reach. Spacing is 16
   // units — more than double the 4-unit trigger radius, so adjacent triggers
   // never overlap.
@@ -937,116 +1141,139 @@ export function addUnderground(parent, opts = {}) {
   // around; at mid-slide there's an `amp`-wide gap on either side to thread.
   const PIPE_R = 1.2;
   const PIPE_Y = 2.4;         // centre height — underside ≈ bumper height
-  const POST_W = 1.6;
-  const POST_H = 4;
   const conduitPipes = [];
   const pipePostColliders = [];
-  function addConduitPipe({ cx, cz, len, amp, axis = 'z', color = NEON.cyan, phase = 0, speed = 1 }) {
+  function addConduitPipe({ cx, cz, len, amp, axis = 'z', color = NEON.cyan, phase = 0, speed = 1, pattern = 'sweep' }) {
     // axis 'z': pipe lies along Z, slides along X (north-south lane).
     // axis 'x': pipe lies along X, slides along Z (east-west lane).
-    const postOff = amp + len / 2;   // post distance from lane centre
-    for (const side of [-1, 1]) {
-      const px = axis === 'x' ? cx : cx + side * postOff;
-      const pz = axis === 'x' ? cz + side * postOff : cz;
-      const post = new THREE.Mesh(new THREE.BoxGeometry(POST_W, POST_H, POST_W), pillarMat);
-      post.position.set(px, POST_H / 2, pz);
-      post.castShadow = true;
-      parent.add(post);
-      pipePostColliders.push({ x: px, z: pz, halfW: POST_W / 2, halfD: POST_W / 2, h: POST_H });
-    }
+    // pattern 'sweep': the original horizontal slide.
+    // pattern 'guillotine': the pipe hangs in the lane and slams straight down
+    // (amp = vertical travel).
+    // The dark end-posts and rail frames were removed (2026-09-19): the hazard
+    // is the glowing bar alone, so the lane stays completely open.
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(PIPE_R, PIPE_R, len, 14), makeGlowMat(color));
     if (axis === 'x') mesh.rotation.z = Math.PI / 2;   // cylinder Y-axis → lie along X
     else mesh.rotation.x = Math.PI / 2;                // cylinder Y-axis → lie along Z
     mesh.position.set(cx, PIPE_Y, cz);
     mesh.castShadow = true;
     parent.add(mesh);
-    const pipe = { mesh, cx, cz, len, amp, axis, phase, speed, hitCooldown: 0, hitCount: 0 };
+    const pipe = { mesh, cx, cz, len, amp, axis, phase, speed, pattern, hitCooldown: 0, hitCount: 0 };
     conduitPipes.push(pipe);
     return pipe;
   }
 
-  // Task #14: four conduits across separate lanes, each with its own speed,
-  // phase and colour; lane #4 runs the perpendicular direction. Lanes are
-  // spaced so no two pipes' sweep volumes can ever intersect.
-  addConduitPipe({ cx: 70, cz: -60, len: 26, amp: 10, speed: 1.2, phase: 0 });                        // N-S, cyan
-  addConduitPipe({ cx: 112, cz: -60, len: 24, amp: 9, speed: 1.5, phase: 4.2, color: NEON.lime });     // N-S, lime
-  addConduitPipe({ cx: 40, cz: -78, len: 20, amp: 8, speed: 0.9, phase: 2.1, color: NEON.magenta });   // N-S, magenta
-  addConduitPipe({ cx: 115, cz: -30, len: 26, amp: 8, speed: 1.1, phase: 1.0, color: NEON.amber, axis: 'x' }); // E-W, amber
+  // A double-beam X: two perpendicular beams centered on the same lane, each
+  // sweeping along its own axis on opposite phases. Two beams to time, thread
+  // the open middle between them (the old corner posts were removed 2026-09-19).
+  function addConduitCross({ cx, cz, len, amp, color = NEON.magenta, color2 = NEON.cyan, phase = 0, speed = 1 }) {
+    const a = addConduitPipe({ cx, cz, len, amp, axis: 'z', color, phase, speed });
+    const b = addConduitPipe({ cx, cz, len, amp, axis: 'x', color: color2, phase: phase + Math.PI, speed });
+    a.cross = b;
+    b.cross = a;
+    return [a, b];
+  }
+
+  // Task #14 + idea #22: one serpentine obstacle course on the open floor.
+  // The pipes (sweeping arms, a double-beam X crossing, and two drop-gates /
+  // guillotines) are laid out in three N-S lanes stitched by two E-W runs so
+  // the car can drive the whole snake from start to finish. Sweeper pipes span
+  // the lane and slide across it: when the arm is at one extreme the far side
+  // of the lane is open to thread. Each hazard has its own speed + phase and
+  // the volumes are spaced so no two sweeps can physically touch -- the arms
+  // just drift past each other's rhythm over time.
+  // Waypoints of the course centreline (the painted dashes / flags follow it):
+  //   A (N-S south)  x=30   z 38→-84
+  //   B (E-W east)   z=-84  x 30→92
+  //   C (N-S north)  x=92   z -84→-8
+  //   D (E-W east)   z=-8   x 92→112
+  //   E (N-S north)  x=112  z -8→10
+  //   F (E-W east)   z=10   x 112→134  (finish)
+  const COURSE = [
+    { x: 30, z: 40 },   // P1 below the start banner — first pedal point
+    { x: 30, z: -84 },  // corridor A turn
+    { x: 92, z: -84 },  // bottom run turn
+    { x: 92, z: -8 },   // corridor B turn
+    { x: 112, z: -8 },  // short hop east
+    { x: 112, z: 10 },  // corridor C turn
+    { x: 134, z: 10 },  // final straight foot
+  ];
+
+  addConduitPipe({ cx: 30, cz: 16, len: 16, amp: 8, speed: 1.2, phase: 0, color: NEON.cyan });                            // A sweeper arm #1
+  addConduitPipe({ cx: 30, cz: -26, len: 12, amp: 16, speed: 1.1, phase: 0.4, color: NEON.red, axis: 'x', pattern: 'guillotine' }); // A guillotine #1
+  addConduitPipe({ cx: 30, cz: -52, len: 16, amp: 8, speed: 0.9, phase: 4.2, color: NEON.magenta });                      // A sweeper arm #2
+  addConduitPipe({ cx: 30, cz: -72, len: 16, amp: 8, speed: 1.5, phase: 2.1, color: NEON.lime });                         // A sweeper arm #3
+  addConduitPipe({ cx: 62, cz: -84, len: 14, amp: 6, speed: 1.1, phase: 1.0, color: NEON.amber, axis: 'x' });             // bottom run sweeper #4
+  addConduitCross({ cx: 92, cz: -72, len: 12, amp: 5, speed: 1.3, phase: 3.3, color: NEON.magenta, color2: NEON.cyan });  // corridor B conduit cross
+  addConduitPipe({ cx: 92, cz: -44, len: 14, amp: 8, speed: 1.4, phase: 5.0, color: NEON.amber });                        // B sweeper arm #5
+  addConduitPipe({ cx: 92, cz: -20, len: 14, amp: 6, speed: 1.0, phase: 1.8, color: NEON.cyan });                         // B sweeper arm #6
+  addConduitPipe({ cx: 112, cz: -2, len: 12, amp: 16, speed: 1.1, phase: 0.4, color: NEON.red, axis: 'x', pattern: 'guillotine' }); // C guillotine #2
+  addConduitPipe({ cx: 123, cz: 10, len: 14, amp: 5, speed: 1.2, phase: 3.0, color: NEON.magenta, axis: 'x' });           // final straight sweeper #7
+
+  // ---- Giant conveyor lane (idea #33) ----
+  // A long moving belt on the open floor: while the car is over it the belt
+  // drags it along the belt direction at CONVEYOR.speed (on top of the car's
+  // own motion), so you can fight it, ride it, or use it for parking tests.
+  // The chevron belt texture scrolls to sell the motion; the direction is
+  // purely +X here, but dirX/dirZ keep it swappable.
+  const CONVEYOR = { cx: 45, cz: -8, len: 48, wid: 9, dirX: 1, dirZ: 0, speed: 6 };
+  const beltRepeatX = CONVEYOR.len / 6;   // one chevron pair every 6 world units
+  const beltTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = '#15151b';
+    g.fillRect(0, 0, 64, 64);
+    g.strokeStyle = '#37e0ff';
+    g.lineWidth = 7;
+    g.lineJoin = 'round';
+    for (let i = -1; i < 3; i++) {
+      const px = i * 32;
+      g.beginPath();
+      g.moveTo(px, 6);
+      g.lineTo(px + 22, 32);
+      g.lineTo(px, 58);
+      g.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(beltRepeatX, 1);
+    return t;
+  })();
+  const beltMat = new THREE.MeshStandardMaterial({
+    map: beltTex, emissive: 0x0a2a3a, emissiveIntensity: 0.7, roughness: 0.7, metalness: 0.15,
+  });
+  const belt = new THREE.Mesh(new THREE.PlaneGeometry(CONVEYOR.len, CONVEYOR.wid), beltMat);
+  belt.rotation.x = -Math.PI / 2;
+  belt.position.set(CONVEYOR.cx, 0.24, CONVEYOR.cz);
+  belt.receiveShadow = true;
+  parent.add(belt);
+  const conFrameMat = new THREE.MeshStandardMaterial({ color: 0x2b2b34, roughness: 0.7, metalness: 0.5 });
+  const conFrame = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.3, CONVEYOR.wid + 1), conFrameMat);
+  conFrame.position.set(CONVEYOR.cx, 0.11, CONVEYOR.cz);
+  conFrame.receiveShadow = true;
+  parent.add(conFrame);
+  for (const s of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.5, 0.3), makeGlowMat(NEON.amber));
+    rail.position.set(CONVEYOR.cx, 0.45, CONVEYOR.cz + s * (CONVEYOR.wid / 2 + 0.35));
+    parent.add(rail);
+  }
+  // Motor housing at the belt's downstream end.
+  const conMotor = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 2.4, 12), conFrameMat);
+  conMotor.rotation.z = Math.PI / 2;
+  conMotor.position.set(CONVEYOR.cx + CONVEYOR.len / 2 + 0.8, 1.2, CONVEYOR.cz);
+  conMotor.castShadow = true;
+  parent.add(conMotor);
 
   // ---- Foam pit (task #15) ----
-  // A recessed, padded landing zone the later elevator/beams tasks play
-  // into. Visual only: a dark soft-looking floor patch ringed by raised
-  // padded rim walls. Rims carry colliders (their h also feeds
-  // buildingTopAt, so a falling car can land ON a rim); the interior stays
-  // clear so knocked cars drop through to the floor inside. A gap in the
-  // west rim lets drivers roll in and reverse back out.
-  const PIT = { cx: 44, cz: -33, halfW: 13, halfD: 7, rimT: 1.2, rimH: 1.6, gapW: 6 };
-  const pitSegLen = (PIT.halfD * 2 - PIT.gapW) / 2;   // west-rim segment length
+  // A recessed, padded landing zone built into the open western floor.
+  // Pure decoration: a dark soft-looking floor patch. (The rim walls that
+  // ringed the old elevator area — REMOVED 2026-09-18.)
+  const PIT = { cx: 30, cz: -42, halfW: 13, halfD: 7 };
   const pitPadMat = new THREE.MeshStandardMaterial({ color: 0x191228, roughness: 1 });
-  const pitRimMat = new THREE.MeshStandardMaterial({ color: 0x3c2b52, roughness: 1 });
   const pitPatch = new THREE.Mesh(new THREE.BoxGeometry(PIT.halfW * 2, 0.12, PIT.halfD * 2), pitPadMat);
   pitPatch.position.set(PIT.cx, 0.06, PIT.cz);
   pitPatch.receiveShadow = true;
   parent.add(pitPatch);
-  const pitRimY = PIT.rimH / 2;
-  for (const s of [-1, 1]) {
-    // North / south rims (full width so they cap the corners)
-    const nsRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.halfW * 2 + PIT.rimT * 2, PIT.rimH, PIT.rimT), pitRimMat);
-    nsRim.position.set(PIT.cx, pitRimY, PIT.cz + s * (PIT.halfD + PIT.rimT / 2));
-    nsRim.castShadow = true;
-    parent.add(nsRim);
-    // West rim, split around the drive-through gap centred on cz
-    const wRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.rimT, PIT.rimH, pitSegLen), pitRimMat);
-    wRim.position.set(PIT.cx - PIT.halfW - PIT.rimT / 2, pitRimY, PIT.cz + s * (PIT.gapW / 2 + pitSegLen / 2));
-    wRim.castShadow = true;
-    parent.add(wRim);
-  }
-  const pitEastRim = new THREE.Mesh(new THREE.BoxGeometry(PIT.rimT, PIT.rimH, PIT.halfD * 2), pitRimMat);
-  pitEastRim.position.set(PIT.cx + PIT.halfW + PIT.rimT / 2, pitRimY, PIT.cz);
-  pitEastRim.castShadow = true;
-  parent.add(pitEastRim);
-  const pitRimColliders = [
-    { x: PIT.cx, z: PIT.cz + PIT.halfD + PIT.rimT / 2, halfW: PIT.halfW + PIT.rimT / 2, halfD: PIT.rimT / 2, h: PIT.rimH },
-    { x: PIT.cx, z: PIT.cz - PIT.halfD - PIT.rimT / 2, halfW: PIT.halfW + PIT.rimT / 2, halfD: PIT.rimT / 2, h: PIT.rimH },
-    { x: PIT.cx + PIT.halfW + PIT.rimT / 2, z: PIT.cz, halfW: PIT.rimT / 2, halfD: PIT.halfD, h: PIT.rimH },
-    { x: PIT.cx - PIT.halfW - PIT.rimT / 2, z: PIT.cz - PIT.gapW / 2 - pitSegLen / 2, halfW: PIT.rimT / 2, halfD: pitSegLen / 2, h: PIT.rimH },
-    { x: PIT.cx - PIT.halfW - PIT.rimT / 2, z: PIT.cz + PIT.gapW / 2 + pitSegLen / 2, halfW: PIT.rimT / 2, halfD: pitSegLen / 2, h: PIT.rimH },
-  ];
-
-  // ---- Industrial car elevator (tasks #16–#18) ----
-  // A flat metal deck with a glowing hazard-stripe skirt, looping smoothly
-  // up and down over the pit. Its collider entry is marked `soft`: skipped
-  // by isPositionBlocked (so you can drive under/onto the deck) but read by
-  // buildingTopAt, whose `h` we rewrite every frame (task #18) so landings
-  // and the main.js ground-ride logic always see the live deck height.
-  const ELEV = { cx: 44, cz: -31, halfW: 5, halfD: 3.5, low: 0.55, high: 31, speed: 0.5 };
-  const ELEV_MID = (ELEV.low + ELEV.high) / 2;
-  const ELEV_AMP = (ELEV.high - ELEV.low) / 2;
-  const elevMat = new THREE.MeshStandardMaterial({ color: 0x8a8f98, metalness: 0.6, roughness: 0.4 });
-  const elevGroup = new THREE.Group();
-  elevGroup.position.set(ELEV.cx, ELEV.low - 0.25, ELEV.cz);
-  parent.add(elevGroup);
-  const elevDeck = new THREE.Mesh(new THREE.BoxGeometry(ELEV.halfW * 2, 0.5, ELEV.halfD * 2), elevMat);
-  elevDeck.castShadow = true;
-  elevDeck.receiveShadow = true;
-  elevGroup.add(elevDeck);
-  // Hazard-stripe edge: a thin amber-glow box ringing the deck just below
-  // its top surface, so the lift reads industrial from every side.
-  const elevStripe = new THREE.Mesh(
-    new THREE.BoxGeometry(ELEV.halfW * 2 + 0.24, 0.18, ELEV.halfD * 2 + 0.24),
-    makeGlowMat(NEON.amber)
-  );
-  elevStripe.position.y = -0.16;
-  elevGroup.add(elevStripe);
-  const elevatorCollider = { x: ELEV.cx, z: ELEV.cz, halfW: ELEV.halfW, halfD: ELEV.halfD, h: ELEV.low, soft: true };
-  const elevatorColliders = [elevatorCollider];
-
-  // ---- The y=9 "roof over the elevator hub" is GONE ----
-  // The ledges, balance beams and sweeper arms that used to ring the elevator
-  // at its old top height (y=9) were removed so the elevator can rise all the
-  // way to the cavern ceiling — the real "second roof". The sweepers array
-  // stays empty so the ?debug hook (ugSweepers) keeps returning [].
-  const sweepers = [];
 
   // ---- Big staircase up to the second roof (the cavern ceiling) ----
   // A proper stepped staircase (no moving parts, no smooth ramp) standing
@@ -1076,7 +1303,8 @@ export function addUnderground(parent, opts = {}) {
   // staircase. They climb EAST — the top step's east face sits at topX=12
   // (the ceiling's west edge), so you drive up the steps and roll straight
   // onto the ceiling top (y=31). Colliders are `soft` — they feed
-  // ugElevatorTopAt (stand/climb on them) but never wall off driving.
+  // main.js's soft-surface helper (ugElevatorTopAt) so the car can stand/climb
+  // on them, but never wall off driving.
   const stripeColors = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime];
   for (let k = 0; k < STAIRS.steps; k++) {
     const h = (k + 1) * STAIRS.stepH;
@@ -1317,6 +1545,44 @@ export function addUnderground(parent, opts = {}) {
     g.mesh.visible = true;
   }
 
+  // ---- Conveyor candy (idea #33 follow-up) ----
+  // The giant conveyor lane carries its own load of glowing gems — the same
+  // candy as the waterfall, but hitching a ride on the belt. They spawn at the
+  // belt's upstream end, drift downstream with the scrolling belt (a gentle
+  // bob so they read as cargo), and vanish over the end. Drive into one and
+  // it scatters off the belt with the same knock as the waterfall gems.
+  const beltGems = [];
+  for (let i = 0; i < 18; i++) {
+    const geo = gemGeos[(Math.random() * gemGeos.length) | 0];
+    const color = GEM_COLORS[(Math.random() * GEM_COLORS.length) | 0];
+    const mesh = new THREE.Mesh(geo, makeGlowMat(color));
+    mesh.scale.setScalar(0.4 + Math.random() * 0.55);
+    mesh.visible = false;
+    parent.add(mesh);
+    beltGems.push({
+      mesh, active: false, x: 0, y: 0, z: 0,
+      vx: 0, vy: 0, vz: 0, spin: 0, knocked: false, bob: Math.random() * Math.PI * 2,
+    });
+  }
+  let beltGemTimer = 0;
+  function recycleBeltGem(b) {
+    b.active = false;
+    b.mesh.visible = false;
+  }
+  function spawnBeltGem() {
+    const b = beltGems.find((bb) => !bb.active);
+    if (!b) return;
+    b.active = true;
+    b.knocked = false;
+    b.x = CONVEYOR.cx - CONVEYOR.len / 2 + 1;
+    b.z = CONVEYOR.cz + (Math.random() - 0.5) * (CONVEYOR.wid - 2);
+    b.y = 0.8;
+    b.vy = 0; b.vx = 0; b.vz = 0;
+    b.spin = (Math.random() - 0.5) * 6;
+    b.mesh.scale.setScalar(0.4 + Math.random() * 0.55);
+    b.mesh.visible = true;
+  }
+
   // ---- Padded vertical pole (tasks #31–#34) ----
   // Tall cushioned column standing on the open floor as a standalone landmark
   // (the launch ramp that used to feed it was removed). A solid small collider
@@ -1324,7 +1590,7 @@ export function addUnderground(parent, opts = {}) {
   // catches flights: slam it above POLE_BIG_SPEED and you get the reward
   // sequence (light burst here + boom/bounce via onPoleHit); below that it
   // just soft-bounces you off (main.js damps the knock).
-  const POLE = { x: 95, z: -64, r: 1.6, h: 16, trigR: 5.5, bigSpeed: 8 };
+  const POLE = { x: 92, z: -66, r: 1.6, h: 16, trigR: 5.5, bigSpeed: 8 };
   const poleBodyMat = new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.9 });
   const poleBody = new THREE.Mesh(
     new THREE.CylinderGeometry(POLE.r, POLE.r + 0.35, POLE.h, 14),
@@ -1333,10 +1599,6 @@ export function addUnderground(parent, opts = {}) {
   poleBody.position.set(POLE.x, POLE.h / 2, POLE.z);
   poleBody.castShadow = true;
   parent.add(poleBody);
-  const plinth = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1, 4.4), pillarMat);
-  plinth.position.set(POLE.x, 0.5, POLE.z);
-  plinth.castShadow = true;
-  parent.add(plinth);
   // Cushion rings up the column — reads as padding, glows in the dark.
   [3.5, 7, 10.5, 14].forEach((ry, i) => {
     const ring = new THREE.Mesh(
@@ -1377,6 +1639,179 @@ export function addUnderground(parent, opts = {}) {
       return m;
     };
     fxBursts.push({ age: 0, life: 1.0, lights, rings: [mkRing(-Math.PI / 2, 0), mkRing(0, Math.PI / 2)] });
+  }
+
+  // ---- Giant rotating disco ball (idea #14) ----
+  // A big faceted mirror sphere hung from the ceiling just off the padded pole.
+  // It spins and carries a ring of colored point lights, throwing moving neon
+  // pools across the cavern floor and walls. Bonus: fly into it and the
+  // pendulum swings, then settles with a damped wobble.
+  const DISCO = { x: 124, z: -40, topY: CEIL_Y, len: 12, r: 4, spin: 1.4, hitR: 6.5 };
+  const disco = { ax: 0, vx: 0, az: 0, vz: 0, spin: 0, hits: 0, cd: 0 };
+  const discoPivot = new THREE.Group();
+  discoPivot.position.set(DISCO.x, DISCO.topY, DISCO.z);
+  parent.add(discoPivot);
+  // Hanger cable running up to the ceiling.
+  const discoCable = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, DISCO.len, 8),
+    new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.7, metalness: 0.4 })
+  );
+  discoCable.position.set(0, -DISCO.len / 2, 0);
+  discoPivot.add(discoCable);
+  const discoBall = new THREE.Group();
+  discoBall.position.set(0, -DISCO.len, 0);
+  discoPivot.add(discoBall);
+  const discoSpin = new THREE.Group();
+  discoBall.add(discoSpin);
+  const discoCore = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(DISCO.r, 2),
+    new THREE.MeshStandardMaterial({ color: 0xdff2ff, metalness: 1, roughness: 0.12, flatShading: true, emissive: 0x22333f, emissiveIntensity: 0.35 })
+  );
+  discoCore.castShadow = true;
+  discoSpin.add(discoCore);
+  // Scatter tiny mirrored facets over the sphere for the classic sparkle.
+  {
+    const facetGeo = new THREE.PlaneGeometry(0.42, 0.42);
+    const facetN = 150;
+    const facets = new THREE.InstancedMesh(
+      facetGeo,
+      new THREE.MeshStandardMaterial({ color: 0xeaf6ff, metalness: 1, roughness: 0.05, side: THREE.DoubleSide, emissive: 0xffffff, emissiveIntensity: 0.25 }),
+      facetN
+    );
+    const dummy = new THREE.Object3D();
+    const zAxis = new THREE.Vector3(0, 0, 1);
+    for (let i = 0; i < facetN; i++) {
+      // Fibonacci sphere for even coverage.
+      const t = (i + 0.5) / facetN;
+      const y = 1 - 2 * t;
+      const rad = Math.sqrt(Math.max(0, 1 - y * y));
+      const phi = i * 2.399963229728653;
+      const dir = new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad);
+      dummy.position.copy(dir).multiplyScalar(DISCO.r + 0.02);
+      dummy.quaternion.setFromUnitVectors(zAxis, dir);
+      dummy.updateMatrix();
+      facets.setMatrixAt(i, dummy.matrix);
+    }
+    facets.instanceMatrix.needsUpdate = true;
+    discoSpin.add(facets);
+  }
+  // Ring of colored lights orbiting with the ball — the moving neon dots.
+  [NEON.magenta, NEON.cyan, NEON.amber, NEON.lime].forEach((c, i) => {
+    const L = new THREE.PointLight(c, 6.5, 46, 2);
+    const a = (i / 4) * Math.PI * 2;
+    L.position.set(Math.cos(a) * (DISCO.r + 0.6), 0, Math.sin(a) * (DISCO.r + 0.6));
+    discoSpin.add(L);
+  });
+
+  // ---- Rotating platter (the spinning turntable) ----
+  // A big bright neon turntable standing on the OPEN CAVERN FLOOR west of the
+  // checkerboard ceiling (no roof overhead). While the car sits (or drives)
+  // on its disk the level rotates its XZ position around the hub every frame
+  // — the car is genuinely carried in a circle, fighting the spin with its
+  // own steering. main.js also rotates the car's HEADING with the disk, so
+  // it reads like the car is actually sitting on the turntable, not skating
+  // on it. An unsteered car slowly creeps outward toward the rim; the moment
+  // it crosses the edge the grip ends and the car is thrown off along the
+  // tangent (onPlatterEject), so the ride always finishes with a real fling
+  // instead of just stopping dead.
+  const PLATTER = { cx: 124, cz: -40, r: 18, h: 0.32, spin: 2.0, slip: 1.8 };
+  const platterSpin = { t: 0, disk: null };
+  {
+    const S = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = S;
+    const ctx = canvas.getContext('2d');
+    // Wedge pattern (like a sliced vinyl record) so the spin reads clearly —
+    // near-full-opacity neon wedges on a light base so the turntable pops.
+    const slots = 8;
+    const cols = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime];
+    for (let i = 0; i < slots; i++) {
+      const c = new THREE.Color(cols[i % cols.length]);
+      ctx.beginPath();
+      ctx.moveTo(S / 2, S / 2);
+      ctx.arc(S / 2, S / 2, S / 2, (i / slots) * Math.PI * 2, ((i + 1) / slots) * Math.PI * 2);
+      ctx.closePath();
+      ctx.fillStyle = `rgba(${(c.r * 255) | 0},${(c.g * 255) | 0},${(c.b * 255) | 0},0.92)`;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#0d0a16';
+    ctx.beginPath();
+    ctx.arc(S / 2, S / 2, S * 0.07, 0, Math.PI * 2);
+    ctx.fill();
+    const platTex = new THREE.CanvasTexture(canvas);
+    platTex.colorSpace = THREE.SRGBColorSpace;
+    const platMat = new THREE.MeshStandardMaterial({
+      map: platTex, color: 0xffffff, roughness: 0.45, metalness: 0.25,
+      emissive: 0x0c0922, emissiveIntensity: 0.55,
+    });
+    const disk = new THREE.Mesh(new THREE.CylinderGeometry(PLATTER.r, PLATTER.r + 0.4, PLATTER.h, 48), platMat);
+    disk.position.set(PLATTER.cx, PLATTER.h / 2, PLATTER.cz);
+    disk.receiveShadow = true;
+    parent.add(disk);
+    platterSpin.disk = disk;
+    // Glowing trim ring around the rim so the rotation is visible from across
+    // the cavern, plus a hub cap on the axis and a brighter tinted light.
+    const rimRing = new THREE.Mesh(
+      new THREE.TorusGeometry(PLATTER.r + 0.12, 0.16, 10, 48),
+      makeGlowMat(NEON.amber)
+    );
+    rimRing.rotation.x = Math.PI / 2;
+    rimRing.position.set(PLATTER.cx, 0.34, PLATTER.cz);
+    parent.add(rimRing);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 0.5, 20), makeGlowMat(NEON.cyan));
+    hub.position.set(PLATTER.cx, 0.62, PLATTER.cz);
+    parent.add(hub);
+    const platGlow = new THREE.PointLight(NEON.cyan, 9, 60, 2);
+    platGlow.position.set(PLATTER.cx, 1.4, PLATTER.cz);
+    parent.add(platGlow);
+  }
+  let platterGripped = false;
+
+  // ---- Trampoline launch pads (idea #13) ----
+  // Glowing bounce patches set into the cavern floor. Drive over one on the
+  // ground and it punts the car straight up (main.js gives it a vy of 35 —
+  // enough to clear the 31.3-high second roof) so it sails up through the
+  // ceiling and lands on the colorful tiles: a floor→roof route that skips
+  // the staircase and the grand ramp. A translucent light column marks the
+  // launch line all the way up to the roof.
+  const TRAMPOLINES = [
+    { x: 104, z: 8, r: 3.4 },
+    { x: 18, z: -86, r: 3.4 },
+  ];
+  const trampolines = [];
+  const trampPadMat = new THREE.MeshStandardMaterial({ color: 0x203a2f, roughness: 0.6, metalness: 0.2 });
+  for (const T of TRAMPOLINES) {
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(T.r, T.r + 0.3, 0.5, 28), trampPadMat);
+    base.position.set(T.x, 0.25, T.z);
+    base.castShadow = true;
+    parent.add(base);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(T.r - 0.15, 0.16, 10, 32), makeGlowMat(NEON.lime));
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(T.x, 0.55, T.z);
+    parent.add(ring);
+    // Woven bed: crossing glow bars so the disc reads as a sprung trampoline.
+    for (let i = 0; i < 4; i++) {
+      const bar = new THREE.Mesh(
+        new THREE.BoxGeometry(T.r * 1.7, 0.08, 0.24),
+        makeGlowMat(i % 2 ? NEON.cyan : NEON.lime)
+      );
+      bar.position.set(T.x, 0.52, T.z);
+      bar.rotation.y = (i / 4) * Math.PI;
+      parent.add(bar);
+    }
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(T.r * 0.55, T.r * 0.75, CEIL_Y, 18, 1, true),
+      new THREE.MeshBasicMaterial({ color: NEON.lime, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false })
+    );
+    beam.position.set(T.x, CEIL_Y / 2, T.z);
+    parent.add(beam);
+    const glow = new THREE.PointLight(NEON.lime, 3, 30, 2);
+    glow.position.set(T.x, 1.5, T.z);
+    parent.add(glow);
+    trampolines.push({ x: T.x, z: T.z, r: T.r, base, ring, beam, glow, cd: 0, squash: 0 });
   }
 
   // Task #35 helper: is the car ghosting at floor level inside the solid
@@ -1728,25 +2163,186 @@ export function addUnderground(parent, opts = {}) {
     return { group, ringGroup };
   }
 
+  // ---- Cubist figure: a humanoid smashed into offset, tilted slabs. ----
+  // Angular de Stijl / cubist sculpture — a body assembled from blocks that
+  // don't quite line up (torso slabs sheared off-axis, a turned cube head with
+  // a jutting nose, bar arms flung out at odd angles), threaded with neon
+  // rings. Reads as "a person" from a distance and "broken geometry" up close.
+  function createCubistFigure(ringColor) {
+    const group = new THREE.Group();
+    const matA = new THREE.MeshStandardMaterial({ color: 0xc9a24a, roughness: 0.45, metalness: 0.5, emissive: 0x3a2a08, emissiveIntensity: 0.25 });
+    const matB = new THREE.MeshStandardMaterial({ color: 0x2a2333, roughness: 0.7, metalness: 0.3, emissive: 0x140f1c, emissiveIntensity: 0.2 });
+    const matC = new THREE.MeshStandardMaterial({ color: 0x6a4a8a, roughness: 0.5, metalness: 0.4, emissive: 0x241038, emissiveIntensity: 0.3 });
+
+    const base = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.4, 2.2), matB);
+    base.position.y = 0.2; base.castShadow = true; base.receiveShadow = true; group.add(base);
+
+    for (const sx of [-1, 1]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.6, 0.5), matB);
+      leg.position.set(sx * 0.5, 1.5, 0); leg.rotation.z = sx * 0.18; leg.castShadow = true; group.add(leg);
+    }
+    const torsoDefs = [
+      { w: 1.5, h: 1.1, d: 1.0, y: 3.1, rz: 0.10, m: matC },
+      { w: 1.2, h: 1.0, d: 0.9, y: 4.1, rz: -0.16, m: matA },
+      { w: 0.95, h: 0.9, d: 0.8, y: 5.0, rz: 0.22, m: matB },
+    ];
+    for (const t of torsoDefs) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(t.w, t.h, t.d), t.m);
+      b.position.set(Math.sin(t.rz) * 0.25, t.y, 0); b.rotation.z = t.rz; b.castShadow = true; group.add(b);
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.9, 0.8), matA);
+    head.position.y = 5.9; head.rotation.y = Math.PI / 4; head.castShadow = true; group.add(head);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.18), matB);
+    nose.position.set(0.42, 5.9, 0.1); nose.rotation.z = -Math.PI / 3; group.add(nose);
+
+    const armDefs = [
+      { s: 1, rz: 1.0, y: 4.4, len: 3.2 },
+      { s: -1, rz: -1.35, y: 4.2, len: 2.8 },
+    ];
+    for (const a of armDefs) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.35, a.len, 0.35), matC);
+      arm.position.set(a.s * (0.8 + Math.sin(Math.abs(a.rz)) * a.len * 0.5), a.y, 0);
+      arm.rotation.z = a.s * a.rz; arm.castShadow = true; group.add(arm);
+    }
+
+    const ringGroup = new THREE.Group();
+    group.add(ringGroup);
+    const cols = [ringColor || NEON.lime, NEON.cyan, NEON.magenta];
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.0 + i * 0.12, 0.07, 8, 26), makeGlowMat(cols[i % cols.length]));
+      ring.position.y = 3.3 + i * 1.0; ring.rotation.x = Math.PI / 2; ringGroup.add(ring);
+    }
+    return { group, ringGroup };
+  }
+
+  // ---- Broken column: a fluted shaft severed partway up, crown in shards. ----
+  function createBrokenColumn(ringColor) {
+    const group = new THREE.Group();
+    const stone = new THREE.MeshStandardMaterial({ color: 0xb9b2a4, roughness: 0.9, metalness: 0.05, emissive: 0x1a1814, emissiveIntensity: 0.15 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.95, metalness: 0.05 });
+
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 2.0), dark);
+    plinth.position.y = 0.25; plinth.castShadow = true; plinth.receiveShadow = true; group.add(plinth);
+    const plinth2 = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.35, 1.6), dark);
+    plinth2.position.y = 0.67; plinth2.castShadow = true; group.add(plinth2);
+
+    const segs = [
+      { r: 0.62, h: 2.4, y: 2.1, ry: 0.0 },
+      { r: 0.58, h: 2.2, y: 4.4, ry: 0.5 },
+      { r: 0.52, h: 2.0, y: 6.5, ry: 1.0 },
+    ];
+    for (const s of segs) {
+      const c = new THREE.Mesh(new THREE.CylinderGeometry(s.r, s.r * 1.04, s.h, 10), stone);
+      c.position.y = s.y; c.rotation.y = s.ry; c.castShadow = true; c.receiveShadow = true; group.add(c);
+    }
+    const shards = [
+      { w: 0.9, h: 1.1, x: 0.0, z: 0.0, rx: -0.3, rz: 0.2 },
+      { w: 0.6, h: 0.9, x: 0.35, z: 0.2, rx: 0.4, rz: -0.5 },
+      { w: 0.5, h: 0.7, x: -0.3, z: -0.15, rx: -0.5, rz: 0.7 },
+    ];
+    for (const s of shards) {
+      const sh = new THREE.Mesh(new THREE.BoxGeometry(s.w, s.h, s.w), stone);
+      sh.position.set(s.x, 7.7, s.z); sh.rotation.set(s.rx, 0, s.rz); sh.castShadow = true; group.add(sh);
+    }
+    const fallen = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2.4, 10), stone);
+    fallen.position.set(1.15, 1.0, 0.5); fallen.rotation.z = 0.7; fallen.rotation.x = 0.3; fallen.castShadow = true; group.add(fallen);
+
+    const ringGroup = new THREE.Group(); group.add(ringGroup);
+    const cols = [ringColor || NEON.cyan, NEON.amber, NEON.magenta, NEON.lime];
+    for (let i = 0; i < 4; i++) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.78 + i * 0.06, 0.06, 8, 26), makeGlowMat(cols[i % cols.length]));
+      ring.position.y = 1.6 + i * 1.6; ring.rotation.x = Math.PI / 2; ringGroup.add(ring);
+    }
+    return { group, ringGroup };
+  }
+
+  // ---- Giant hand: a colossal up-reaching hand on a cuff stump. ----
+  function createGiantHand(ringColor) {
+    const group = new THREE.Group();
+    const skin = new THREE.MeshStandardMaterial({ color: 0xcaa27a, roughness: 0.55, metalness: 0.2, emissive: 0x2a1a0e, emissiveIntensity: 0.2 });
+    const nail = new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.4, metalness: 0.1 });
+    const cuff = new THREE.MeshStandardMaterial({ color: 0x2a2333, roughness: 0.7, metalness: 0.4, emissive: 0x140f1c, emissiveIntensity: 0.2 });
+
+    const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.15, 2.4, 12), cuff);
+    wrist.position.y = 1.2; wrist.castShadow = true; wrist.receiveShadow = true; group.add(wrist);
+
+    const palm = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.6, 1.4), skin);
+    palm.position.y = 3.7; palm.castShadow = true; group.add(palm);
+    const knuckles = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.8, 1.5), skin);
+    knuckles.position.y = 5.0; knuckles.castShadow = true; group.add(knuckles);
+
+    const fingers = [
+      { x: -1.15, lean: -0.18, h1: 2.4, h2: 1.7 },
+      { x: -0.4, lean: -0.06, h1: 2.9, h2: 2.1 },
+      { x: 0.4, lean: 0.06, h1: 2.7, h2: 1.9 },
+      { x: 1.15, lean: 0.18, h1: 2.1, h2: 1.5 },
+    ];
+    for (const f of fingers) {
+      const prox = new THREE.Mesh(new THREE.BoxGeometry(0.62, f.h1, 0.62), skin);
+      prox.position.set(f.x, 5.5 + f.h1 / 2, 0); prox.rotation.z = f.lean; prox.castShadow = true; group.add(prox);
+      const dist = new THREE.Mesh(new THREE.BoxGeometry(0.5, f.h2, 0.5), skin);
+      dist.position.set(f.x + Math.sin(f.lean) * (f.h1 + 0.3), 5.5 + f.h1 + f.h2 / 2, 0);
+      dist.rotation.z = f.lean * 1.6; dist.castShadow = true; group.add(dist);
+      const n = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.55), nail);
+      n.position.set(f.x + Math.sin(f.lean * 1.6) * (f.h1 + f.h2 + 0.2), 5.5 + f.h1 + f.h2 + 0.15, 0);
+      n.rotation.z = f.lean * 1.6; group.add(n);
+    }
+    const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.4, 0.7), skin);
+    thumb.position.set(-1.7, 4.2, 0.4); thumb.rotation.z = 0.95; thumb.castShadow = true; group.add(thumb);
+
+    const ringGroup = new THREE.Group(); group.add(ringGroup);
+    const cols = [ringColor || NEON.amber, NEON.cyan, NEON.magenta, NEON.lime];
+    const ringDefs = [ { r: 1.25, y: 1.4 }, { r: 1.75, y: 3.7 }, { r: 1.55, y: 6.6 }, { r: 1.05, y: 9.0 } ];
+    for (let i = 0; i < ringDefs.length; i++) {
+      const rd = ringDefs[i];
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(rd.r, 0.07, 8, 28), makeGlowMat(cols[i % cols.length]));
+      ring.position.y = rd.y; ring.rotation.x = Math.PI / 2; ringGroup.add(ring);
+    }
+    return { group, ringGroup };
+  }
+
+  // Type -> mesh builder + footprint half-size (drives the bump collider AND
+  // the radius the car must get within to knock it over, idea #31).
+  const STATUE_HALF = { artdeco: 1.5, vorticist: 1.5, cubist: 1.3, column: 1.3, hand: 2.4 };
+  function buildStatue(type, ringColor) {
+    if (type === 'vorticist') return createVorticistTreeStatue(ringColor);
+    if (type === 'cubist') return createCubistFigure(ringColor);
+    if (type === 'column') return createBrokenColumn(ringColor);
+    if (type === 'hand') return createGiantHand(ringColor);
+    return createArtDecoStatue(ringColor);
+  }
+
+  // Tip a statue over in the given compass direction and drop its solid
+  // collider (shared by the tile-crumble path and the new car-tag path).
+  function startStatueFall(s, angle) {
+    s.state = 'falling';
+    s.fallT = 0;
+    s.tipAngle = angle;
+    s.tipAxis.set(Math.sin(angle), 0, -Math.cos(angle));
+    const ci = colliders.indexOf(s.collider);
+    if (ci >= 0) colliders.splice(ci, 1);
+  }
+
   // Place a statue on a specific checkerboard tile (by grid index) so the
   // level can watch exactly which tile supports it. Returns the live statue
   // record (state machine + collider) for update().
-  function placeStatue(tileIx, tileIz, ringColor, isVorticist = false) {
+  function placeStatue(tileIx, tileIz, ringColor, type = 'artdeco') {
     const idx = tileIz * tilesX + tileIx;
     const x = ceilMinX + tileIx * TILE_SZ + TILE_SZ / 2;
     const z = gridZ0 + tileIz * TILE_SZ + TILE_SZ / 2;
-    const { group, ringGroup } = isVorticist ? createVorticistTreeStatue(ringColor) : createArtDecoStatue(ringColor);
+    const { group, ringGroup } = buildStatue(type, ringColor);
+    const half = STATUE_HALF[type] || 1.5;
     group.position.set(x, TILE_TOP, z);
     parent.add(group);
     // Solid collider so the car bumps into the standing statue; removed the
     // moment the statue starts falling. `noRoof` keeps buildingTopAt from
     // reporting the statue's top as a drivable surface (the car should bump
     // into it, not stand on its head).
-    const collider = { x, z, halfW: 1.5, halfD: 1.5, h: TILE_TOP + 9, noRoof: true };
+    const collider = { x, z, halfW: half, halfD: half, h: TILE_TOP + 9, noRoof: true };
     statueColliders.push(collider);
     const tipAngle = Math.random() * Math.PI * 2;   // random topple direction
     const statue = {
-      group, ringGroup, idx, x, z, collider,
+      group, ringGroup, idx, x, z, collider, type, half,
       state: 'standing',   // 'standing' | 'falling' | 'landed'
       fallT: 0,
       tipAngle,
@@ -1758,12 +2354,194 @@ export function addUnderground(parent, opts = {}) {
     return statue;
   }
 
-  // Statues spread across the ceiling, each on its own tile
-  placeStatue(11, 25, NEON.cyan);      // (58, 6)   — centre-west (Art Deco)
-  placeStatue(26, 14, NEON.magenta);   // (118, -38) — east-south (Art Deco)
-  placeStatue(5, 5, NEON.amber);       // (34, -74)  — south-west (Art Deco)
-  placeStatue(18, 20, NEON.lime, true);   // center-east Vorticist tree statue
-  placeStatue(14, 10, NEON.cyan, true);   // south-central Vorticist tree statue
+  // Paint a readable word banner on a canvas (no image assets): a dark cloth
+  // with a neon checkerboard border and big bold text. Used for the START and
+  // FINISH gates.
+  function makeBannerTexture(text, accent) {
+    const W = 1024, H = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    const c1 = new THREE.Color(accent);
+    ctx.fillStyle = '#14101c';
+    ctx.fillRect(0, 0, W, H);
+    // Checkerboard border: one cell thick around the whole cloth.
+    const rows = 4, cols = 16, cellW = W / cols, cellH = H / rows;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (r >= 1 && r < rows - 1 && c >= 1 && c < cols - 1) continue;
+        ctx.fillStyle = (r + c) % 2 === 0
+          ? `rgb(${(c1.r * 255) | 0},${(c1.g * 255) | 0},${(c1.b * 255) | 0})`
+          : 'rgb(238,238,238)';
+        ctx.fillRect(c * cellW, r * cellH, cellW, cellH);
+      }
+    }
+    // Dim inner panel so the text pops.
+    ctx.fillStyle = 'rgba(10,8,16,0.6)';
+    ctx.fillRect(cellW, cellH, W - cellW * 2, H - cellH * 2);
+    ctx.font = 'bold 96px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = `rgb(${(c1.r * 255) | 0},${(c1.g * 255) | 0},${(c1.b * 255) | 0})`;
+    ctx.shadowBlur = 30;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, W / 2, H / 2 + 4);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
+  }
+
+  // A waving route flag: slim dark pole with a small glowing triangular
+  // pennant at the top. The pennant's long axis points +Z by default; rotate
+  // the returned group's Y to aim it along the road. Each pennant is enrolled
+  // in `routePennantWaves` so update() can flutter it.
+  const routePennantWaves = [];   // pennants to wiggle every frame (course flags)
+  const flagPoleMat = new THREE.MeshStandardMaterial({ color: 0x232030, roughness: 0.7, metalness: 0.5 });
+  function makeRouteFlag(pennantColor, poleH = 4.4, pennantLen = 2.2) {
+    const group = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.16, poleH, 0.16), flagPoleMat);
+    pole.position.y = poleH / 2;
+    pole.castShadow = true;
+    group.add(pole);
+    const pennant = new THREE.Mesh(new THREE.ConeGeometry(0.8, pennantLen, 3), makeGlowMat(pennantColor));
+    pennant.rotation.x = -Math.PI / 2;   // cone axis lands on +Z — points "forward"
+    pennant.rotation.y = 0;              // wiggle pivot (animated per frame)
+    pennant.position.set(0, poleH + pennantLen * 0.32, 0);
+    group.add(pennant);
+    const rec = { pennant, phase: Math.random() * Math.PI * 2 };
+    routePennantWaves.push(rec);
+    return { group, pennant };
+  }
+
+  // A banner gate (START / FINISH): two tall poles with a hanging word banner
+  // between them and a waving pennant atop each pole. Cosmetic — the car
+  // passes right through (no colliders).
+  const bannerMats = new Map();
+  const bannerMatFor = (tex) => {
+    let m = bannerMats.get(tex);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: 0.7, emissive: 0xffffff, emissiveIntensity: 0.55 });
+      bannerMats.set(tex, m);
+    }
+    return m;
+  };
+  const POLE_H = 5.6;
+  function makeBannerGate(xA, zA, xB, zB, text, accent, baseY = TILE_TOP) {
+    const group = new THREE.Group();
+    for (const [px, pz] of [[xA, zA], [xB, zB]]) {
+      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.24, POLE_H, 0.24), pillarMat); 
+      pole.position.set(px, baseY + POLE_H / 2, pz);
+      pole.castShadow = true;
+      group.add(pole);
+      const top = makeRouteFlag(accent, 0.9, 1.3);
+      top.group.position.set(px, baseY + POLE_H, pz);
+      top.group.rotation.y = text === 'START' ? Math.PI : Math.PI / 2;
+      group.add(top.group);
+    }
+    const tex = makeBannerTexture(text, accent);
+    const mat = bannerMatFor(tex);
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(xB - xA) + 1.2, 2.4, 0.16), mat);
+    banner.position.set((xA + xB) / 2, baseY + 3.6, (zA + zB) / 2);
+    banner.castShadow = true;
+    group.add(banner);
+    return { group, mat };
+  }
+  // A flat glowing "painted line" lying on the tiles — the gate stripe you
+  // drive through. Never a collider; purely the dashed road marking.
+  function addTileBar(x, z, len, orient, color, baseY = TILE_TOP) {
+    const bar = new THREE.Mesh(
+      orient === 'x'
+        ? new THREE.BoxGeometry(len, 0.12, 0.5)
+        : new THREE.BoxGeometry(0.5, 0.12, len),
+      makeGlowMat(color)
+    );
+    bar.position.set(x, baseY + 0.06, z);
+    parent.add(bar);
+    return bar;
+  }
+  // ---- Statues scattered over the checkerboard ceiling ----
+  // The statues the obstacle course had gathered into gates are back, spread
+  // out sporadically over the roof again: Art Deco obelisks, Vorticist trees,
+  // Cubist figures, broken columns and one giant hand — each standing on its
+  // own checkerboard tile, clear of the jump line and the ramps so the car can
+  // wander between them. Drive over a tile and it advances toward red and
+  // crumbles into a hole; the statue on top loses its footing and topples over
+  // and down to the cavern floor.
+  // Placement by encounter order: the candy waterfall (grand ramp at
+  // x∈[18,30]) spills the car onto the roof's north edge (z≈48), so the simple
+  // broken columns greet you right there as the first statues you see, while
+  // the giant hand and the Vorticist trees keep to the center and the back of
+  // the roof.
+  const COURSE_START = { x: 24, z: 40 };       // START banner centre
+  const COURSE_FINISH_X = 134;                 // crossing this plane (heading +X) finishes
+  const COURSE_FINISH_Z = 10;                  // finish gate centre z
+  const COURSE_FINISH_HALF = 5.5;              // z half-span of the finish gate
+  placeStatue(0, 35, NEON.cyan, 'column');        // (14, 46)   first column, west of the waterfall mouth
+  placeStatue(9, 35, NEON.magenta, 'column');     // (50, 46)   second column, east of it
+  placeStatue(13, 32, NEON.amber, 'artdeco');     // (66, 34)   north obelisk
+  placeStatue(18, 29, NEON.lime, 'cubist');       // (86, 22)   cubist figure
+  placeStatue(24, 26, NEON.cyan, 'artdeco');      // (110, 10)  east obelisk
+  placeStatue(7, 18, NEON.magenta, 'hand');       // (42, -22)  giant hand, center
+  placeStatue(15, 16, NEON.lime, 'vorticist');    // (74, -30)  Vorticist tree
+  placeStatue(21, 12, NEON.cyan, 'vorticist');    // (98, -46)  Vorticist tree
+  placeStatue(27, 8, NEON.amber, 'vorticist');    // (122, -62) Vorticist tree (back)
+  placeStatue(10, 5, NEON.amber, 'artdeco');      // (54, -74)  obelisk (back)
+  placeStatue(18, 2, NEON.lime, 'cubist');        // (86, -86)  cubist figure (back)
+  placeStatue(29, 24, NEON.magenta, 'artdeco');   // (130, 2)   south-east obelisk
+
+  // START gate on the ground floor south of the grand ramp: banner + poles.
+  const startGate = makeBannerGate(18, 40, 30, 40, 'START', NEON.lime, 0);
+  parent.add(startGate.group);
+  // Painted start line straight across the ramp mouth.
+  addTileBar(24, 41.6, 10.4, 'x', NEON.lime, 0);
+
+  // FINISH gate on the ground floor in the east wing: banner + poles spanning
+  // the corridor.
+  const finishGate = makeBannerGate(134, 6, 134, 14, 'FINISH', NEON.amber, 0);
+  parent.add(finishGate.group);
+  addTileBar(132.6, 10, 8.2, 'z', NEON.amber, 0);
+
+  // ---- Serpentine course guides ----
+  // FOLLOW THE DASHES: a glowing painted centreline runs along each straight
+  // of the course; route flags stand at every bend and every ~13 units along
+  // the road, pennants aimed along the travel direction and coloured by lane
+  // so the whole snake reads instantly from the start line to the finish gate.
+  const COURSE_COLORS = [NEON.lime, NEON.cyan, NEON.amber, NEON.magenta];
+  for (let i = 0; i < COURSE.length - 1; i++) {
+    const a = COURSE[i], b = COURSE[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const segLen = Math.hypot(dx, dz);
+    const ux = dx / segLen, uz = dz / segLen;
+    const heading = Math.atan2(dx, dz);            // pennant along the road
+    const dashLen = Math.abs(dx) >= Math.abs(dz) ? 'x' : 'z';
+    const color = COURSE_COLORS[i % COURSE_COLORS.length];
+    let side = i % 2 === 0 ? 1 : -1;
+    for (let d = 5; d < segLen - 3; d += 6) {
+      addTileBar(a.x + ux * d, a.z + uz * d, 2.6, dashLen, color, 0);
+    }
+    for (let d = 8; d < segLen - 4; d += 13) {
+      const cx = a.x + ux * d, cz = a.z + uz * d;
+      const flag = makeRouteFlag(color);
+      flag.group.position.set(cx + uz * 2.6 * side, 0, cz - ux * 2.6 * side);
+      flag.group.rotation.y = heading;
+      parent.add(flag.group);
+      side *= -1;
+    }
+  }
+  // A flag planted on the OUTSIDE of each corner, aimed down the next straight.
+  for (let i = 1; i < COURSE.length - 1; i++) {
+    const inD = { x: COURSE[i].x - COURSE[i - 1].x, z: COURSE[i].z - COURSE[i - 1].z };
+    const outN = { x: COURSE[i + 1].x - COURSE[i].x, z: COURSE[i + 1].z - COURSE[i].z };
+    const il = Math.hypot(inD.x, inD.z), ol = Math.hypot(outN.x, outN.z);
+    const outSideX = inD.x / il - outN.x / ol, outSideZ = inD.z / il - outN.z / ol;
+    const oL = Math.hypot(outSideX, outSideZ) || 1;
+    const flag = makeRouteFlag(COURSE_COLORS[(i - 1) % COURSE_COLORS.length]);
+    flag.group.position.set(COURSE[i].x + (outSideX / oL) * 3, 0, COURSE[i].z + (outSideZ / oL) * 3);
+    flag.group.rotation.y = Math.atan2(outN.x, outN.z);
+    parent.add(flag.group);
+  }
 
   // ---- The Holy Mountain (hollow snow-capped peak, west cavern) ----
   // A full cone rising off the open western floor: drive the pilgrim's road
@@ -1949,6 +2727,26 @@ export function addUnderground(parent, opts = {}) {
   crown.position.y = 3.22;
   crown.castShadow = true;
   man.add(crown);
+  // Arms hang from shoulder pivots so idea #24 can raise them in blessing.
+  function makeArm() {
+    const a = new THREE.Group();
+    const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 1.25, 8), robeMat);
+    sleeve.position.y = -0.62;
+    sleeve.castShadow = true;
+    a.add(sleeve);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), skinMat);
+    hand.position.y = -1.3;
+    a.add(hand);
+    return a;
+  }
+  const manArmR = makeArm();
+  manArmR.position.set(0.62, 2.05, 0);
+  manArmR.rotation.z = 0.12;
+  man.add(manArmR);
+  const manArmL = makeArm();
+  manArmL.position.set(-0.62, 2.05, 0);
+  manArmL.rotation.z = -0.12;
+  man.add(manArmL);
 
   // A little goat: legs, body, alert head, curled horns, tiny tail.
   function makeGoat() {
@@ -1980,11 +2778,15 @@ export function addUnderground(parent, opts = {}) {
     g.add(tail);
     return g;
   }
+  const goats = [];
   for (const side of [-1, 1]) {
     const goat = makeGoat();
     goat.position.set(side * 2.45, 0.7, 0);
-    goat.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;   // face outward
+    const baseRot = side > 0 ? Math.PI / 2 : -Math.PI / 2;   // face outward
+    goat.rotation.y = baseRot;
+    goat.userData = { baseRot, side };
     shrine.add(goat);
+    goats.push(goat);
   }
 
   // Candle ring on the dais rim (shared material so they flicker together).
@@ -2035,9 +2837,23 @@ export function addUnderground(parent, opts = {}) {
     beam,
     candleMat,
     flare: 1,   // mystery-light surge (1 = calm) driven by the chamber cinematic
+    // Idea #24 — interactive shrine: the man's arms and the two goats react to
+    // the car arriving, honking or idling in the chamber.
+    armR: manArmR,
+    armL: manArmL,
+    goats,
+    react: 0,       // smoothed excitement 0..1 (raised arms / turned goats)
+    reactT: 0,      // seconds of reaction left
+    armRaise: 0,    // smoothed arm lift (radians)
+    idle: 0,        // smoothed "car idling in the chamber" 0..1
+    honkPulse: 0,   // short flourish after a honk (H), for a little arm wave
+    honk() { this.reactT = Math.max(this.reactT, 2.2); this.honkPulse = 1; },
   };
 
-  const glassCity = addGlassCity(parent);
+  const glassCity = addGlassCity(parent, {
+    // Idea #25: a crystal cluster popping when the car runs into it.
+    onCrystalPop: typeof opts.onGlassPop === 'function' ? opts.onGlassPop : null,
+  });
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
   parent.add(cityGlow);
@@ -2047,13 +2863,21 @@ export function addUnderground(parent, opts = {}) {
   // second roof and through crumbled holes. Purely decorative.
   const sky = addUndergroundSky(parent, mergeGeoms);
 
-  const colliders = [...pillarColliders, ...columnColliders, ...pipePostColliders, ...pitRimColliders, ...elevatorColliders, ...ceilingColliders, ...stairColliders, ...grandColliders, ...mountColliders, ...statueColliders, ...glassCity.colliders];
+  const colliders = [...pipePostColliders, ...ceilingColliders, ...stairColliders, ...grandColliders, ...mountColliders, ...statueColliders, ...glassCity.colliders];
 
   let bumpCount = 0;
   let lastBump = null;
   let elapsed = 0;   // course clock for sine-animated props (conduits, …)
   let prevX = 0, prevY = 0, prevZ = 0, havePrev = false;
   let lastTileIdx = -1;   // checkerboard tile under the car last frame (edge-trigger)
+
+  // Roofline obstacle course finish tracking: `finishCount` counts completed
+  // runs, `finishCooldown` stops the fanfare from retriggering every frame
+  // while the car sits on the line, and `finishFlash` blazes the FINISH
+  // banner's glow on a crossing so the moment reads as a celebration.
+  let finishCount = 0;
+  let finishCooldown = 0;
+  let finishFlash = 0;
 
   // Stair surface height at (x, z): returns the top of the step the car
   // would be standing on, or -Infinity if outside the staircase footprint.
@@ -2092,16 +2916,58 @@ export function addUnderground(parent, opts = {}) {
     foamPieces,
     spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
     conduitPipes,
-    sweepers,
     STAIRS,      // footprint constants (solid ramp + big flat roof)
     GRAND,       // grand-ramp footprint constants (steeper east twin of the staircase)
     gemstones,   // candy-waterfall gemstone pool (for the ?debug hook)
+    beltGems,    // conveyor-candy gem pool (idea #33 follow-up) — ?debug hook
     poleState,   // padded-pole hit counter + last hit info (tasks #31–#32)
+    platter: { PLATTER, spin: platterSpin, get gripped() { return platterGripped; } },
+    trampolines,   // launch pads (idea #13) — state for the ?debug hook
+    conveyor: CONVEYOR,   // giant conveyor lane footprint (idea #33) — ?debug hook
+    disco,         // rotating disco ball pendulum state (idea #14)
+    glassCrystals: glassCity.crystals,   // Glass City crystal clusters (idea #25)
+    glassSpire: glassCity.spire,         // central citadel crystal (idea #25)
+    // Idea #29 — landmarks for the minimap so the big dark cavern is navigable.
+    mapFeatures: [
+      { kind: 'stairs', x: STAIRS.cx, z: STAIRS.cz, r: 12, color: '#8fd0ff', label: 'Stairs' },
+      { kind: 'waterfall', x: GRAND.x, z: GRAND.z, r: 10, color: '#ff9a3c', label: 'Waterfall' },
+      { kind: 'pole', x: POLE.x, z: POLE.z, r: 5, color: '#ffb84d', label: 'Pole' },
+      { kind: 'mountain', x: MOUNT.cx, z: MOUNT.cz, r: 34, color: '#f2f6ff', label: 'Mountain' },
+      { kind: 'pit', x: PIT.cx, z: PIT.cz, r: 13, color: '#ffd1dc' },
+      { kind: 'platter', x: PLATTER.cx, z: PLATTER.cz, r: PLATTER.r, color: '#ff3fd8' },
+      { kind: 'disco', x: DISCO.x, z: DISCO.z, r: 4, color: '#35f0ff' },
+      { kind: 'tramp', x: TRAMPOLINES[0].x, z: TRAMPOLINES[0].z, r: 4, color: '#9dff3f' },
+      { kind: 'tramp', x: TRAMPOLINES[1].x, z: TRAMPOLINES[1].z, r: 4, color: '#9dff3f' },
+      // The serpentine ground-floor obstacle course (2026-09-19): minimap
+      // markers for the START banner and the checkered FINISH gate so the
+      // winding route is navigable from across the dark cavern.
+      { kind: 'course', x: COURSE_START.x, z: COURSE_START.z, r: 9, color: '#9dff3f', label: 'Course start' },
+      { kind: 'course', x: COURSE_FINISH_X, z: COURSE_FINISH_Z, r: 9, color: '#ff3fd8', label: 'Course finish' },
+    ],
+    course: { start: COURSE_START, finishX: COURSE_FINISH_X, finishZ: COURSE_FINISH_Z, finishHalf: COURSE_FINISH_HALF, gates: [], pennants: routePennantWaves.length },
+    coursePennants: routePennantWaves.map((w) => w.pennant),   // live pennant meshes (debug hook)
+    get finishCount() { return finishCount; },
     stairGhostAt, // task #35: floor-level ghost detection inside the staircase
     stairHeightAt, // bumpy stair pitch — height of the step surface at (x, z)
     holy,        // Holy Mountain live state (mystery-light pulse, entered flag)
     checker,
     statues,     // art deco statues on the ceiling tiles (state machine + colliders)
+    // The little follower car knocks statues over too (it drives the same
+    // roof the player drives): find a standing statue within tag range of a
+    // point, tip it over and drop its collider, same as the player's car tag.
+    knockStatueAt: (x, z, spd) => {
+      for (const s of statues) {
+        if (s.state !== 'standing') continue;
+        const tdx = s.x - x, tdz = s.z - z;
+        const tagR = s.half + 2.6;
+        if (tdx * tdx + tdz * tdz < tagR * tagR) {
+          startStatueFall(s, Math.atan2(tdz, tdx));
+          if (onStatueTopple) onStatueTopple(s.x, s.z, spd);
+          return true;
+        }
+      }
+      return false;
+    },
     // ?debug: force the tile under (x, z) to reach red and start crumbling
     // (for testing the hole-fall + hole-outline visuals without 5 drive-overs).
     forceCrumble: (x, z) => {
@@ -2209,6 +3075,12 @@ export function addUnderground(parent, opts = {}) {
             if (holeTiles[i] === 0) {
               holeTiles[i] = 1;
               rebuildHoleOutline();
+              // Hide this tile's backing patch so the fresh hole shows the
+              // cavern below (not the old flat black backing layer).
+              _v3a.set(0, -100, 0);
+              _tileMat.compose(_v3a, _quat.identity(), _v3b.set(0.001, 0.001, 0.001));
+              ceilingBacks.setMatrixAt(i, _tileMat);
+              ceilingBacks.instanceMatrix.needsUpdate = true;
             }
             _v3a.set(
               ceilMinX + ix * TILE_SZ + TILE_SZ / 2,
@@ -2247,13 +3119,28 @@ export function addUnderground(parent, opts = {}) {
       for (const s of statues) {
         if (s.state === 'standing') {
           s.ringGroup.rotation.y += delta * 0.5;
-          if (holeTiles[s.idx]) {
-            s.state = 'falling';
-            s.fallT = 0;
-            // The statue is no longer an obstacle — let the car drive
-            // through where it used to stand.
-            const ci = colliders.indexOf(s.collider);
-            if (ci >= 0) colliders.splice(ci, 1);
+          // Idea #31 — car tag: a fast car driving across the roof can knock a
+          // statue off its plinth (not just a crumbling tile). The statue tips
+          // away from the impact, and the solid collider is dropped so the car
+          // drives on through where it stood.
+          if (player && player.y > TILE_TOP - 1.6) {
+            const tdx = s.x - player.x;
+            const tdz = s.z - player.z;
+            const tagR = s.half + 2.6;
+            if (tdx * tdx + tdz * tdz < tagR * tagR) {
+              const spd = havePrev
+                ? Math.hypot(player.x - prevX, player.z - prevZ) / Math.max(delta, 1e-4)
+                : 0;
+              if (spd > 4) {
+                startStatueFall(s, Math.atan2(tdz, tdx));
+                if (onStatueTopple) onStatueTopple(s.x, s.z, spd);
+              }
+            }
+          }
+          if (s.state === 'standing' && holeTiles[s.idx]) {
+            // The tile underneath has crumbled away — the statue loses its
+            // footing and topples in its pre-rolled random direction.
+            startStatueFall(s, s.tipAngle);
           }
         } else if (s.state === 'falling') {
           s.fallT += delta;
@@ -2274,6 +3161,37 @@ export function addUnderground(parent, opts = {}) {
           if (t >= 1) s.state = 'landed';
         }
       }
+      // Ground-floor FINISH: crossing the FINISH banner's plane on the cavern
+      // floor, over its z-span, completes a run — fanfare from the caller plus
+      // a quick blaze on the FINISH banner so the moment reads as a
+      // celebration. A short cooldown stops the same crossing retriggering.
+      if (finishCooldown > 0) finishCooldown -= delta;
+      if (finishFlash > 0) finishFlash = Math.max(0, finishFlash - delta);
+      if (finishGate.mat) {
+        finishGate.mat.emissiveIntensity = 0.55 + finishFlash * 3.4;
+      }
+      if (player && havePrev && player.y < 3 && finishCooldown <= 0) {
+        if (Math.abs(player.z - COURSE_FINISH_Z) <= COURSE_FINISH_HALF
+          && prevX < COURSE_FINISH_X && player.x >= COURSE_FINISH_X) {
+          finishCooldown = 4.0;
+          finishFlash = 0.85;
+          finishCount += 1;
+          if (onFinishLine) onFinishLine(player.x, player.z);
+        }
+      }
+      // Course pennants flutter in the breeze.
+      for (const w of routePennantWaves) {
+        w.pennant.rotation.y = Math.sin(elapsed * 3.2 + w.phase) * 0.22;
+      }
+      // Spiral-tunnel mouth weather: roll the cloud bank lazily and pulse the
+      // fog haze so the tunnel top reads as living cloud, not a static plug.
+      if (spiralMouth) {
+        spiralMouth.group.rotation.y = Math.sin(elapsed * 0.07) * 0.15;
+        spiralMouth.group.position.y = 0.35 * Math.sin(elapsed * 0.5);
+        for (const h of spiralMouth.haze) {
+          h.sprite.material.opacity = 0.16 + 0.1 * (0.5 + 0.5 * Math.sin(elapsed * 0.7 + h.phase));
+        }
+      }
       // Task #12: slide each conduit back and forth across its lane on a
       // sine of elapsed time — phase/speed are stored per pipe so placed
       // pipes run out of sync with each other.
@@ -2282,6 +3200,24 @@ export function addUnderground(parent, opts = {}) {
       // derivative of the sine slide). A short per-pipe cooldown keeps one
       // sweep from firing every frame while the car sits in the overlap.
       for (const p of conduitPipes) {
+        if (p.pattern === 'guillotine') {
+          // Vertical slam: bar rides a sine between PIPE_Y and PIPE_Y + amp.
+          // Only a descending bar shoves (vel < 0), and it flings the car out
+          // of the lane along the bar's perpendicular (±Z here).
+          const gy = PIPE_Y + p.amp * (0.5 + 0.5 * Math.sin(elapsed * p.speed + p.phase));
+          p.mesh.position.set(p.cx, gy, p.cz);
+          if (p.hitCooldown > 0) p.hitCooldown -= delta;
+          const gvel = Math.cos(elapsed * p.speed + p.phase) * p.amp * p.speed * 0.5;
+          if (player && onPipeShove && p.hitCooldown <= 0 && gvel < -0.5
+            && Math.abs(player.x - p.cx) < p.len / 2 + 2.2
+            && Math.abs(player.z - p.cz) < PIPE_R + 2.2
+            && gy - PIPE_R < player.y + 2.0 && gy + PIPE_R > player.y) {
+            p.hitCooldown = 0.8;
+            p.hitCount += 1;
+            onPipeShove(0, Math.sign(player.z - p.cz) || 1);
+          }
+          continue;
+        }
         const off = Math.sin(elapsed * p.speed + p.phase) * p.amp;
         const vel = Math.cos(elapsed * p.speed + p.phase) * p.amp * p.speed;
         if (p.axis === 'x') p.mesh.position.z = p.cz + off;
@@ -2304,12 +3240,98 @@ export function addUnderground(parent, opts = {}) {
           }
         }
       }
-      // Tasks #16–#18: loop the elevator deck vertically over the pit on a
-      // sine (smooth turnarounds at both ends) and keep its collider `h`
-      // synced to the live deck-top height.
-      const elevH = ELEV_MID + ELEV_AMP * Math.sin(elapsed * ELEV.speed);
-      elevGroup.position.y = elevH - 0.25;
-      elevatorCollider.h = elevH;
+      // Giant conveyor lane (idea #33): scroll the chevrons and, while the car
+      // is over the belt near floor level, add its drag on top of the car's
+      // own motion.
+      beltTex.offset.x -= CONVEYOR.dirX * CONVEYOR.speed * delta / 6;
+      beltTex.offset.y += CONVEYOR.dirZ * CONVEYOR.speed * delta / 6;
+      if (player
+        && Math.abs(player.x - CONVEYOR.cx) < CONVEYOR.len / 2
+        && Math.abs(player.z - CONVEYOR.cz) < CONVEYOR.wid / 2
+        && player.y < 1.5) {
+        player.x += CONVEYOR.dirX * CONVEYOR.speed * delta;
+        player.z += CONVEYOR.dirZ * CONVEYOR.speed * delta;
+      }
+      // Rotating platter: carry any car on the disk around the hub in a
+      // circle — in the SAME direction (+rotation.y) the disk texture spins,
+      // so the car reads as sitting on the turntable. A small outward creep
+      // (weak at the hub, strong at the rim) means an unsteered car always
+      // drifts to the edge; the instant the grip ends the car is flung off
+      // along the tangent of its exit point.
+      if (player) {
+        const pdx = player.x - PLATTER.cx;
+        const pdz = player.z - PLATTER.cz;
+        const pd = Math.hypot(pdx, pdz);
+        const gripped = pd < PLATTER.r - 0.5 && player.y > -0.5 && player.y < PLATTER.h + 3;
+        if (gripped) {
+          const ang = PLATTER.spin * delta;
+          const cos = Math.cos(ang), sin = Math.sin(ang);
+          const rx = pdx * cos + pdz * sin;
+          const rz = -pdx * sin + pdz * cos;
+          const slip = PLATTER.slip * (0.35 + 0.65 * (pd / PLATTER.r)) * delta;
+          const scale = pd > 1e-4 ? (pd + slip) / pd : 1;
+          player.x = PLATTER.cx + rx * scale;
+          player.z = PLATTER.cz + rz * scale;
+        } else if (platterGripped && onPlatterEject && pd < PLATTER.r + 2) {
+          // Grip just ended: throw the car along the +spin tangent, scaled by
+          // how fast the platter was carrying it (the exit footspeed).
+          const tlen = Math.hypot(pdz, -pdx) || 1;
+          const speed = Math.hypot(player.x - prevX, player.z - prevZ) / Math.max(delta, 1e-4);
+          onPlatterEject(pdz / tlen, -pdx / tlen, Math.min(1, Math.max(0.15, speed / PLATTER.r)));
+        }
+        platterGripped = gripped;
+      }
+      platterSpin.t += PLATTER.spin * delta;
+      platterSpin.disk.rotation.y = platterSpin.t;
+      // Trampoline pads: a grounded car rolling over one fires the big upward
+      // launch (onTrampoline). The pad visibly squashes and flashes, then
+      // springs back, and a short cooldown stops a re-trigger on the rebound.
+      for (const T of trampolines) {
+        if (T.cd > 0) T.cd -= delta;
+        if (T.squash > 0) {
+          T.squash = Math.max(0, T.squash - delta / 0.35);
+          const s = Math.sin(T.squash * Math.PI);
+          T.base.scale.y = 1 - 0.55 * s;
+          T.ring.scale.setScalar(1 + 0.16 * s);
+          T.glow.intensity = 3 + 8 * s;
+        }
+        if (player && onTrampoline && T.cd <= 0) {
+          const dx = player.x - T.x;
+          const dz = player.z - T.z;
+          if (dx * dx + dz * dz <= (T.r + 1.6) * (T.r + 1.6) && player.y > -0.5 && player.y < 1.6) {
+            T.cd = 1.0;
+            T.squash = 1;
+            onTrampoline();
+          }
+        }
+      }
+      // Disco ball: damped pendulum swing on two axes + constant spin. Fly
+      // into the ball and it takes an impulse in the car's travel direction.
+      disco.cd = Math.max(0, disco.cd - delta);
+      disco.vx += -disco.ax * 5.0 * delta;
+      disco.vz += -disco.az * 5.0 * delta;
+      const discoDamp = Math.exp(-1.5 * delta);
+      disco.vx *= discoDamp;
+      disco.vz *= discoDamp;
+      disco.ax += disco.vx * delta;
+      disco.az += disco.vz * delta;
+      discoPivot.rotation.z = disco.ax;
+      discoPivot.rotation.x = disco.az;
+      disco.spin += DISCO.spin * delta;
+      discoSpin.rotation.y = disco.spin;
+      if (player) {
+        const bx = DISCO.x + Math.sin(disco.ax) * DISCO.len;
+        const bz = DISCO.z + Math.sin(disco.az) * DISCO.len;
+        const by = DISCO.topY - Math.cos(disco.ax) * Math.cos(disco.az) * DISCO.len;
+        const hdx = player.x - bx, hdy = player.y - by, hdz = player.z - bz;
+        if (disco.cd <= 0 && player.y > 2 && hdx * hdx + hdy * hdy + hdz * hdz <= DISCO.hitR * DISCO.hitR) {
+          disco.cd = 0.4;
+          disco.hits += 1;
+          const hl = Math.max(0.001, Math.hypot(hdx, hdz));
+          disco.vx += (hdx / hl) * 1.8;
+          disco.vz += (hdz / hl) * 1.8;
+        }
+      }
       // Tasks #31–#32: padded-pole trigger. Swept segment check (previous →
       // current position) against the pole axis so a slow frame can't tunnel
       // through the trigger volume; airborne gate keeps ground drivers near
@@ -2418,6 +3440,49 @@ export function addUnderground(parent, opts = {}) {
         }
         g.mesh.position.set(g.x, g.y, g.z);
       }
+      // Conveyor candy (idea #33): spawn gems at the belt's upstream end,
+      // carry them downstream with the scrolling belt, and scatter them off
+      // when the car drives through. Recycle over the downstream end.
+      beltGemTimer -= delta;
+      let beltBurst = 0;
+      while (beltGemTimer <= 0 && beltBurst < 6) {
+        beltGemTimer += 1.4;
+        beltBurst++;
+        spawnBeltGem();
+        if (Math.random() < 0.5) spawnBeltGem();
+      }
+      for (const b of beltGems) {
+        if (!b.active) continue;
+        if (b.knocked) {
+          b.vy -= GEM_GRAVITY * delta;
+          b.x += b.vx * delta;
+          b.y += b.vy * delta;
+          b.z += b.vz * delta;
+          b.mesh.rotation.x += b.spin * delta;
+          b.mesh.rotation.z += b.spin * 0.6 * delta;
+          if (b.y <= 0.2) { recycleBeltGem(b); continue; }
+        } else {
+          b.x += CONVEYOR.speed * delta;
+          b.y += Math.sin(b.bob + elapsed * 3) * 0.6 * delta;
+          b.mesh.rotation.x += 0.3 * delta;
+          b.mesh.rotation.y += b.spin * delta;
+          if (b.x >= CONVEYOR.cx + CONVEYOR.len / 2) { recycleBeltGem(b); continue; }
+          if (player && player.y < 1.5) {
+            const dx = b.x - player.x;
+            const dz = b.z - player.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < GEM_KNOCK_RADIUS * GEM_KNOCK_RADIUS) {
+              const d = Math.sqrt(d2) || 1;
+              b.knocked = true;
+              b.vx = (dx / d) * knockSpeed + 2;
+              b.vy = 3 + Math.random() * 3;
+              b.vz = (dz / d) * knockSpeed;
+              b.spin = (Math.random() - 0.5) * 12;
+            }
+          }
+        }
+        b.mesh.position.set(b.x, b.y, b.z);
+      }
       // Task #33: animate any active impact bursts — lights flash out
       // staggered, shockwave rings expand and fade, then everything disposes.
       for (let i = fxBursts.length - 1; i >= 0; i--) {
@@ -2479,10 +3544,39 @@ export function addUnderground(parent, opts = {}) {
       // candle flicker. Also flag the moment the car first reaches the
       // hollow chamber (within 12 units of the shrine).
       holy.t += delta;
-      holy.light.intensity = (1.7 + 0.9 * Math.sin(holy.t * 1.6)) * holy.flare;
-      holy.orb.position.y = 6.2 + 0.35 * Math.sin(holy.t * 0.9);
-      holy.beam.material.opacity = (0.11 + 0.04 * Math.sin(holy.t * 1.6 + 1.2)) * holy.flare;
-      holy.candleMat.emissiveIntensity = 1.35 + 0.45 * Math.sin(holy.t * 7.3) + 0.2 * Math.sin(holy.t * 13.7 + 1.3);
+      // Idea #24 — interactive shrine. The car arriving, honking (H) or idling
+      // in the chamber wakes the man (arms raised in blessing) and turns the
+      // goats to face it; the oculus beam pulses with the idle.
+      const shrineDx = player ? player.x - MOUNT.cx : 99;
+      const shrineDz = player ? player.z - MOUNT.cz : 99;
+      const shrineD = Math.hypot(shrineDx, shrineDz);
+      const inChamber = player && shrineD < 15;
+      if (inChamber && (carSpeed < 3 || shrineD < 9)) holy.reactT = Math.max(holy.reactT, 0.6);
+      if (holy.reactT > 0) holy.reactT -= delta;
+      if (holy.honkPulse > 0) holy.honkPulse = Math.max(0, holy.honkPulse - delta / 0.5);
+      const reactTarget = holy.reactT > 0 || holy.honkPulse > 0 ? 1 : 0;
+      holy.react += (reactTarget - holy.react) * Math.min(1, delta * 4);
+      const raiseTarget = 0.12 + holy.react * 2.5;
+      holy.armRaise += (raiseTarget - holy.armRaise) * Math.min(1, delta * 5);
+      holy.armR.rotation.z = -holy.armRaise - holy.honkPulse * 0.3 * Math.sin(holy.t * 24);
+      holy.armL.rotation.z = holy.armRaise * 0.8;
+      // Goats pivot to face the car while it's in the chamber, else drift back
+      // to their outward resting pose.
+      const goatFace = Math.atan2(shrineDx, shrineDz) - shrine.rotation.y;
+      const wrapA = (a) => ((a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+      for (const goat of holy.goats) {
+        const target = inChamber ? goatFace + goat.userData.side * -0.4 : goat.userData.baseRot;
+        goat.rotation.y += wrapA(target - goat.rotation.y) * Math.min(1, delta * 3);
+        goat.position.y = 0.7 + 0.06 * Math.sin(holy.t * 4 + goat.userData.side) * holy.react;
+      }
+      const idleTarget = inChamber && carSpeed < 3 ? 1 : 0;
+      holy.idle += (idleTarget - holy.idle) * Math.min(1, delta * 2.5);
+      const idlePulse = 0.5 + 0.5 * Math.sin(holy.t * (2.2 + 3.5 * holy.idle));
+      holy.light.intensity = (1.7 + 0.9 * Math.sin(holy.t * 1.6)) * holy.flare + 2.4 * holy.idle * idlePulse;
+      holy.orb.position.y = 6.2 + 0.35 * Math.sin(holy.t * 0.9) + 0.2 * holy.idle * idlePulse;
+      holy.orb.scale.setScalar(1 + 0.18 * holy.idle * idlePulse);
+      holy.beam.material.opacity = (0.11 + 0.04 * Math.sin(holy.t * 1.6 + 1.2)) * holy.flare + 0.13 * holy.idle * idlePulse;
+      holy.candleMat.emissiveIntensity = 1.35 + 0.45 * Math.sin(holy.t * 7.3) + 0.2 * Math.sin(holy.t * 13.7 + 1.3) + 1.2 * holy.react;
       if (player && !holy.entered) {
         const dx = player.x - MOUNT.cx;
         const dz = player.z - MOUNT.cz;
@@ -2514,6 +3608,26 @@ export function addUnderground(parent, opts = {}) {
         }
         f.mesh.rotation.x += f.vx * delta * 0.4;
         f.mesh.rotation.z -= f.vz * delta * 0.4;
+        // Idea #28: kickable foam. When the car drives into a piece, punt it
+        // radially away from the car with a small pop so a pile scatters
+        // instead of sitting untouched. A short per-piece cooldown keeps a
+        // single pass from re-kicking the same ball every frame.
+        if (f.nudgeCd > 0) f.nudgeCd -= delta;
+        if (player && f.nudgeCd <= 0) {
+          const ndx = f.mesh.position.x - player.x;
+          const ndz = f.mesh.position.z - player.z;
+          const nd2 = ndx * ndx + ndz * ndz;
+          const reach = FOAM_R + 2.4;
+          if (nd2 < reach * reach && Math.abs(f.mesh.position.y - player.y) < 2.5) {
+            const nl = Math.sqrt(nd2) || 0.001;
+            const kick = 3 + Math.min(carSpeed, 14) * 0.9;
+            f.vx = (ndx / nl) * kick;
+            f.vz = (ndz / nl) * kick;
+            f.vy = Math.max(f.vy, 3 + Math.min(carSpeed, 14) * 0.35);
+            f.bounces += 1;
+            f.nudgeCd = 0.25;
+          }
+        }
         const left = FOAM_LIFE + FOAM_SHRINK - f.age;
         if (left <= 0) {
           disposeFoamPiece(f);

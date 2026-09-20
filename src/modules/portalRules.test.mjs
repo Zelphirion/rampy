@@ -23,10 +23,16 @@ test('levitation hall logic matches the building trigger', () => {
   assert.equal(isStillWithinLevitationHall(72, 20, building), false);
 });
 
-test('mine dive trigger works for the tunnel lip', () => {
-  const portal = { triggerX: -55, triggerXHalf: 2.2, triggerZ: 42 };
-  assert.equal(isInMineDiveTrigger(-55, 43, portal), true);
-  assert.equal(isInMineDiveTrigger(-55, 41, portal), false);
+test('mine dive trigger is bounded inside the open pit', () => {
+  const portal = { triggerX: -55, triggerXHalf: 2.2, triggerZ: 34, triggerZ1: 44 };
+  assert.equal(isInMineDiveTrigger(-55, 34.1, portal), true);   // inside the mouth
+  assert.equal(isInMineDiveTrigger(-55, 43.9, portal), true);   // open-pit back wall
+  assert.equal(isInMineDiveTrigger(-55, 33.9, portal), false);  // before the lip
+  // The tunnel crown (z > 44) is sealed meadow — the grass behind/over the
+  // shaft, reachable without any dive — must never trigger.
+  assert.equal(isInMineDiveTrigger(-55, 44, portal), false);
+  assert.equal(isInMineDiveTrigger(-55, 50, portal), false);
+  assert.equal(isInMineDiveTrigger(-55, 60, portal), false);
 });
 
 test('underground return zone matches the tunnel foot', () => {
