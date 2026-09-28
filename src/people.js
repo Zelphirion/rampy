@@ -9,7 +9,7 @@ import { rectCircleIntersect } from './modules/world.js';
 const skinMat = new THREE.MeshStandardMaterial({ color: 0xe8b98a, roughness: 0.8 });
 const hairMat = new THREE.MeshStandardMaterial({ color: 0x2b211a, roughness: 0.9 });
 
-function makePerson(shirtColor, pantsColor) {
+export function makePerson(shirtColor, pantsColor) {
   const group = new THREE.Group();
   const shirtMat = new THREE.MeshStandardMaterial({ color: shirtColor, roughness: 0.85 });
   const pantsMat = new THREE.MeshStandardMaterial({ color: pantsColor, roughness: 0.9 });

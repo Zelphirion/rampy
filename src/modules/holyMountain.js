@@ -196,7 +196,11 @@ export function mountainBlockers(cfg = MOUNT) {
   // inside the radius where the skin has already lifted a climbing car above
   // the `car.y > 0.5` elevation threshold, so a car driving at the mountain is
   // riding the face (and therefore `elevated`, which skips solids) before the
-  // ring can block it — no deadlock at the base.
+  // ring can block it — no deadlock at the base. The ring is only a 0.9-high
+  // curb (2026-09-22): it still stops a grounded car, but the LITTLE CAR —
+  // which borrows the same solids — skips a solid when its own height would
+  // carry it over (`c.h < y−2.4`), and a full 8-high wall silently wedged the
+  // little follower against the mountainside at r≈29.
   const SKIRT_BOXES = 30;
   const skirtR = 26, skirtHalf = 3.2;
   for (let k = 0; k < SKIRT_BOXES; k++) {
@@ -204,7 +208,7 @@ export function mountainBlockers(cfg = MOUNT) {
     solids.push({
       x: cfg.cx + skirtR * Math.cos(phi),
       z: cfg.cz + skirtR * Math.sin(phi),
-      halfW: skirtHalf, halfD: skirtHalf, h: 8,
+      halfW: skirtHalf, halfD: skirtHalf, h: 0.9,
     });
   }
 

@@ -59,6 +59,12 @@ export function addKnockable(group, radius, opts = {}) {
     dominoW: opts.dominoW || 0,     // thickness (along the fall direction)
     dominoH: opts.dominoH || 0,     // height
     dominoD: opts.dominoD || 0,     // width (side-to-side along the row)
+    // 'topple' mode (big wide props like the stone fountain): tip over around
+    // the BASE EDGE nearest the fall direction, so a wide prop lands ON TOP of
+    // the ground instead of pivoting about its centre and sinking into the
+    // floor. Pivot radius defaults to the collision radius.
+    toppleAxis: new THREE.Vector3(1, 0, 0),
+    toppleRadius: opts.toppleRadius || radius,
     // 'wobble' mode (buildings): rock on the hit, then spring back upright
     wobbleAxis: new THREE.Vector3(1, 0, 0),
     wobbleT: 0,
@@ -324,6 +330,21 @@ export function updateKnockables(delta) {
       } else if (k.finalQuat) {
         k.group.quaternion.copy(k.baseQuat).slerp(k.finalQuat, e);
       }
+    } else if (k.mode === 'topple') {
+      // Tip over around the base edge (pivot = basePos + pushDir*r at ground
+      // level). Rotating about that edge the top swings down along pushDir and
+      // the body lands flat ON the ground, centre `r` above the pivot. The
+      // group origin (base centre) rides the pivot arc: it rises from the
+      // floor up to r and swings over to the pivot — no clipping into the slab.
+      const th = easeOut(k.t) * Math.PI / 2;
+      const s = Math.sin(th), c = Math.cos(th);
+      const r = k.toppleRadius;
+      k.group.quaternion.setFromAxisAngle(k.toppleAxis, th).multiply(k.baseQuat);
+      k.group.position.set(
+        k.basePos.x + k.pushDir.x * r * (1 - c),
+        k.basePos.y + r * s,
+        k.basePos.z + k.pushDir.z * r * (1 - c),
+      );
     } else {
       if (k.finalQuat) {
         k.group.quaternion.copy(k.baseQuat).slerp(k.finalQuat, e);
@@ -507,6 +528,14 @@ function startFall(k, d, speedFactor = 1) {
     k.wobbleAxis.copy(axis);
     k.wobbleT = 0;
     k.state = 'wobbling';
+    return;
+  }
+  if (k.mode === 'topple') {
+    // Big wide prop (stone fountain): capture the horizontal axis through its
+    // base edge and let the falling branch tip it so it lands ON the floor.
+    const nz = -d.x, nx = d.z;   // unit horizontal axis ⊥ pushDir
+    k.toppleAxis.set(nx, 0, nz).normalize();
+    k.state = 'falling';
     return;
   }
   if (k.mode === 'roll') {

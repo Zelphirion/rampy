@@ -1,14 +1,17 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1787160950001';
-import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1787180000001';
-import { createCar, createLittleCar, addTrafficCars } from './cars.js?v=1789487308557';
+import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1787180000003';
+import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, addTrafficCars } from './cars.js?v=1790448808379';
 import { addFiretruck } from './firetruck.js?v=1787510500000';
-import { addPeople } from './people.js';
-import { addRobot } from './robot.js?v=1789487308555';
-import { addTrain } from './train.js';
+import { addPeople } from './people.js?v=1790448808372';
+import { addRobot, buildRobotModel } from './robot.js?v=1790400453800';
+import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1790445221394';
 import { addLizard } from './lizard.js';
+import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1790448808376';
 import { updateKnockables, knockAt, resetKnockables, snapKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
+import { createTaffyState, getTaffyScale, stepTaffyState } from './carTaffyMode.mjs';
+import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent } from './modules/expressTube.js?v=1790448808372';
 import {
   worldXLo,
   worldXHi,
@@ -38,7 +41,24 @@ import {
 } from './modules/portalRules.js?v=1789754556173';
 import { resolveStuck, wallNormal } from './modules/unstick.js';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1790448808373';
+
+// ===== Real loading progress =====
+// The loader (index.html) is driven by actual build progress. Heavy world
+// building is split into chunks below; before each chunk we call __loaderYield
+// which (a) reports the fraction done + the piece being built to the loader and
+// (b) waits two animation frames so the browser can paint the loader at that
+// % while the next chunk runs. The loader bar only ever moves TOWARD a real
+// reported fraction, so it can never be stuck at a number no real work backs.
+const __loaderYield = (frac, label) =>
+  new Promise((resolve) => {
+    if (window.__loadingProgress) {
+      try { window.__loadingProgress(frac, label); } catch (e) {}
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(resolve);
+    });
+  });
 
 // ===== World bounds / wrap helpers =====
 // Shared torus-map math lives in modules/world.js so main.js stays focused on
@@ -62,9 +82,23 @@ const cameraOrbit = {
 let camRadius = cameraOrbit.radius;
 const ROBOT_CAM_DIST = 55;        // robot within this many units starts zooming out
 const ROBOT_CAM_MAX_RADIUS = 42;  // fully zoomed distance when the robot is right on you
+const SPIDER_CAM_DIST = 55;       // giant tarantula within this many units starts zooming out
+const TARANTULA_CAM_MAX_RADIUS = 34;  // fully zoomed distance so the whole spider fits the frame
 // User yaw offset (radians) added to the car's heading for the chase cam
 let cameraYawOffset = 0;
 const cameraTarget = new THREE.Vector3(0, 0.6, 0);
+// Eased offset from the locomotive to the middle of the whole consist (the
+// AABB of every trailing car), so the train camera dollies to the halfway
+// point as the chain snakes instead of yanking along the loco's heading.
+const trainCamShift = new THREE.Vector3();
+const trainCamDesired = new THREE.Vector3();
+const _camTempV = new THREE.Vector3();
+const _camZeroV = new THREE.Vector3();
+// Underground train camera: keep the lens under the checkerboard ceiling when
+// the whole-consist zoom-out would otherwise push the camera up through the
+// colorful tiles and hide the locomotive.
+const UG_TILE_UNDER = 30.15;     // checkerboard underside (CEIL_Y + 0.15)
+const UG_TRAIN_CAM_MAX_Y = 29.4; // tallest spot that still clears the tiles
 const CAMERA_MANUAL_HOLD = 10;
 const CAMERA_RETURN_SPEED = 4;
 let cameraManualTimer = 0;
@@ -146,9 +180,13 @@ dirLight.shadow.normalBias = 0.02;   // suppresses shadow acne on the flat road/
 scene.add(dirLight);
 
 // ===== Build the world =====
+await __loaderYield(0.04, 'the city streets');
 const { buildingColliders, ramps } = buildMap(scene);
+await __loaderYield(0.08, 'the traffic lights');
 const { trafficLights, fountains, mineColliders, mineGems } = addProps(scene);
+await __loaderYield(0.12, 'the traffic cars');
 const traffic = addTrafficCars(scene);
+await __loaderYield(0.16, 'the pedestrians');
 const { people, update: updatePeople } = addPeople(scene);
 
 // ===== Small spinning arrow marking the map's top-left ("northwest") corner =====
@@ -237,8 +275,12 @@ function isPositionBlocked(x, z, radius, ignoreAIOnly = false) {
   // `soft` colliders (staircase steps, the checkerboard ceiling) never block
   // driving — they only feed buildingTopAt so you can land on / ride them.
   // `aiOnly` colliders (the mine pit) block AI traffic but not the player car.
+  // `soapy` colliders (the car wash lattice walls) never hard-block either —
+  // the wash's soap-glide owns their containment (smooth recentring to the
+  // lane centre instead of a knock).
   return list.some((collider) =>
     !collider.soft &&
+    !collider.soapy &&
     !(ignoreAIOnly && collider.aiOnly) &&
     rectCircleIntersect(x, z, collider, radius));
 }
@@ -286,7 +328,10 @@ function playerSolids() {
   const list = worldState === 'underground' ? ugColliders : colliders;
   const solids = [];
   for (const c of list) {
-    if (!c.soft) solids.push({ kind: 'rect', x: c.x, z: c.z, hw: c.halfW, hd: c.halfD });
+    // soapy (car wash lattice) colliders are excluded too — the wash's
+    // soap-glide clamps the car to the bay smoothly instead of the anti-stuck
+    // pass shoving it out along the shortest escape (a "jerk" inside the wash).
+    if (!c.soft && !c.soapy) solids.push({ kind: 'rect', x: c.x, z: c.z, hw: c.halfW, hd: c.halfD });
   }
   if (worldState === 'city') {
     solids.push({
@@ -361,8 +406,10 @@ function distanceToObstacleAhead(t) {
   let best = distanceToCarAhead(t);
   const mx = t.mesh.position.x;
   const mz = t.mesh.position.z;
-  // Steamrollers drive over the player — don't brake for them.
-  if (!t.isSteamroller) {
+  // Steamrollers drive over the player — don't brake for them. And when the
+  // PLAYER is the steamroller, traffic doesn't brake for it either: the roller
+  // plows straight through and the smash collision knocks cars aside (below).
+  if (!t.isSteamroller && !playerSteamroller) {
     const p = aheadDist(mx, mz, t.dir, t.axis, car.position.x, car.position.z);
     if (p < best) best = p;
   }
@@ -416,7 +463,7 @@ function deOverlapTraffic() {
 function carCollisionList() {
   const list = [];
   // Cars being held in the robot's claw are not driving — leave them out.
-  if (!robot.playerCaptured) list.push({ mesh: car, radius: playerCarRadius, kind: 'player' });
+  if (!robot.playerCaptured) list.push({ mesh: car, radius: playerCarRadius, kind: 'player', steamroller: playerSteamroller });
   if (!robot.bumperCaptured) list.push({ mesh: bumperCar, radius: aiCarRadius, kind: 'bumper' });
   list.push({ mesh: firetruck.truck, radius: firetruckColliderR, kind: 'firetruck' });
   for (const t of traffic) {
@@ -468,7 +515,7 @@ function laneHeading(t) {
 
 // Recoil one car away from a collision. nx/nz = unit direction pushing it
 // away from the other car.
-function applyBounce(me, nx, nz, foeKind) {
+function applyBounce(me, nx, nz, foeKind, foeSteamroller) {
   if (me.kind === 'player') {
     // Recoil the player's scalar speed: shoved forward if hit from behind,
     // knocked backward if hit head-on. Hitting a light car barely slows you
@@ -478,18 +525,29 @@ function applyBounce(me, nx, nz, foeKind) {
     dir.normalize();
     const align = dir.x * nx + dir.z * nz;
     const heavy = foeKind === 'firetruck';
-    const knock = heavy ? (align >= 0 ? 3.2 : -3.8) : (align >= 0 ? 2.2 : -1.0);
-    velocity.value = THREE.MathUtils.clamp(velocity.value * 0.5 + knock, -6, 6);
+    // A steamroller barely feels light traffic — it runs them over (tiny
+    // recoil, less velocity bleed); only the fire engine really slows it.
+    let knock;
+    if (me.steamroller) {
+      knock = heavy ? (align >= 0 ? 3.2 : -3.8) : (align >= 0 ? 0.5 : -0.3);
+    } else {
+      knock = heavy ? (align >= 0 ? 3.2 : -3.8) : (align >= 0 ? 2.2 : -1.0);
+    }
+    velocity.value = THREE.MathUtils.clamp(velocity.value * (me.steamroller ? 0.85 : 0.5) + knock, -6, 6);
     shake.intensity = Math.max(shake.intensity, heavy ? 0.15 : 0.07);
   } else if (me.kind === 'traffic') {
     const t = me.t;
+    // Run over by the player's steamroller: a much heavier knock + spin so
+    // cars go tumbling out of the way (and don't brake for it, either).
+    const smash = foeKind === 'player' && foeSteamroller;
     if (!t.knock && (foeKind === 'player' || foeKind === 'firetruck')) {
       // A hard hit: knock the car aside with a spin (the end you hit swings
       // away first), then it eases back to its lane and heading. Only the
       // first contact counts — a car already tumbling isn't re-knocked.
-      const power = foeKind === 'player' ? 12 : 9;
-      const spin = foeKind === 'player' ? 3.6 : 2.8;
+      const power = smash ? 32 : (foeKind === 'player' ? 12 : 9);
+      const spin = smash ? 7 : (foeKind === 'player' ? 3.6 : 2.8);
       t.knock = makeKnock(t.mesh, trafficHalfLen, trafficHalfWid, nx, nz, power, spin);
+      if (smash) shake.intensity = Math.max(shake.intensity, 0.25);
     } else {
       // Traffic nudging traffic: just a small along-lane recoil, no spin-out.
       const along = (t.axis === 'x' ? nx : nz) * t.dir;
@@ -501,11 +559,14 @@ function applyBounce(me, nx, nz, foeKind) {
   } else if (me.kind === 'bumper') {
     // The little blue car gets knocked out of the way too (and spun) — its
     // AI is paused while it tumbles, then it resumes chasing. Same rule: one
-    // discrete knock per hit, no compounding while it's still tumbling.
+    // discrete knock per hit, no compounding while it's still tumbling. A
+    // steamroller sends it flying like everything else.
+    const smash = foeKind === 'player' && foeSteamroller;
     if (!bumperKnock && (foeKind === 'player' || foeKind === 'firetruck')) {
-      const power = foeKind === 'player' ? 13 : 10;
-      const spin = foeKind === 'player' ? 4.2 : 3.2;
+      const power = smash ? 30 : (foeKind === 'player' ? 13 : 10);
+      const spin = smash ? 8 : (foeKind === 'player' ? 4.2 : 3.2);
       bumperKnock = makeKnock(bumperCar, bumperHalfLen, bumperHalfWid, nx, nz, power, spin);
+      if (smash) shake.intensity = Math.max(shake.intensity, 0.25);
     }
   }
 }
@@ -541,8 +602,10 @@ function resolveCarCollisions() {
       b.mesh.position.z += nz * overlap * (aMass / total);
       // Recoil both cars so they bounce apart (foeKind lets a car know who
       // hit it — the player's hits shove light cars out of the way harder).
-      applyBounce(a, -nx, -nz, b.kind);
-      applyBounce(b, nx, nz, a.kind);
+      // foeSteamroller tells a victim it was run over by the player's roller,
+      // which turns the nudge into a full smash.
+      applyBounce(a, -nx, -nz, b.kind, b.steamroller);
+      applyBounce(b, nx, nz, a.kind, a.steamroller);
     }
   }
   // Re-wrap any cars the separation pushed across a map seam.
@@ -570,26 +633,32 @@ function axisSignal(elapsed, axis) {
 }
 
 // ===== Cars =====
+await __loaderYield(0.19, 'the player car');
 const car = createCar(0xa61e1e);
 car.position.set(0, 0.15, 0);
 scene.add(car);
 
 // Autonomous fire engine: patrols the roads and douses roof fires on its own.
+await __loaderYield(0.21, 'the fire engine');
 const firetruck = addFiretruck(scene);
 
 // Giant eating robot: stomps around the city, chases down cars, picks them
 // up and eats them. The player gets eaten too (and respawns).
+await __loaderYield(0.23, 'the giant eating robot');
 const robot = addRobot(scene);
 
 // Freight train circling the town on rails outside it: locomotive + 4 boxcars
 // + caboose. Knockable / wobbles when you run into it, but never derails.
+await __loaderYield(0.25, 'the freight train');
 const train = addTrain(scene);
 
 // Small flame lizard: scurries around town and sets buildings on fire. It is
 // the only thing that relights doused buildings, so it keeps the fire engine
 // busy. Flees the robot and the player car.
+await __loaderYield(0.27, 'the flame lizard');
 const lizard = addLizard(scene);
 
+await __loaderYield(0.29, 'the steamroller');
 const bumperCar = createCar(0x1e7ea6);
 bumperCar.scale.set(0.5, 0.5, 0.5);
 bumperCar.position.set(10, 0.15, -18);
@@ -602,9 +671,34 @@ const velocity = { value: 0 };
 const steering = { value: 0 };
 const jumpState = { yVelocity: 0, inAir: false };
 let ugDbg = null;   // ?debug: which underground physics branch ran last frame
+// Player's previous-frame end position — feeds the vert-pop "outward travel"
+// gate. Captured at the end of each underground physics pass so the gate can
+// tell rolling-in from genuinely driving up and out over a pipe lip.
+let playerPrevX = 0, playerPrevZ = 0;
 const gravity = 18;
 const groundHeight = 0.15;
 let flatCarState = createFlatCarState(false);
+// 2026-09-23 factory-floor attraction states.
+let taffyState = createTaffyState();          // car-squash noodle stretch (taffy pullers)
+let bubbleWobble = 0;                          // steering wobble while freshly popped
+let magnetHold = null;                         // { t } while a magnet yanks the car up
+// Riding the pneumatic express tube. `dir` +1 = glass-city intake → skate-park
+// exit, -1 = the return ride; `cooldown` blocks an instant re-grab right after
+// an exit drop (the landing spot is a grab window at either mouth); `lastDir`
+// remembers which way the last completed ride went so the post-ride montage
+// can watch the right landing.
+let expressState = { active: false, s: 0, dir: 1, cooldown: 0, lastDir: 1 };
+let expressCinT = 0;  // hold time left for the express-tube camera montage AFTER
+                      // the ride pops the car out (watches the landing, then a
+                      // post-cine ease slides the camera back onto the chase view)
+// Express-tube cinematic cameras — the FIXED positions the montage cuts between
+// (world coords; y is the float height). Consumed by updateCamera (the cut
+// timeline). s-units: s = 0.268 ≈ 3.0s into the ride (RIDE_SPEED 26 / len ≈290.9).
+const EXPRESS_CAM_SHOTS = [
+  { lo: 0.268, hi: 0.62, x: 86, y: 1.8, z: 100, n: 1 },   // ground — past the staircase, eastbound run (holds through the westbound transit)
+  { lo: 0.62,  hi: 1.01, x: -42, y: 16, z: -14, n: 2 },   // air (under tiles) — watches the dive out, from a bit earlier
+];
+let lastGrounded = 0;                          // clock the car last sat on the floor
 let wasOnRamp = null;   // { runX, runZ } of the ramp the car just drove off
 let currentRamp = null; // ramp the car is ON right now (for body tilt)
 // Ramp-world terrain pitch target: the car rides the dirt on its FRONT and
@@ -883,10 +977,18 @@ function smooth01(s) { return s * s * (3 - 2 * s); }
 // and ENDS exactly here — the camera settles at this spot to watch the car
 // burst out, then eases smoothly to behind the car.
 function spiralWatchPose() {
-  const exitP = tunnelPoint(1);
-  const watchX = exitP.x + 30;   // east of the exit (in front of the opening)
-  const watchY = 8;              // camera height — above the car's exit path
-  const watchZ = exitP.z;
+  const p = tunnelPoint(1);
+  const q = tunnelPoint(0.994);
+  let ex = p.x - q.x, ez = p.z - q.z;
+  const elen = Math.hypot(ex, ez) || 1;
+  ex /= elen; ez /= elen;
+  // Park the camera ahead of the mouth ON the car's exit line (same tangent
+  // finishSpiralCine launches the car along): the exit tangent drifts north
+  // as it leaves the coil, so a due-east camera sits off to the side and the
+  // burst-out reads off-centre. Following the tangent keeps the car centred.
+  const watchX = p.x + ex * 30;   // ahead of the exit along the car's heading
+  const watchY = 8;               // camera height — above the car's exit path
+  const watchZ = p.z + ez * 30;
   const watchAngle = Math.atan2(watchZ - TUNNEL.cz, watchX - TUNNEL.cx);
   const watchRadius = Math.hypot(watchX - TUNNEL.cx, watchZ - TUNNEL.cz);
   return { watchX, watchY, watchZ, watchAngle, watchRadius };
@@ -929,6 +1031,8 @@ function spiralPoseAtUp(s) {
 }
 
 function flattenCarFromRock() {
+  if (playerRobot) return;   // a giant mech can't be squashed into a pancake
+  if (playerCarKind === 'skateboarder') return;   // the skater is a person, not a car — never a pancake
   if (flatCarState.phase === 'bounce') return;
   flatCarState.active = true;
   flatCarState.phase = 'flat';
@@ -936,12 +1040,24 @@ function flattenCarFromRock() {
 }
 
 function updateFlatCarState(delta) {
-  // The boulder (ramp world) and the steamroller (city) both flatten the car;
-  // once flat, driving for a while pops it back up in either world.
-  const isDriving = (worldState === 'ramp' || worldState === 'city') && flatCarState.active && flatCarState.phase === 'flat' && Math.abs(velocity.value) > 0.8;
+  // The boulder (ramp world), the steamroller (city) and the underground's
+  // steam press all flatten the car; once flat, driving for a while pops it
+  // back up in every world.
+  const isDriving = (worldState === 'ramp' || worldState === 'city' || worldState === 'underground') && flatCarState.active && flatCarState.phase === 'flat' && Math.abs(velocity.value) > 0.8;
   flatCarState = stepFlatCarState(flatCarState, delta, isDriving);
   const scaleY = flatCarState.active ? getFlatCarScaleY(flatCarState) : 1;
-  car.scale.set(1, scaleY, 1);
+  // The underground's taffy pullers also distort the car: it stretches LONG
+  // (sx > 1) and THIN (sz < 1) while hooked, then springs back with a
+  // (brief) overshoot on release. Composes with the flatten so a flattened
+  // noodle still lies low. Stepped in every world so a stretch started
+  // underground finishes gracefully even if the player portals out mid-way.
+  if (taffyState.active) {
+    taffyState = stepTaffyState(taffyState, delta);
+    const s = getTaffyScale(taffyState);
+    car.scale.set(s.sx, scaleY, s.sz);
+  } else {
+    car.scale.set(1, scaleY, 1);
+  }
 }
 
 // ===== Ramp world (the portal's destination — a bumpy twilight hillscape) =====
@@ -949,9 +1065,6 @@ function updateFlatCarState(delta) {
 // world we stop rendering the city and switch the car over to this scene. On
 // the way back we just switch it again.
 let worldState = 'city';   // 'city' | 'ramp' | 'underground'
-// Platter spin-clock sample from last frame, so the car's heading can follow
-// the rotating platter only while it's actually gripped (idea #2).
-let platterSpinLast = 0;
 // Seconds to ignore portal triggers right after a teleport, so the car isn't
 // instantly re-caught by the portal it just emerged from.
 let portalGrace = 0;
@@ -978,24 +1091,33 @@ rampDir.shadow.bias = -0.0003;
 rampDir.shadow.normalBias = 0.02;
 rampScene.add(rampDir);
 
+await __loaderYield(0.31, 'the ramp world hills');
 const rampWorld = buildRampWorld(rampScene);
 const terrainHeightAt = rampWorld.terrainHeightAt;
+
+// A GIANT tarantula sleeps in the velodrome bowl of the ramp world — it stays
+// still with dimmed eyes until you bump it, then wakes up with blazing red
+// eyes and scrambles around for a while before dozing off again.
+const rampTarantula = addRampTarantula(rampScene, terrainHeightAt, { x: -48, z: 5 });
 
 // Ramp-world fun: launch ramps scattered over the hills + the swirling vortex
 // you can drive around. These exist ONLY in the ramp world — the city keeps
 // its own separate ramp set (buildMap) and has no vortex.
+await __loaderYield(0.35, 'the launch ramps');
 const { ramps: rampWorldRamps } = buildRampWorldRamps(rampScene, terrainHeightAt);
 const vortex = createVortex(rampScene, 40, 40, terrainHeightAt);
 // Drive under the vortex (within this horizontal radius of its centre) to
 // warp back to the city — the ramp world's way home.
 const vortexReturnRadius = 10;
 // Soft drifting clouds + the spinning wheel of death — ramp world only.
+await __loaderYield(0.38, 'the vortex');
 const clouds = createClouds(rampScene);
 const wheelOfDeath = createWheelOfDeath(rampScene, wheelOfDeathDef.x, wheelOfDeathDef.z, terrainHeightAt);
 
 // Ramp-world knockable props: bowling pins, a linked domino run, barrels you
 // shove aside and a timber yard of wobbling logs — all via the shared
 // knockable system (physics.js).
+await __loaderYield(0.41, 'the bowling pins and dominoes');
 const rampWorldProps = buildRampWorldProps(rampScene, terrainHeightAt);
 rampWorldFeatures.props = rampWorldProps;
 
@@ -1003,6 +1125,7 @@ rampWorldFeatures.props = rampWorldProps;
 // Giant swinging hammers on the flattened straightaway, a trebuchet you drive
 // into, and a rolling boulder that chases you. All animated + tested against
 // the car in updateRampWorldDanger() (ramp world only).
+await __loaderYield(0.44, 'the swinging hammers and trebuchet');
 const hammers = buildHammers(rampScene, terrainHeightAt);
 const trebuchet = createTrebuchet(rampScene, rampWorldFeatures.trebuchet.x, rampWorldFeatures.trebuchet.z, terrainHeightAt);
 const boulder = createRollingBoulder(rampScene, rampWorldFeatures.boulder.x, rampWorldFeatures.boulder.z, terrainHeightAt);
@@ -1059,47 +1182,6 @@ function ugAudioCtx() {
     if (ugAudio.state === 'suspended') ugAudio.resume().catch(() => {});
     return ugAudio;
   } catch (e) { return null; }
-}
-// Pole impact: low sine drop + noise splash. Big slams hit harder/longer.
-function playPoleBoom(big) {
-  const ctx = ugAudioCtx();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  const o = ctx.createOscillator();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(big ? 130 : 90, t);
-  o.frequency.exponentialRampToValueAtTime(big ? 36 : 50, t + 0.5);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(big ? 0.5 : 0.22, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
-  o.connect(g).connect(ctx.destination);
-  o.start(t); o.stop(t + 0.65);
-  const len = Math.floor(ctx.sampleRate * 0.3);
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(big ? 0.32 : 0.13, t);
-  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-  src.connect(ng).connect(ctx.destination);
-  src.start(t);
-}
-// Foam-collectible bump: short soft triangle blip.
-function playFoamChime() {
-  const ctx = ugAudioCtx();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  const o = ctx.createOscillator();
-  o.type = 'triangle';
-  o.frequency.setValueAtTime(660, t);
-  o.frequency.exponentialRampToValueAtTime(990, t + 0.09);
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.12, t);
-  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-  o.connect(g).connect(ctx.destination);
-  o.start(t); o.stop(t + 0.18);
 }
 // Trampoline boing: a springy upward chirp with a quick wobble.
 function playBoing() {
@@ -1179,6 +1261,145 @@ function playStatueCrash() {
   src.connect(ng).connect(ctx.destination);
   src.start(t); src.stop(t + 0.36);
 }
+// Picker grab clank (2026-09-22): a bright metallic BANG as the robot's giant
+// steel jaws snap shut — a short ringing metal hit when it clamps on a car.
+function playClank() {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const len = Math.floor(ctx.sampleRate * 0.3);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'bandpass';
+  hp.frequency.value = 1900;
+  hp.Q.value = 1.4;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.5, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  src.connect(hp).connect(ng).connect(ctx.destination);
+  src.start(t); src.stop(t + 0.32);
+  for (const f of [1300, 1850]) {
+    const o = ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.value = f;
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.12, t);
+    og.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    o.connect(og).connect(ctx.destination);
+    o.start(t); o.stop(t + 0.24);
+  }
+}
+// Bubble wrap THWACK (2026-09-23): a farty elastic POCK when the car rolls a
+// bubble flat — a quick upward chirp that snaps down, plus a tiny noise tick.
+function playBubblePop() {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(420, t);
+  o.frequency.exponentialRampToValueAtTime(900, t + 0.05);
+  o.frequency.exponentialRampToValueAtTime(150, t + 0.11);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.22, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+  o.connect(g).connect(ctx.destination);
+  o.start(t); o.stop(t + 0.15);
+}
+// Taffy snap (2026-09-23): a stretchy rubber POING as the rubber arm hooks the
+// car and the car gets pulled long + thin.
+function playTaffySnap() {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(220, t);
+  o.frequency.exponentialRampToValueAtTime(880, t + 0.14);
+  o.frequency.exponentialRampToValueAtTime(620, t + 0.28);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.2, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  o.connect(g).connect(ctx.destination);
+  o.start(t); o.stop(t + 0.42);
+}
+// Express tube suction FWOOSH (2026-09-23): a deep windy intake whoosh as the
+// car is sucked up the glass tube.
+function playFwoosh() {
+  const ctx = ugAudioCtx();
+  if (!ctx) return;
+  const t = ctx.currentTime;
+  const len = Math.floor(ctx.sampleRate * 0.6);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const e = 1 - i / len;
+    d[i] = (Math.random() * 2 - 1) * e;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.setValueAtTime(900, t);
+  f.frequency.exponentialRampToValueAtTime(250, t + 0.55);
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.28, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.58);
+  src.connect(f).connect(ng).connect(ctx.destination);
+  src.start(t); src.stop(t + 0.6);
+}
+// Express-tube electrical hum (2026-09-24): a low buzzing drone that runs for
+// the whole forced ride — a detuned saw + square through a lowpass reads as
+// high-voltage power lines. Fades in on grab and ramps out when the car is
+// spat out (also stopped on any ride-cancelling reset).
+let tubeHum = null;   // { o1, o2, gain } while buzzing
+function startTubeHum() {
+  const ctx = ugAudioCtx();
+  if (!ctx || tubeHum) return;
+  const t = ctx.currentTime;
+  const o1 = ctx.createOscillator();
+  o1.type = 'sawtooth';
+  o1.frequency.value = 56;
+  const o2 = ctx.createOscillator();
+  o2.type = 'square';
+  o2.frequency.value = 84;        // beats against the 56 to add grit
+  const f = ctx.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.value = 340;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(TUBE_HUM_BASE, t + 0.35);   // soft fade-in
+  o1.connect(f); o2.connect(f); f.connect(gain).connect(ctx.destination);
+  o1.start(t); o2.start(t);
+  tubeHum = { o1, o2, gain };
+}
+function stopTubeHum() {
+  const hum = tubeHum;
+  tubeHum = null;
+  if (!hum) return;
+  const ctx = ugAudioCtx();
+  const t = (ctx && ctx.currentTime) || hum.gain.context.currentTime;
+  hum.gain.gain.cancelScheduledValues(t);
+  hum.gain.gain.setValueAtTime(Math.max(0.0001, hum.gain.gain.value), t);
+  hum.gain.gain.linearRampToValueAtTime(0.0001, t + 0.3);   // quick fade-out
+  hum.o1.stop(t + 0.32); hum.o2.stop(t + 0.32);
+}
+// Distance fade: the buzz's volume tracks how far the current camera sits from
+// the car — loud while the chase cam rides the hood, then quieter up as the
+// fixed montage tripods stand further off the tube line (and loud again each
+// time a shot cuts in close). Called every frame after the camera moves.
+const TUBE_HUM_BASE = 0.082;   // full volume at the reference distance below
+const TUBE_HUM_REF = 35;       // camera→car distance (world units) that plays full
+function updateTubeHum() {
+  if (!tubeHum) return;
+  const d = camera.position.distanceTo(car.position);
+  const vol = TUBE_HUM_BASE * THREE.MathUtils.clamp(TUBE_HUM_REF / Math.max(1, d), 0.15, 1.15);
+  tubeHum.gain.gain.setTargetAtTime(vol, tubeHum.gain.context.currentTime, 0.12);
+}
 // Ground-floor finish gate (2026-09-18): a bright three-note "ta-da"
 // arpeggio bursts when the car crosses the FINISH banner.
 function playFinishFanfare() {
@@ -1224,28 +1445,22 @@ function playMineBlast() {
   src.start(t);
 }
 
-const undergroundWorld = addUnderground(undergroundScene, {
-  // Task #6/#34: foam pops get a little synthesized chime.
-  onBlockBump: () => playFoamChime(),
-  // Task #13: sliding conduits shove the car along their travel direction
-  // (hammer-strength slide + spin + small hop). dirX/dirZ is a unit axis.
-  onPipeShove: (dirX, dirZ) => knockPlayerAway(dirX, dirZ, 120, 2.2, 3.2),
-  // Tasks #32/#34: padded pole. Above the level's speed threshold this is a
-  // reward slam — boom + big celebratory bounce; below it, a soft dampened
-  // bounce off the cushions. The light show itself fires inside the level.
-  onPoleHit: (nx, nz, speed) => {
-    const big = speed >= 8;
-    playPoleBoom(big);
-    knockPlayerAway(nx, nz, big ? 110 : 45, big ? 2.6 : 1.2, big ? 3.4 : 1.6);
-  },
+await __loaderYield(0.46, 'the spiral tunnel');
+// Shared builder options for the underground world — reused verbatim whenever
+// the level is rebuilt from scratch (leaving via the tunnel resets it, so a
+// re-entry presents a fully pristine cavern: tiles, glowing spheres, statues
+// and everything else all start fresh).
+const ugBuildOpts = {
+  // Real loader progress: the underground is one enormous build, so it reports
+  // its own internal phases. Map its local 0..1 progress onto the loader's
+  // remaining band (0.48 → 0.97) and let the loader paint between sections.
+  onUndergroundPhase: (frac, label) =>
+    window.__loadingProgress ? window.__loadingProgress(0.48 + 0.49 * frac, label) : null,
   // Candy waterfall: gem hits slam the car back down the grand ramp.
   // weight = 1 for full-weight big gems (power 42 ≈ 7 units @60fps),
   // 25/42 for light big gems (power 25 ≈ 4 units), or 1/21 for regular
   // candy gems (power 2 ≈ 0.3 units) — a tiny nudge.
   onGemSlam: (dirX, dirZ, weight) => knockPlayerAway(dirX, dirZ, 42 * weight, 2.0 * weight, 1.5 * weight),
-  // Rotating platter fling: match the launch power to the ride speed the
-  // platter had built up (s ≈ 0.15 slow crawl → ≈1 fast edge exit).
-  onPlatterEject: (nx, nz, s) => knockPlayerAway(nx, nz, 10 + 55 * s, 1.4, 1.6),
   // Trampoline launch pads: punt the car straight up hard enough to reach the
   // second roof (vy 35 → apex ≈ 34, above the 31.3 tile-top) so it lands on
   // the colorful tiles. Boing + a healthy shake sell the bounce.
@@ -1268,9 +1483,89 @@ const undergroundWorld = addUnderground(undergroundScene, {
     playFinishFanfare();
     shake.intensity = Math.max(shake.intensity, 0.2);
   },
-});
-const ugColliders = undergroundWorld.colliders;
-const ugRamps = undergroundWorld.ramps || [];
+  // Conveyor picker: the robot's giant jaws just clamped onto the car — a
+  // real metal clank and a hard shove off the belt (dirX/dirZ come from the
+  // claw pointing along the belt with a northward flick).
+  onPickerGrab: (dirX, dirZ) => {
+    playClank();
+    shake.intensity = Math.max(shake.intensity, 0.5);
+    knockPlayerAway(dirX, dirZ, 26, 1.6, 1.2);
+  },
+  // Bubble wrap strip: a bubble gets popped underneath the car — THWACK, a
+  // tiny haptic rumble and (via the physics hook) a momentary steering wobble.
+  onBubblePop: () => {
+    playBubblePop();
+    shake.intensity = Math.max(shake.intensity, 0.18);
+    bubbleWobble = Math.min(1.2, bubbleWobble + 0.5);
+  },
+};
+// The underground lives inside its own root group so the whole level can be
+// disposed and hot-swapped when it's rebuilt.
+let ugRoot = new THREE.Group();
+undergroundScene.add(ugRoot);
+let undergroundWorld = await addUnderground(ugRoot, ugBuildOpts);
+let ugColliders = undergroundWorld.colliders;
+let ugRamps = undergroundWorld.ramps || [];
+// Blue-wave halfpipe footprint constants (cx/cz/len + wall-run width) so the
+// airborne branch can air-lock rim pops back inside the pipe.
+let ugPipe = undergroundWorld.halfpipe || null;
+let ugSunkHoleAt = undergroundWorld.sunkHoleAt || (() => false);   // pit-opening test (fall-in, never float)
+// Holy Mountain summit helpers for the little car: the skylight in the crown
+// is a hole it would fall into (the open square between the four rim planks),
+// the same class of hazard as a crumbled ceiling tile but higher up. These
+// mirror the mountain module's MOUNT numbers so the little follower steers
+// around the gap instead of dropping into the chamber.
+let UG_MOUNT = (undergroundWorld.holy && undergroundWorld.holy.MOUNT) ? undergroundWorld.holy.MOUNT : null;
+let UG_SKY_HALF = UG_MOUNT ? UG_MOUNT.skylightR + 0.6 : 0;
+let UG_SKY_SUMMIT_Y = UG_MOUNT ? UG_MOUNT.peakY - 2.5 : Infinity;
+function ugSkylightHoleAt(x, z) {
+  return UG_MOUNT && Math.abs(x - UG_MOUNT.cx) < UG_SKY_HALF && Math.abs(z - UG_MOUNT.cz) < UG_SKY_HALF;
+}
+// Underground reset (leaving via the tunnel → pristine re-entry):
+// startTunnelAscentCine() kicks off a background rebuild of the whole world;
+// once it's finished the finished build waits in ugPendingRoot and
+// maybeSwapUnderground() hot-swaps it in the first frame the underground is
+// OFF camera (worldState is 'city'), so the swap is never visible and
+// re-entering the mine portal shows a completely fresh cavern — ceiling tiles
+// back at their dark shades, guide dots green again, statues standing, glowing
+// surfaces lit, every counter at zero.
+let ugPendingRoot = null;
+let ugPendingWorld = null;
+let ugRebuildBusy = false;
+async function resetUndergroundBuild() {
+  if (ugRebuildBusy || ugPendingRoot) return;   // one rebuild at a time
+  ugRebuildBusy = true;
+  try {
+    const fresh = new THREE.Group();
+    const freshWorld = await addUnderground(fresh, ugBuildOpts);
+    ugPendingRoot = fresh;
+    ugPendingWorld = freshWorld;
+  } catch (e) {
+    console.warn('underground rebuild failed:', e);
+  } finally {
+    ugRebuildBusy = false;
+  }
+}
+function maybeSwapUnderground() {
+  if (!ugPendingRoot) return;
+  if (worldState === 'underground') return;   // never swap while on camera
+  const oldRoot = ugRoot;
+  const oldWorld = undergroundWorld;
+  ugRoot = ugPendingRoot;
+  ugPendingRoot = null;
+  undergroundScene.add(ugRoot);
+  undergroundWorld = ugPendingWorld;
+  ugPendingWorld = null;
+  ugColliders = undergroundWorld.colliders;
+  ugRamps = undergroundWorld.ramps || [];
+ugPipe = undergroundWorld.halfpipe || null;
+  ugSunkHoleAt = undergroundWorld.sunkHoleAt || (() => false);
+  UG_MOUNT = (undergroundWorld.holy && undergroundWorld.holy.MOUNT) ? undergroundWorld.holy.MOUNT : null;
+  UG_SKY_HALF = UG_MOUNT ? UG_MOUNT.skylightR + 0.6 : 0;
+  UG_SKY_SUMMIT_Y = UG_MOUNT ? UG_MOUNT.peakY - 2.5 : Infinity;
+  undergroundScene.remove(oldRoot);
+  if (oldWorld && oldWorld.dispose) oldWorld.dispose(oldRoot);
+}
 // Task #35: how long the car has been ghosting inside an extended pyramid
 // tier at floor level (reset whenever it isn't), plus a counter of cars
 // recovered after being knocked clean OFF the cavern slab (there's no wall
@@ -1278,6 +1573,8 @@ const ugRamps = undergroundWorld.ramps || [];
 // onto invisible floor).
 let stairGhostTimer = 0;
 let ugRecoveries = 0;
+
+await __loaderYield(0.95, 'the little car follower');
 
 // ===== Little car follower (underground) =====
 // A small car that follows the player into the underground: ~30s after the
@@ -1290,11 +1587,19 @@ const LITTLE_CAR_TUNNEL_DUR = 5.0;  // seconds riding the spiral (matches the pl
 const LITTLE_CAR_FOLLOW_SPEED = 9;  // cruise speed while following the player
 const LITTLE_CAR_STOP_DIST = 9;     // stop following this close to the player
 const LITTLE_CAR_RADIUS = 1.2;      // collision radius (scaled-down car)
+const LITTLE_CAR_HALF_LEN = 2.15 * 0.55;   // for knock spin (createCar body × scale 0.55)
+const LITTLE_CAR_HALF_WID = 0.9 * 0.55;
+const LITTLE_CAR_GRAV = 30;         // fall acceleration dropped through a crumbled roof tile (hole)
+const LITTLE_CAR_FALL_MAX = 18;     // terminal fall speed under that gravity
 const littleCar = {
   mesh: null,
   phase: 'idle',   // 'idle' | 'waiting' | 'tunnel' | 'following'
   timer: 0,
   s: 0,
+  falling: false,  // dropping through a roof hole (crumbled checkerboard tile)
+  fallVy: 0,
+  stuckT: 0,       // accumulating timer while stranded far from the player
+  knock: null,     // traffic-style shove state while the player car hits it
 };
 // Player-path trail the little car follows (underground only). The player's
 // position is recorded every few frames; the little car drives along the
@@ -1324,6 +1629,9 @@ function resetLittleCar() {
   littleCar.phase = 'idle';
   littleCar.timer = 0;
   littleCar.s = 0;
+  littleCar.falling = false;
+  littleCar.fallVy = 0;
+  littleCar.knock = null;
   littleCarTrail.length = 0;
   littleCarTrailTimer = 0;
   littleCarWasOnRamp = false;
@@ -1334,6 +1642,9 @@ function startLittleCar() {
   spawnLittleCar();
   littleCar.phase = 'waiting';
   littleCar.timer = 0;
+  littleCar.falling = false;
+  littleCar.fallVy = 0;
+  littleCar.knock = null;
   littleCarTrail.length = 0;
   littleCarTrailTimer = 0;
   littleCarWasOnRamp = false;
@@ -1385,23 +1696,61 @@ function littleCarBlockedAt(x, z, y) {
 }
 
 function littleCarGroundY(x, z, currentY) {
-  if (currentY > CEIL_Y + 0.5 && ugTileGoneAt(x, z)) return currentY;
-  const r = ugRampInfoAt(x, z);
-  const rampSurf = r ? r.baseY + r.height * r.s : -Infinity;
-  if (r !== null && Math.abs(currentY - rampSurf) < 2.0) return rampSurf;
+  const r = ugRampRideAt(x, z, currentY);
+  if (r !== null) return r.baseY + r.height * r.s;
   const eTop = ugElevatorTopAt(x, z, currentY);
   if (eTop > 0.05 && Math.abs(currentY - eTop) < 1.4) return eTop;
   // Just drove off the top of a ramp that reaches the ceiling (the grand
   // ramp / candy waterfall): snap up onto the ceiling instead of dropping
   // through the ramp-top seam. The little car's y can lag the ramp surface
   // near the top (fast trail points / a big frame delta), leaving it just
-  // below the 1.4 snap gate — without this it would fall to the floor.
-  // Over a crumbled tile (a hole) hold height instead of falling through.
-  if (littleCarWasOnRamp && currentY > CEIL_Y - 1.0) {
-    if (ugTileGoneAt(x, z)) return currentY;
-    if (eTop > 0.05) return eTop;
+  // below the 1.4 snap gate — without this it would fall to the floor. Only
+  // snaps onto a SOLID tile: a crumbled tile is a hole, and the falling logic
+  // in updateLittleCar drops the car straight through it (never hold it on
+  // air).
+  if (littleCarWasOnRamp && currentY > CEIL_Y - 1.0 && eTop > 0.05) return eTop;
+  // Pit awareness: over a carved-out feature hole with nothing to ride, never
+  // snap to the y=0 floor (that's the invisible-glass hover). Past the rim
+  // (currentY <= 0) fall through to the feature's sunken surface below
+  // instead, so a drop-in keeps descending until it lands in the bowl.
+  if (ugSunkHoleAt(x, z) && currentY <= 0) {
+    const s = ugRampSurfaceY(x, z);
+    if (s > -Infinity) return s;
   }
   return 0;
+}
+
+// Park the little car back beside the player on clear level ground and resume
+// following. Used after a long gameplay gap strands it (the holy-mountain
+// ejection leaves it grinding against the mountain while the player rolls
+// away). The goat herd follows the LITTLE CAR, so pulling it back to the
+// player is what brings the goats home too.
+function relaunchLittleCarNear(px, pz) {
+  if (!littleCar.mesh) return;
+  const lc = littleCar;
+  lc.phase = 'following';
+  lc.timer = 0;
+  lc.falling = false;
+  lc.fallVy = 0;
+  lc.stuckT = 0;
+  littleCarTrail.length = 0;
+  littleCarTrailTimer = 0;
+  littleCarWasOnRamp = false;
+  // Fan out a handful of candidate spots around the player and take the first
+  // clear level one (not under the machine bridge, not blocked, on the slab).
+  const spots = [[8, 0], [-8, 0], [0, -8], [0, 8], [14, 4], [-12, -6], [18, 0], [6, -12]];
+  let sx = px + 8, sz = pz;
+  for (const [ox, oz] of spots) {
+    const x = px + ox, z = pz + oz;
+    if (ugMachineTopAt(x, z) > 0) continue;
+    if (Math.abs(x) > 145 || z < -97 || z > 178) continue;
+    if (littleCarBlockedAt(x, z, 0)) continue;
+    sx = x; sz = z;
+    break;
+  }
+  lc.mesh.position.set(sx, littleCarGroundY(sx, sz, 0), sz);
+  lc.mesh.rotation.y = Math.atan2(car.position.z - sz, -(car.position.x - sx));
+  lc.mesh.visible = true;
 }
 
 // Advance the little car's state machine. Runs every frame while the player
@@ -1409,6 +1758,24 @@ function littleCarGroundY(x, z, currentY) {
 function updateLittleCar(delta) {
   const lc = littleCar;
   if (!lc.mesh) return;
+
+  // Knocked by the player car (traffic-style): slide + spin out of the way,
+  // overriding its normal AI until the knock settles, then it resumes
+  // following. Same one-discrete-knock rule as the city traffic cars.
+  if (lc.knock) {
+    const k = lc.knock;
+    lc.mesh.position.x += k.vx * delta;
+    lc.mesh.position.z += k.vz * delta;
+    lc.mesh.rotation.y += k.w * delta;
+    const slide = (Math.abs(k.vx) + Math.abs(k.vz)) * delta;
+    for (const w of lc.mesh.userData.wheels) w.rotation.y += slide * 2.6;
+    k.vx *= KNOCK_DECAY;
+    k.vz *= KNOCK_DECAY;
+    k.w *= KNOCK_DECAY;
+    k.t -= delta;
+    if (k.t <= 0) lc.knock = null;
+    return;
+  }
 
   if (lc.phase === 'waiting') {
     // Count down the 30s, then start riding the spiral tunnel down.
@@ -1465,13 +1832,46 @@ function updateLittleCar(delta) {
     // checkerboard ceiling, a crumbled tile is a hole — steer around it
     // too, so the little car doesn't fall through a gap the player opened.
     const onCeiling = lc.mesh.position.y > CEIL_Y + 0.5;
+    const atSummit = lc.mesh.position.y > UG_SKY_SUMMIT_Y;
+    // A crumbled tile under the little car on (or just off the top of) the
+    // roof is a hole it now falls through — exactly like the player. Drop
+    // with gravity to the floor (or onto a ramp slope / soft surface below)
+    // instead of riding on air; while falling it stops steering and just
+    // drops straight down the gap.
+    // A carved-out park feature hole (the halfpipe, vert pit, foam bowl...) is
+    // the same kind of hole as a crumbled ceiling tile: once the little car is
+    // over it at rim height with nothing to ride, it should DROP into it, not
+    // snap to the y=0 floor above it like invisible glass. Mirrors the
+    // player's sunk-fall drop in the underground physics.
+    const pitDrop = ugSunkHoleAt(lc.mesh.position.x, lc.mesh.position.z) &&
+      lc.mesh.position.y <= 0.05 &&
+      ugRampRideAt(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y) === null &&
+      ugElevatorTopAt(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y) <= 0.05;
+    if (lc.falling || pitDrop || (ugTileGoneAt(lc.mesh.position.x, lc.mesh.position.z) && lc.mesh.position.y > CEIL_Y - 1.5)) {
+      if (!lc.falling) {
+        lc.falling = true;
+        lc.fallVy = 0;
+        littleCarWasOnRamp = false;
+      }
+      lc.fallVy = Math.max(lc.fallVy - LITTLE_CAR_GRAV * delta, -LITTLE_CAR_FALL_MAX);
+      lc.mesh.position.y += lc.fallVy * delta;
+      // Landing: snap onto the highest surface at/below the car (a ramp
+      // slope, a stair step/elevator pad) or the cavern floor itself.
+      const landY = littleCarGroundY(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y);
+      if (lc.mesh.position.y <= landY + 0.001) {
+        lc.mesh.position.y = landY;
+        lc.falling = false;
+        lc.fallVy = 0;
+      }
+      return;
+    }
     while (littleCarTrail.length > 0) {
       const p = littleCarTrail[0];
       // Skip trail points that sit over a crumbled ceiling tile (a hole) —
       // the little car can't drive onto them, and chasing one leaves it
       // stuck oscillating at the hole's edge. Target the next clear point
       // instead so it drives around the gap.
-      const overHole = onCeiling && ugTileGoneAt(p.x, p.z);
+      const overHole = (onCeiling && ugTileGoneAt(p.x, p.z)) || (atSummit && ugSkylightHoleAt(p.x, p.z));
       if (overHole || Math.hypot(p.x - lc.mesh.position.x, p.z - lc.mesh.position.z) < LITTLE_CAR_TRAIL_CATCH) {
         littleCarTrail.shift();
       } else {
@@ -1493,7 +1893,7 @@ function updateLittleCar(delta) {
     // ceiling and the little car is still on the floor, the height gap keeps
     // it following instead of stopping far below.
     const distToPlayer = Math.hypot(pdx, pdz, pdy);
-    const clear = (px, pz) => !littleCarBlockedAt(px, pz, lc.mesh.position.y) && !(onCeiling && ugTileGoneAt(px, pz));
+    const clear = (px, pz) => !littleCarBlockedAt(px, pz, lc.mesh.position.y) && !(onCeiling && ugTileGoneAt(px, pz)) && !(atSummit && ugSkylightHoleAt(px, pz));
     // Keep the usual follow gap from the player; while the player is further
     // away, drive toward the next trail point even if it's close — the stop
     // distance only applies to the player, not to intermediate trail points.
@@ -1553,20 +1953,113 @@ function updateLittleCar(delta) {
           break;
         }
       }
+    } else if (atSummit && ugSkylightHoleAt(lc.mesh.position.x, lc.mesh.position.z)) {
+      // Parked on the summit skylight hole — nudge sideways off it, same as a
+      // crumbled ceiling tile.
+      const ad = dist || 1;
+      const perpX = dz / ad, perpZ = -dx / ad;
+      const nudge = LITTLE_CAR_FOLLOW_SPEED * delta;
+      for (const s of [1, -1]) {
+        const tx = lc.mesh.position.x + perpX * nudge * s;
+        const tz = lc.mesh.position.z + perpZ * nudge * s;
+        if (clear(tx, tz)) {
+          lc.mesh.position.x = tx;
+          lc.mesh.position.z = tz;
+          break;
+        }
+      }
+    }
+    // Safety: if the little car still ends up centred over the summit skylight
+    // hole (e.g. right after a trail jump), nudge it sideways off the open
+    // square before the ground-snap would set its height to the rim.
+    if (atSummit && ugSkylightHoleAt(lc.mesh.position.x, lc.mesh.position.z)) {
+      const ad = dist || 1;
+      const pX = dz / ad, pZ = -dx / ad;
+      const nudge = LITTLE_CAR_FOLLOW_SPEED * delta;
+      for (const s of [1, -1]) {
+        const tx = lc.mesh.position.x + pX * nudge * s;
+        const tz = lc.mesh.position.z + pZ * nudge * s;
+        if (clear(tx, tz)) {
+          lc.mesh.position.x = tx;
+          lc.mesh.position.z = tz;
+          break;
+        }
+      }
+    }
+    // Stranded catch-up: if the player has rolled far away at ground level (e.g.
+    // after the holy-mountain ejection) and the trail is exhausted while the
+    // little car is stuck at the floor, stop grinding along and pull it back
+    // beside the player so it — and the goat herd that follows it — stays in
+    // the scene with the car.
+    const bothOnFloor = !chamberCine.active && car.position.y < 2 && lc.mesh.position.y < 2;
+    lc.stuckT = bothOnFloor && distToPlayer > 120 && littleCarTrail.length === 0
+      ? (lc.stuckT || 0) + delta
+      : Math.max(0, (lc.stuckT || 0) - delta * 3);
+    if (lc.stuckT > 6) {
+      relaunchLittleCarNear(car.position.x, car.position.z);
     }
     // Ride the terrain like the player: course ramps (the candy waterfall),
     // soft surfaces (staircase steps, the checkerboard ceiling), or the cavern
-    // floor. The little car never triggers the tile color changes — those only
-    // react to the player — so it drives over the colorful tiles without
-    // lighting them up.
+    // floor. The little car ALSO advances the checkerboard tile colors over
+    // the roof (the underground update feeds it the follower position).
     lc.mesh.position.y = littleCarGroundY(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y);
     // Remember whether the little car is riding a ramp, so the ground-height
     // helper can snap it onto the ceiling when it drives off a ramp's top
     // (instead of falling through the ramp-top/ceiling seam).
-    const rNow = ugRampInfoAt(lc.mesh.position.x, lc.mesh.position.z);
-    littleCarWasOnRamp = rNow !== null && Math.abs(lc.mesh.position.y - (rNow.baseY + rNow.height * rNow.s)) < 2.0;
+    const rNow = ugRampRideAt(lc.mesh.position.x, lc.mesh.position.z, lc.mesh.position.y);
+    littleCarWasOnRamp = rNow !== null;
     const spin = 13 * delta * 2.6;
     for (const w of lc.mesh.userData.wheels) w.rotation.y += spin;
+  }
+}
+
+// The little car gets shoved around physically when the player runs into it,
+// exactly like a city traffic car — it spins out, slides, then resumes
+// following once the knock settles. Runs only in the underground while the
+// little car is actually driving around in the following phase.
+function resolveLittleCarCollision(delta) {
+  const lc = littleCar;
+  if (!lc.mesh || !lc.mesh.visible || lc.phase !== 'following') return;
+  // Hop over the flat car / boulder physics while the player is temporarily
+  // squashed into a pancake (it shouldn't wheel around and shove anything).
+  if (flatCarState.active && flatCarState.phase !== 'bounce') return;
+  const dx = car.position.x - lc.mesh.position.x;
+  const dz = car.position.z - lc.mesh.position.z;
+  const minDist = playerCarRadius + LITTLE_CAR_RADIUS;
+  const dist2 = dx * dx + dz * dz;
+  if (dist2 >= minDist * minDist) return;
+  // Same-surface gate: collision is 2D (altitude-blind), but the player can
+  // be on the checkerboard ceiling or a ramp while the little car is on the
+  // floor far below. Only nudge each other when they're near the same height.
+  if (Math.abs(car.position.y - lc.mesh.position.y) > 2.5) return;
+  const dist = Math.sqrt(dist2) || 0.001;
+  // nx/nz point FROM the little car TO the player. The player is heaviest so
+  // the little car yields the most, shoving IT away (−nx, the player barely
+  // budges +nx) — exactly the mass-split of the city traffic, NOT toward each
+  // other (pushing both inward per frame is what made it jitter in place).
+  const nx = dx / dist, nz = dz / dist;
+  const overlap = minDist - dist;
+  car.position.x += nx * overlap * 0.3;
+  car.position.z += nz * overlap * 0.3;
+  lc.mesh.position.x -= nx * overlap * 0.7;
+  lc.mesh.position.z -= nz * overlap * 0.7;
+  // Knock the little car aside with a spin (the end you hit peels away first)
+  // — one discrete knock per hit, not re-knocked while it's still tumbling.
+  // Same power/spin as the traffic bumper car so it feels identical.
+  if (!lc.knock && !jumpState.inAir) {
+    const power = 13;
+    const spin = 4.2;
+    lc.knock = makeKnock(lc.mesh, LITTLE_CAR_HALF_LEN, LITTLE_CAR_HALF_WID, -nx, -nz, power, spin);
+    shake.intensity = Math.max(shake.intensity, 0.07);
+  }
+  // Recoil the player's scalar speed, mirrored from the traffic behaviour:
+  // the little car is light so the player barely slows, just a firm shove.
+  if (!jumpState.inAir) {
+    const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
+    dir.y = 0;
+    dir.normalize();
+    const align = dir.x * nx + dir.z * nz;
+    velocity.value = THREE.MathUtils.clamp(velocity.value * 0.5 + (align >= 0 ? 2.2 : -1.0), -6, 6);
   }
 }
 
@@ -1590,6 +2083,8 @@ function capShadowCasters(root) {
 capShadowCasters(scene);
 capShadowCasters(rampScene);
 capShadowCasters(undergroundScene);
+
+await __loaderYield(0.96, 'the underground GPU pre-warm');
 
 // ===== Underground GPU pre-warm =====
 // The underground world is built eagerly above (mesh + geometry + materials),
@@ -1624,6 +2119,8 @@ capShadowCasters(undergroundScene);
   for (const o of unculled) o.frustumCulled = true;
   warmRT.dispose();
 }
+
+await __loaderYield(0.97, 'the portals and ramps');
 
 // ===== Portals =====
 // The hilltop rings at (56,27) are the city's gateway to the ramp world.
@@ -1740,6 +2237,33 @@ function ugRampSurfaceY(px, pz) {
   return info ? info.baseY + info.height * info.s : -Infinity;
 }
 
+// The RIDEABLE underground ramp at (px, pz) for a body at height carY, or
+// null. ugRampInfoAt returns the FIRST footprint match, but overlapping ramps
+// at very different heights can mask the one the car is actually on: the holy
+// mountain's spiral road is registered before the direct-climb cone skin, and
+// on the south arc its early wedges (already y≈2–6.5 high) lap onto the cone
+// face's gentle foot band — so a floor-level car used to match the steep road
+// surface (>2.0 above it), fail the ride gate, and drive INSIDE the mountain's
+// rock base until a skirt box trapped it. Scanning for the first ramp whose
+// own surface is within the ride range attaches the car to the surface it is
+// genuinely near (the cone skin at the base), so the whole face mounts cleanly
+// on every azimuth.
+function ugRampRideAt(px, pz, carY) {
+  for (const r of ugRamps) {
+    const dx = px - r.x;
+    const dz = pz - r.z;
+    const along = dx * r.runX + dz * r.runZ;
+    const perp = -dx * r.runZ + dz * r.runX;
+    if (along >= -r.len / 2 && along <= r.len / 2 && Math.abs(perp) < r.width / 2) {
+      const surf = (r.baseY || 0) + r.height * ((along + r.len / 2) / r.len);
+      if (Math.abs(carY - surf) < 2.0) {
+        return { runX: r.runX, runZ: r.runZ, s: (along + r.len / 2) / r.len, height: r.height, len: r.len, boost: r.boost, baseY: r.baseY || 0, def: r };
+      }
+    }
+  }
+  return null;
+}
+
 // Current top of any soft underground surface (staircase steps, the checkerboard
 // ceiling) at (x,z), else 0. The level rewrites soft colliders' `h` every frame,
 // so this tracks standing-on machines exactly. Surfaces more than
@@ -1766,7 +2290,26 @@ function ugElevatorTopAt(px, pz, carY) {
       // (matching buildingTopAt's +0.3) or the car's wheels sink into the
       // tiles. The visibility filter still uses the raw h so the ceiling
       // becomes reachable at the same height as before.
-      if (c.h <= carY + 1.2) top = Math.max(top, c.ceiling ? c.h + 0.3 : c.h);
+      // Bridge colliders (the factory machine's drivable roof) always report
+      // their top, no matter how far above the car — a car flying onto the
+      // machine must snap onto its roof from any height, while a car driving
+      // on the floor underneath just sees it as an overhead ceiling.
+      if (c.bridge || c.h <= carY + 1.2) top = Math.max(top, c.ceiling ? c.h + 0.3 : c.h);
+    }
+  }
+  return top;
+}
+
+// Top of the factory machine's drivable "bridge" roof collider at (x,z), else
+// 0. The machine's roof reports its height here so the airborne landing math
+// can use it as a catch surface — the normal buildingTopAt gate only seats
+// surfaces within 0.4 of the car, which would otherwise let a flying car fall
+// into the machine's open belly.
+function ugMachineTopAt(x, z) {
+  let top = 0;
+  for (const c of ugColliders) {
+    if (c.bridge && Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD) {
+      top = Math.max(top, c.h);
     }
   }
   return top;
@@ -1850,17 +2393,86 @@ const bumperResumeDistance = 4.6;   // drive past this and it chases you again
 let bumperInRamp = false;
 let bumperRampTimer = 20;   // seconds after entering the ramp world before it shows up
 const BUMPER_RAMP_DELAY = 20;
+// Ramp world: a wild monster truck roams the hills, launches off the ramps
+// and flattens the player when it drives over them. It never chases and
+// never knocks props over.
+let monsterTruck = null;        // the mesh, once spawned
+let monsterInRamp = false;
+let monsterRampTimer = 0;
+let monsterPatrol = 0;          // index into MONSTER_WAYPOINTS
+let monsterAir = false;         // ballistic jump state
+let monsterVy = 0;
+let monsterWasRamp = null;
+const MONSTER_RAMP_DELAY = 10;  // seconds after entering the ramp world before it shows up
+const MONSTER_SPEED = 19;       // full throttle for the biggest ramp jumps
 const playerKnockRadius = 2.6;      // how far the player shoves props
 const aiKnockRadius = 1.5;          // how far the blue car shoves props
 const shake = { intensity: 0 };
-// Pothole wobble — set when driving through the pothole on the main road
-const potholeWobble = { active: false, t: 0 };
+// Pothole / lake wobble — set when driving over the pothole or into the park
+// lake; `zone` remembers which one triggered it so the bump direction matches.
+const potholeWobble = { active: false, t: 0, zone: null };
+
+// ===== Park lake splashes =====
+// Tiny water droplets spat up when the car drives into the shallow lake in the
+// NE park. Each droplet is a small sphere with its own velocity + gravity and
+// fades out as it falls; a drop that lands on the "water" bounces once and
+// slows. They live in the city scene and are cleared on world swaps.
+const splashDrops = [];
+const splashGeo = new THREE.SphereGeometry(0.07, 6, 6);
+const splashMaterial = () => new THREE.MeshBasicMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.95 });
+
+function spawnLakeSplash(cx, cz, px, pz) {
+  for (let i = 0; i < 18; i++) {
+    const m = new THREE.Mesh(splashGeo, splashMaterial());
+    m.position.set(px + (Math.random() - 0.5) * 0.9, 0.24, pz + (Math.random() - 0.5) * 0.9);
+    const a = Math.random() * Math.PI * 2;
+    const sp = 1.2 + Math.random() * 2.4;
+    scene.add(m);
+    splashDrops.push({
+      mesh: m,
+      vx: Math.cos(a) * sp,
+      vy: 2.2 + Math.random() * 2.6,
+      vz: Math.sin(a) * sp,
+      life: 0.5 + Math.random() * 0.45,
+      maxLife: 0.5 + Math.random() * 0.45,
+    });
+  }
+}
+
+function updateLakeSplashes(delta) {
+  for (let i = splashDrops.length - 1; i >= 0; i--) {
+    const d = splashDrops[i];
+    d.life -= delta;
+    if (d.life <= 0) {
+      scene.remove(d.mesh);
+      d.mesh.material.dispose();
+      splashDrops.splice(i, 1);
+      continue;
+    }
+    d.vy -= 9.8 * delta;
+    d.mesh.position.x += d.vx * delta;
+    d.mesh.position.y += d.vy * delta;
+    d.mesh.position.z += d.vz * delta;
+    if (d.mesh.position.y <= 0.2) {
+      d.mesh.position.y = 0.2;
+      d.vy = Math.abs(d.vy) * 0.35;
+      d.vx *= 0.6;
+      d.vz *= 0.6;
+    }
+    d.mesh.material.opacity = 0.95 * (d.life / d.maxLife);
+  }
+}
+
+function clearLakeSplashes() {
+  for (const d of splashDrops) {
+    scene.remove(d.mesh);
+    d.mesh.material.dispose();
+  }
+  splashDrops.length = 0;
+}
 // Tier 3 knock impulse: a hammer / wheel-rim / boulder hit slides the car in
 // world space AND spins it (like the bumper car's knock), plus a hop.
 let playerKnock = null;
-// Cooldown for the "stuck against a wall while holding forward" bounce, so it
-// fires once per press instead of every frame.
-let wallBounceCd = 0;
 // The wheel of death (rim or a paddle) flings the car TWICE as far as a
 // hammer does (hammers use power 130 → ~21 units; this → ~43 units).
 const WHEEL_KNOCK_POWER = 260;
@@ -1917,6 +2529,14 @@ function respawnPlayer() {
   jumpState.yVelocity = 0;
   wasOnRamp = null;
   currentRamp = null;
+  taffyState = createTaffyState(false);
+  magnetHold = null;
+  expressState.active = false;
+  expressState.dir = 1;
+  expressState.cooldown = 0;
+  stopTubeHum();
+  expressCinT = 0;
+  bubbleWobble = 0;
   shake.intensity = Math.max(shake.intensity, 0.3);
 }
 
@@ -1938,7 +2558,7 @@ function respawnBumper() {
     break;
   }
   bumperCar.visible = true;
-  bumperCar.scale.set(0.5, 0.5, 0.5);
+  bumperCar.scale.set(1, 1, 1);
   bumperCar.position.set(spot.x, groundHeight, spot.z);
   bumperCar.rotation.y = 0;
   bumperKnock = null;
@@ -1966,10 +2586,15 @@ function enterRampWorld() {
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  clearLakeSplashes();   // no water left in the ramp world
   // The blue car will chase you in here after ~20 seconds.
   bumperInRamp = false;
   bumperRampTimer = BUMPER_RAMP_DELAY;
   bumperKnock = null;
+  // A wild monster truck may also show up and start ramp-jumping.
+  monsterInRamp = false;
+  monsterRampTimer = MONSTER_RAMP_DELAY;
+  reparentTrainCars();
   // Spawn on the rolling hills, facing +Z (north) onto the open ground (you
   // get back to the city by driving under the vortex).
   const sx = 0, sz = -45;
@@ -2008,7 +2633,14 @@ function enterCityWorld() {
     scene.add(bumperCar);
     bumperInRamp = false;
     respawnBumper();
+    reparentChaseTrainConsist();
   }
+  // The ramp-world monster truck stays behind on the hills.
+  if (monsterInRamp) {
+    rampScene.remove(monsterTruck);
+    monsterInRamp = false;
+  }
+  reparentTrainCars();
   car.position.set(0, 40, 0);   // high above the town centre intersection
   car.rotation.set(0, -Math.PI / 2, 0);   // face -Z (south) — steer while falling
   shake.intensity = Math.max(shake.intensity, 0.5);
@@ -2033,6 +2665,15 @@ function enterUndergroundWorld() {
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  magnetHold = null;
+  expressState.active = false;
+  expressState.dir = 1;
+  expressState.cooldown = 0;
+  stopTubeHum();
+  expressCinT = 0;
+  bubbleWobble = 0;
+  reparentTrainCars();
   // The little car follows you in: arm its 30s countdown so it comes out of
   // the tunnel a little while after you do.
   startLittleCar();
@@ -2106,6 +2747,9 @@ function finishSpiralCine() {
 // cuts to the mine-ascent emergence where the car shoots out of the shaft.
 function startTunnelAscentCine() {
   portalGrace = tunnelAscentCine.driveDur + mineAscent.driveTotal + mineAscent.launchTotal + 2.0;
+  // Leaving via the tunnel = the underground gets torn down and rebuilt in
+  // the background, so the next trip down the mine shaft starts pristine.
+  resetUndergroundBuild();
   velocity.value = 0;
   steering.value = 0;
   jumpState.inAir = false;
@@ -2231,8 +2875,17 @@ function startChamberCine() {
 function finishChamberCine() {
   const M = undergroundWorld.holy.MOUNT;
   chamberCine.active = false;
-  if (undergroundWorld.holy) undergroundWorld.holy.flare = 1;
+  if (undergroundWorld.holy) {
+    undergroundWorld.holy.flare = 1;
+    // The car was just mysteriously kicked back out over the cone — the level
+    // reads this one-shot to start the 30 s goat-pilgrimage countdown.
+    undergroundWorld.holy.ejectFlag = true;
+  }
   car.position.set(chamberCine.landX, 0.02, chamberCine.landZ);
+  // The little car (and the goats that follow it) were left stranded up by the
+  // mountain while the player was inside the chamber — pull it back here
+  // beside the landing spot so it follows again on the way out.
+  relaunchLittleCarNear(chamberCine.landX, chamberCine.landZ);
   // Face directly AWAY from the mountain so the car rolls off across the open
   // floor instead of roaming back up the pilgrim's road for a second lap.
   const fxA = car.position.x - M.cx, fzA = car.position.z - M.cz;
@@ -2715,8 +3368,7 @@ function drawMinimap() {
     // Feature markers (idea #29): the cavern is large and dark, so drop a
     // marker at each landmark from the level's exported mapFeatures list —
     // a HOLLOW square per built feature (same faint outline style as the
-    // city-building footprints). The mountain keeps its round ring, and the
-    // spinning platter is drawn ROUND because the platter itself is round.
+    // city-building footprints). The mountain keeps its round ring.
     // Labels are drawn later, after the mirror is undone, so the text isn't
     // flipped.
     const feats = undergroundWorld.mapFeatures || [];
@@ -2728,17 +3380,13 @@ function drawMinimap() {
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = 1.3;
       const s = Math.max(2.2, f.r * mmScale);
-      if (f.kind === 'mountain') {
+      if (f.kind === 'mountain' || f.kind === 'circle') {
         ctx.beginPath();
         ctx.arc(fx, fz, s, 0, Math.PI * 2);
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(fx, fz, 1.6, 0, Math.PI * 2);
         ctx.fill();
-      } else if (f.kind === 'platter') {
-        ctx.beginPath();
-        ctx.arc(fx, fz, s, 0, Math.PI * 2);
-        ctx.stroke();
       } else {
         ctx.strokeRect(fx - s, fz - s, s * 2, s * 2);
       }
@@ -2772,8 +3420,14 @@ function drawMinimap() {
     ctx.textBaseline = 'middle';
     for (const f of (undergroundWorld.mapFeatures || [])) {
       if (!f.label) continue;
-      const lx = 160 - (mmCenter + f.x * mmScale);
-      const lz = 160 - (mmCenter + f.z * mmScale) - Math.max(2.2, f.r * mmScale) - 4;
+      let lx = 160 - (mmCenter + f.x * mmScale);
+      let lz = 160 - (mmCenter + f.z * mmScale) - Math.max(2.2, f.r * mmScale) - 4;
+      // The skate-park square pokes off the canvas's right edge (it sits west
+      // of the mapped region), so clamp its label onto the visible square.
+      if (f.kind === 'park') {
+        lx = Math.max(8, Math.min(148, lx));
+        lz = Math.max(6, Math.min(150, lz));
+      }
       if (lx < 8 || lx > 152 || lz < 6 || lz > 154) continue;
       ctx.fillStyle = 'rgba(0,0,0,0.7)';
       ctx.fillText(f.label, lx + 0.6, lz + 0.6);
@@ -2781,6 +3435,8 @@ function drawMinimap() {
       ctx.fillText(f.label, lx, lz);
     }
   }
+
+  
 
   // Axis numbers: x values along the top edge, z values down the left edge
   // (both shown in MAP coordinates: x=0 at the left edge, z=0 at the top
@@ -2834,15 +3490,33 @@ function drawMinimap() {
 window.addEventListener('keydown', (event) => {
   keys[event.code] = true;
   // Spacebar pauses / unpauses the game (for screenshots). Pausing hides the
-  // minimap and the touch joystick; they come back when you unpause.
-  if (event.code === 'Space') {
+  // minimap and the touch joystick; they come back when you unpause. Ignored
+  // while the car-showroom screen is open (the game is already paused).
+  if (event.code === 'Space' && !selectMode) {
     event.preventDefault();
     setPaused(!isPaused);
+  }
+  // Car-showroom keys (gear screen): ←/→ carousel the cars, Enter drives the
+  // car on show (returns to the game), Esc backs out without changing.
+  if (selectMode) {
+    if (event.code === 'ArrowLeft') { event.preventDefault(); cycleCar(-1); }
+    else if (event.code === 'ArrowRight') { event.preventDefault(); cycleCar(1); }
+    else if (event.code === 'Enter') { event.preventDefault(); exitSelectMode(true); }
+    else if (event.code === 'Escape') { event.preventDefault(); exitSelectMode(false); }
   }
   // H: car horn. Also makes the Holy Mountain shrine react (idea #24).
   if (event.code === 'KeyH') {
     playHorn();
     if (undergroundWorld.holy && undergroundWorld.holy.honk) undergroundWorld.holy.honk();
+  }
+  // U: instant teleport into the underground (no mine-dive, no spiral arrival).
+  // event.code is the physical key, so Shift/case doesn't matter. Park the car
+  // at the tunnel foot and hand control back immediately.
+  if (event.code === 'KeyU') {
+    if (worldState !== 'underground') {
+      enterUndergroundWorld();
+      if (spiralCine.active) finishSpiralCine();
+    }
   }
 });
 window.addEventListener('keyup', (event) => {
@@ -2920,6 +3594,663 @@ function setPaused(p) {
     clock.getDelta();
   }
 }
+
+// ===== Settings menu (gear icon, top-left) =====
+// A gear button in the top-left opens the settings panel — currently a single
+// "change car" setting that leads to a car picker. Picking a car swaps the
+// player's mesh in place: `car` keeps its transform and its scene parenting
+// (survives the enter*World world switches), only the visible children change.
+// Every traffic-car body is available plus the little car; playing as the
+// steamroller lets you smash traffic (see the traffic collision code below).
+const CAR_KINDS = [
+  { id: 'classic', label: 'Crankshaft', color: '#a61e1e', scale: 1, build: () => createCar(0xa61e1e) },
+  { id: 'city', label: 'City Car', color: '#33415c', scale: 1, build: () => createCar(0x33415c) },
+  { id: 'bug', label: 'VW Bug', color: '#2d6a4f', scale: 1, build: () => createVWBug(0x2d6a4f) },
+  { id: 'taxi', label: "'57 Taxi", color: '#f5c518', scale: 1, build: () => createChevy57Taxi() },
+  { id: 'little', label: 'Rampy', color: '#1e7ea6', scale: 0.55, build: () => createLittleCar(0x1e7ea6) },
+  // A purple lifted monster truck — huge knobby tires. Drives over traffic and
+  // squashes it flat exactly like the steamroller (it shares the same heavy
+  // crush path), and an AI copy patrols the ramp world taking huge ramp jumps.
+  { id: 'monstertruck', label: 'Monster Truck', color: '#7b2fbf', scale: 1, build: () => createMonsterTruck() },
+  // A kid on a skateboard. `faceZ` tells the swap code the model's front is +Z
+  // (like the robot) so it's quarter-turned onto the cars' -X forward axis.
+  // `show` bumps it up a touch in the showroom since the figure is small.
+  { id: 'skateboarder', label: 'Skater', color: '#d05a3a', scale: 1, faceZ: true, show: 1.5, build: () => createSkateboarder() },
+  // The raccoon hot rod — a little red rod with a raccoon driver, engine rumble
+  // and fire-spitting tailpipes (animated in the frame loop via
+  // `car.userData.effects`). Builds -X-facing like the other cars, so NO faceZ.
+  { id: 'hotrod', label: 'Hot Rod', color: '#c7362b', scale: 1, build: () => createRaccoonHotRod() },
+  // The freight-train locomotive from train.js — the same 1869 steamer that
+  // pulls the NPC consist around the city's rail loop. It faces +Z (like the
+  // robot/skater), so `faceZ` quarter-turns it onto the cars' -X forward.
+  { id: 'train', label: 'Train', color: '#2c323d', scale: 1, faceZ: true, build: () => makeLocomotive() },
+  { id: 'bus', label: 'School Bus', color: '#f5a623', scale: 1, build: () => createSchoolBus() },
+  // An open-wheel Indy racer that tops out 1.5× faster than every other car
+  // (see the pedals below).
+  { id: 'indy', label: 'Indy 500', color: '#1f5af5', scale: 1, build: () => createIndyCar() },
+  { id: 'steamroller', label: 'Steamroller', color: '#f2b705', scale: 1, build: () => createSteamroller() },
+  // The drivable giant robot. `show` is an extra showroom shrink so its full
+  // 15-tall body fits on the stage; when driven it's the same height (14-ish),
+  // stomping along on the car's ground pivot with its legs swinging.
+  { id: 'robot', label: 'Giant Robot', color: '#9aa3ad', scale: 1, show: 0.42, build: () => buildRobotModel() },
+  // The giant tarantula — a lurching ball of fur with eight striding legs and
+  // two hot red eyes. Faces +Z like the robot, so `faceZ` quarter-turns it
+  // onto the cars' -X forward axis; `show` shrinks it for the showroom stage.
+  { id: 'tarantula', label: 'Giant Tarantula', color: '#3a2c1c', scale: 2.5, faceZ: true, show: 0.3, build: () => makeTarantula() },
+];
+let playerCarKind = CAR_KINDS[0].id;
+// Gear screen: which tab is on show ('player' swaps your ride, 'chase' swaps
+// the car that hounds you). The chase defaults to the little blue utility car
+// — same as the original AI chaser — but you can hand it ANY ride from the
+// list, giant tarantula included.
+let pickerTab = 'player';
+let chaseCarKind = 'little';
+// Each tab remembers its own armed-but-not-committed pick, so previewing a car
+// on one screen and hopping to the other never discards (or commits) it.
+let playerPreview = CAR_KINDS[0].id;
+let chasePreview = chaseCarKind;
+let playerSteamroller = false;
+let playerRobot = false;
+let playerMonster = false;
+let playerIndy = false;
+let playerTrain = false;
+let playerTarantula = false;
+// Stride phase + walk updater for the giant tarantula (its 8 legs scissor in
+// an alternating diagonal gait instead of spinning wheels).
+let playerTarantulaPhase = 0;
+function updatePlayerTarantulaWalk(delta, speed) {
+  if (!car.userData.robotAnim) return;
+  playerTarantulaPhase += delta * (0.6 + Math.abs(speed) * 1.6);
+  const t = THREE.MathUtils.clamp(Math.abs(speed) / 1.2, 0, 1);
+  const s = Math.sin(playerTarantulaPhase) * 0.5 * (0.25 + t * 0.75);  // trembles a touch at rest
+  const a = car.userData.robotAnim;
+  if (a && a.legs) {
+    const A = [0, 3, 4, 7];   // front-left + the two cross-diagonals move together
+    for (let i = 0; i < a.legs.length; i++) {
+      const drive = (A.indexOf(i) >= 0 ? 1 : -1) * s
+        + 0.06 * Math.sin(playerTarantulaPhase * 1.7 + i * 1.4);
+      a.legs[i].rotation.y = drive;
+    }
+  }
+}
+// The drivable locomotive's trailing freight consist — copies of the exact
+// cars that trail the circling NPC train (boxcars, hoppers, gondolas,
+// tankers, flatcars, autorack, well car, reefer, coil car, stock car,
+// caboose). They follow wherever you drive and never collide.
+let trainCars = [];
+let selectMode = false;
+let selectWasPaused = false;
+let selectPreview = CAR_KINDS[0].id;
+
+// Leg/arm swing for the drivable robot, driven by how fast you're moving.
+// Phase only advances with speed so the mech stands perfectly still at rest.
+let playerRobotPhase = 0;
+function updatePlayerRobotWalk(delta, speed) {
+  if (!car.userData.robotAnim) return;
+  playerRobotPhase += delta * (0.5 + Math.abs(speed) * 1.15);
+  const t = THREE.MathUtils.clamp(Math.abs(speed) / 1.2, 0, 1);   // 0 at rest → 1 at a jog
+  const swing = Math.sin(playerRobotPhase) * 0.62 * t;
+  const a = car.userData.robotAnim;
+  a.legL.rotation.x = swing;
+  a.legR.rotation.x = -swing;
+  a.armL.rotation.x = -swing * 0.55;
+  a.armR.rotation.x = swing * 0.55;
+}
+
+// Swap the chasing car's visible body for any picker car, same way swapPlayerCar
+// dresses the player ride: children go into an inner group scaled to the pick,
+// and the frame loop keeps driving bumperCar's position/rotation as usual. The
+// outer scale stays 1 — the tiny blue sedan it originally packed got folded
+// into the 'little' pick — so respawnBumper's reset never mis-sizes the swap.
+function applyChaseCar(kind) {
+  const entry = CAR_KINDS.find((k) => k.id === kind);
+  if (!entry) return;
+  const newMesh = entry.build();
+  const inner = new THREE.Group();
+  if (entry.scale !== 1) inner.scale.setScalar(entry.scale);
+  while (newMesh.children.length > 0) inner.add(newMesh.children[0]);
+  if (entry.faceZ) inner.rotation.y = -Math.PI / 2;
+  while (bumperCar.children.length > 0) bumperCar.remove(bumperCar.children[0]);
+  bumperCar.add(inner);
+  bumperCar.scale.set(1, 1, 1);
+  chaseCarKind = kind;
+  // A chase train must be the WHOLE train — the locomotive plus its trailing
+  // freight consist. Any other chaser drops its own consist.
+  if (kind === 'train') spawnChaseTrainConsist();
+  else clearChaseTrainConsist();
+}
+
+// Swap the player's visible body for one of the picker cars. The model's
+// children move into a small wrapper group scaled to the car's intended size —
+// the frame loop owns the outer `car.scale` (flat / taffy squash), so the
+// "little car" stays little via the inner group instead.
+function swapPlayerCar(kind) {
+  const entry = CAR_KINDS.find((k) => k.id === kind);
+  if (!entry) return;
+  const newMesh = entry.build();
+  const inner = new THREE.Group();
+  if (entry.scale !== 1) inner.scale.setScalar(entry.scale);
+  while (newMesh.children.length > 0) inner.add(newMesh.children[0]);
+  const isRobot = kind === 'robot';
+  // The robot and the skateboarder models face +Z; the cars' forward is -X,
+  // so quarter-turn the model onto the axis you actually drive along.
+  if (isRobot || entry.faceZ) inner.rotation.y = -Math.PI / 2;
+  if (isRobot) {
+    // The mech just stomps — the frame loop animates its legs through the
+    // userData refs instead of spinning wheels.
+    car.userData.robotAnim = newMesh.userData;
+    car.userData.wheels = [];
+    car.userData.wheelPivots = [];
+    car.userData.effects = null;
+  } else {
+    car.userData.robotAnim = null;
+    car.userData.wheels = newMesh.userData.wheels;
+    // Not every model steers (the train has no wheelPivots) — empty is fine.
+    car.userData.wheelPivots = newMesh.userData.wheelPivots || [];
+    // Only the hot rod ships an effects rig (rumbling engine + exhaust flame
+    // pops) — everything else animates wheels and steers.
+    car.userData.effects = newMesh.userData.effects || null;
+  }
+  // Playing as the giant tarantula: store its leg pivots in the same slot the
+  // robot uses (nothing else references robotAnim there), so the frame loop
+  // can stride its legs rather than spin wheels.
+  if (kind === 'tarantula') car.userData.robotAnim = newMesh.userData;
+  while (car.children.length > 0) car.remove(car.children[0]);
+  car.add(inner);
+  playerCarKind = kind;
+  // The monster truck shares the steamroller's heavy crush path (drives over
+  // traffic, squashes it flat, traffic doesn't brake for it).
+  playerSteamroller = kind === 'steamroller' || kind === 'monstertruck';
+  playerMonster = kind === 'monstertruck';
+  playerIndy = kind === 'indy';
+  playerRobot = isRobot;
+  playerTarantula = kind === 'tarantula';
+  // The locomotive pulls its freight consist along; any other ride packs the
+  // cars away.
+  if (playerTrain && kind !== 'train') {
+    removeTrainCars();
+    playerTrain = false;
+  } else if (kind === 'train' && !playerTrain) {
+    spawnTrainCars();
+    playerTrain = true;
+  }
+  if (isRobot) car.scale.set(1, 1, 1);   // no taffy/flat squash
+  // Riding as the skater (or the robot) — a person can't be a flattened car, so
+  // clear any pancake left over from the ride you just swapped out of.
+  if (isRobot || kind === 'skateboarder') flatCarState = createFlatCarState(false);
+}
+
+// ===== Drivable locomotive — trailing freight consist =====
+// When you drive the train you drag a copy of the NPC freight train's cars
+// behind you: 15 units chaining off the locomotive's rear, each chasing a
+// point `SPACING` units behind the one ahead (wrapped deltas keep the whole
+// consist following across the map seam). They're cosmetic — they never
+// collide, and they ride whatever surface the player is on in the current
+// world.
+// The surface a freeride freight car rides. `state` is the WORLD the consist
+// itself sits in (not always the player's — the chase consist is keyed to the
+// bumper car's world via bumperInRamp). City: mirror the player's own surface
+// — the ramp slope when the consist is ON a board/wedge ramp (the giant mega
+// ramp), the street otherwise, and any rooftop the chain drives across.
+// `probeY` is the LOCOMOTIVE's height: a trailing car's own height is still
+// at street level when it reaches the board's base (it hasn't caught up yet),
+// and probing with that low value trips the mega ramp's "under the plank"
+// gate, dumping every car back to the street instead of riding up. Ship the
+// loco's height so the WHOLE consist commits to the board the moment the
+// locomotive does.
+function trainCarY(x, z, probeY, state) {
+  if (state === 'ramp') return Math.max(terrainHeightAt(x, z) + groundHeight, rampRampSurfaceY(x, z));
+  if (state === 'underground') return car.position.y;   // hover beside the loco
+  return Math.max(rampSurfaceY(x, z, probeY), buildingTopAt(x, z));
+}
+
+function spawnTrainCars() {
+  if (trainCars.length) return;
+  const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
+  fwd.y = 0;
+  fwd.normalize();
+  // The freight models are long along +Z, and the chain heads back toward
+  // the loco (dir = fwd), so point each car's +Z nose along `fwd`.
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  let bx = car.position.x;
+  let bz = car.position.z;
+  const parent = worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene;
+  for (const mesh of buildFreightCars()) {
+    mesh.position.set(bx - fwd.x * SPACING, trainCarY(bx - fwd.x * SPACING, bz - fwd.z * SPACING, car.position.y, worldState), bz - fwd.z * SPACING);
+    mesh.rotation.y = yaw;
+    const rig = new THREE.Group();
+    mesh.add(rig);
+    mesh.userData.wobble = { t: Infinity, axis: new THREE.Vector3(1, 0, 0), dir: new THREE.Vector3(1, 0, 0), rig, tiltQ: new THREE.Quaternion(), pitch: 0, fallVy: 0 };
+    parent.add(mesh);
+    trainCars.push(mesh);
+    bx -= fwd.x * SPACING;
+    bz -= fwd.z * SPACING;
+  }
+}
+
+function removeTrainCars() {
+  for (const mesh of trainCars) {
+    scene.remove(mesh);
+    rampScene.remove(mesh);
+    undergroundScene.remove(mesh);
+  }
+  trainCars = [];
+}
+
+// When the player portals between worlds, move the trailing consist into the
+// scene the car just entered so it follows there.
+function reparentTrainCars() {
+  if (!trainCars.length) return;
+  const parent = worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene;
+  for (const mesh of trainCars) {
+    if (mesh.parent && mesh.parent !== parent) mesh.parent.remove(mesh);
+    if (mesh.parent !== parent) parent.add(mesh);
+  }
+}
+
+// Shared freeride chain: every car in `cars` chases a point `SPACING` behind
+// the one ahead (wrapped deltas keep it following across the map seam), rolls
+// its wheels, and points its +Z nose along the chain. Heights are NOT owned
+// here — rideConsistSurfaces() gives every car gravity + surfaces so it falls
+// and lands exactly like the player car (see the bump/ride/tilt block below).
+function stepConsist(cars, leadX, leadZ, leadY, delta) {
+  let prevX = leadX;
+  let prevZ = leadZ;
+  for (let i = 0; i < cars.length; i++) {
+    const mesh = cars[i];
+    // Delta from the point ahead, shortest way around the wrap seam.
+    let dx = wrappedDeltaX(prevX, mesh.position.x);
+    let dz = wrappedDeltaZ(prevZ, mesh.position.z);
+    const d = Math.hypot(dx, dz);
+    let step = 0;
+    if (d >= SPACING) {
+      // Chase the point ahead: faster when stretched, gentle when close.
+      step = Math.min(d - SPACING, Math.max(4 * delta, d * 2.6 * delta));
+    }
+    if (step > 0) {
+      dx /= d;
+      dz /= d;
+      // Pull back toward the point ahead (`-dx/step` closes the gap).
+      mesh.position.x = wrapCoordX(mesh.position.x - dx * step);
+      mesh.position.z = wrapCoordZ(mesh.position.z - dz * step);
+      // Point the car's +Z nose along the chain toward the point ahead
+      // (-dx, -dz): R_y(yaw)·(0,0,1) = (sin yaw, cos yaw) must equal it.
+      const targetYaw = Math.atan2(-dx, -dz);
+      let dy = targetYaw - mesh.rotation.y;
+      dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+      mesh.rotation.y += dy * Math.min(1, 5 * delta);
+      // Roll the car's wheels; the freight wheels have radius 0.5.
+      const roll = step / 0.5;
+      for (const w of mesh.userData.wheels) w.rotation.y += roll;
+    }
+    prevX = mesh.position.x;
+    prevZ = mesh.position.z;
+  }
+}
+
+function updateTrainCars(delta) {
+  if (!playerTrain || trainCars.length === 0) return;
+  stepConsist(trainCars, car.position.x, car.position.z, car.position.y, delta);
+  // The player bumps the trailing cars into a wobble, just like on the tracks.
+  bumpConsistWith(CONSIST_THREAT, trainCars);
+  for (const mesh of trainCars) tickConsistWobble(mesh, delta);
+  rideConsistSurfaces(trainCars, car.position.y, delta, worldState);
+  tiltConsistCars(trainCars, car.position.y, worldState);
+}
+
+// When the CHASE ride is the locomotive, it drags the identical 15-car freight
+// consist behind it too — so a full train hounds you through the city and the
+// ramp world. Cosmetic like the player's consist; the bumper's collider stays
+// just the locomotive.
+let chaseTrainCars = [];
+function spawnChaseTrainConsist() {
+  clearChaseTrainConsist();
+  const ry = bumperCar.rotation.y;
+  const fwd = new THREE.Vector3(-Math.cos(ry), 0, Math.sin(ry));   // -X nose
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  let bx = bumperCar.position.x;
+  let bz = bumperCar.position.z;
+  const parent = bumperInRamp ? rampScene : scene;
+  for (const mesh of buildFreightCars()) {
+    mesh.position.set(bx - fwd.x * SPACING, trainCarY(bx - fwd.x * SPACING, bz - fwd.z * SPACING, bumperCar.position.y, bumperInRamp ? 'ramp' : 'city'), bz - fwd.z * SPACING);
+    mesh.rotation.y = yaw;
+    const rig = new THREE.Group();
+    mesh.add(rig);
+    mesh.userData.wobble = { t: Infinity, axis: new THREE.Vector3(1, 0, 0), dir: new THREE.Vector3(1, 0, 0), rig, tiltQ: new THREE.Quaternion(), pitch: 0, fallVy: 0 };
+    parent.add(mesh);
+    chaseTrainCars.push(mesh);
+    bx -= fwd.x * SPACING;
+    bz -= fwd.z * SPACING;
+  }
+}
+
+function clearChaseTrainConsist() {
+  for (const mesh of chaseTrainCars) {
+    scene.remove(mesh);
+    rampScene.remove(mesh);
+  }
+  chaseTrainCars = [];
+}
+
+// Keep the chase consist in the same world as the bumper car.
+function reparentChaseTrainConsist() {
+  if (!chaseTrainCars.length) return;
+  const parent = bumperInRamp ? rampScene : scene;
+  for (const mesh of chaseTrainCars) {
+    if (mesh.parent && mesh.parent !== parent) mesh.parent.remove(mesh);
+    if (mesh.parent !== parent) parent.add(mesh);
+  }
+}
+
+function updateChaseTrainCars(delta) {
+  if (chaseTrainCars.length === 0) return;
+  stepConsist(chaseTrainCars, bumperCar.position.x, bumperCar.position.z, bumperCar.position.y, delta);
+  bumpConsistWith(CONSIST_THREAT, chaseTrainCars);
+  for (const mesh of chaseTrainCars) tickConsistWobble(mesh, delta);
+  rideConsistSurfaces(chaseTrainCars, bumperCar.position.y, delta, bumperInRamp ? 'ramp' : 'city');
+  tiltConsistCars(chaseTrainCars, bumperCar.position.y, bumperInRamp ? 'ramp' : 'city');
+}
+
+// Running into a freeride consist rock the cars exactly like the NPC train's
+// cars do on the tracks: the hit car tilts around a horizontal axis facing
+// the shove and eases back to upright, and the player car is bounced out of
+// the car body. Kept cosmetic — the chain still follows the locomotive.
+const CONSIST_R = 1.7;   // per-car collision radius (train.js UNIT_R)
+const CONSIST_UP = new THREE.Vector3(0, 1, 0);
+const CONSIST_THREAT = { p: car, r: playerCarRadius };
+function bumpConsistWith(threat, cars) {
+  for (const mesh of cars) {
+    const w = mesh.userData.wobble;
+    if (!w) continue;
+    if (Math.abs(threat.p.position.y - mesh.position.y) > 6) continue;
+    const dx = wrappedDeltaX(mesh.position.x, threat.p.position.x);
+    const dz = wrappedDeltaZ(mesh.position.z, threat.p.position.z);
+    const min = threat.r + CONSIST_R;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= min * min) continue;
+    const d = Math.sqrt(d2) || 0.001;
+    const nx = dx / d, nz = dz / d;      // mesh -> threat
+    w.t = 0;
+    w.dir.set(-nx, 0, -nz);              // the car shoves away from the hit
+    w.axis.crossVectors(CONSIST_UP, w.dir);
+    if (w.axis.lengthSq() < 1e-4) w.axis.set(1, 0, 0);
+    w.axis.normalize();
+    // Bounce the player car out of the car body, like a real solid train.
+    threat.p.position.x += nx * (min - d);
+    threat.p.position.z += nz * (min - d);
+  }
+}
+// One wobble tick: rock the tilt rig around the hit axis, easing back to
+// level. The rock lives on a child rig so it never fights the chain steering
+// (which owns the car's rotation.y / position via stepConsist).
+function tickConsistWobble(mesh, delta) {
+  const w = mesh.userData.wobble;
+  if (!w || w.t >= 1e9) return;
+  w.t += delta;
+  const decay = Math.exp(-3 * w.t);
+  if (decay < 0.02) {
+    w.t = Infinity;
+    w.tiltQ.identity();
+    return;
+  }
+  const tilt = Math.sin(w.t * 9) * 0.6 * decay;
+  w.tiltQ.setFromAxisAngle(w.axis, tilt);
+  mesh.position.x += w.dir.x * 0.3 * decay;
+  mesh.position.z += w.dir.z * 0.3 * decay;
+}
+
+// Ride the ground/ramp/rooftop like the player does instead of snapping Y to
+// a surface: while a trailing car is above its floor it falls with real
+// gravity and only lands once it actually reaches the ground. Driving off the
+// top of the mega ramp therefore arcs every car off the edge and down after
+// the locomotive, just like the player's own airborne physics. `leadY` is the
+// locomotive's height, which board ramps probe with (the whole consist commits
+// to a plank the moment the loco does).
+const CONSIST_GROUND_EPS = 0.05;
+function rideConsistSurfaces(cars, leadY, delta, state) {
+  for (const mesh of cars) {
+    const w = mesh.userData.wobble;
+    if (!w) continue;
+    const surf = trainCarY(mesh.position.x, mesh.position.z, leadY, state);
+    w.surf = surf;
+    if (mesh.position.y <= surf + CONSIST_GROUND_EPS) {
+      mesh.position.y = surf;
+      w.fallVy = 0;
+      w.grounded = true;
+    } else {
+      w.fallVy -= gravity * delta;
+      w.grounded = false;
+      mesh.position.y += w.fallVy * delta;
+      if (mesh.position.y <= surf) {
+        const impact = Math.abs(w.fallVy);
+        w.fallVy = 0;
+        mesh.position.y = surf;
+        w.grounded = true;
+        // A hard drop lands with a small rock, like the player's thud.
+        if (impact > 6) {
+          w.t = 0;
+          w.dir.set(0, 0, 1);
+          w.axis.crossVectors(CONSIST_UP, w.dir).normalize();
+        }
+      }
+    }
+  }
+}
+
+// Pitch each trailing car to its local surface slope (the mega ramp's ~40°
+// climb tips the freight up to match), eased the same weighty 0.28 the player
+// uses. The pitch lives on the SAME tilt rig as the knock wobble: the final
+// rig pose is pitch ⊗ wobble, so a knock can't fight the climbing attitude
+// and vice versa. Airborne cars level out, like the player does.
+const CONSIST_PITCH_STEP = 1.5;       // nose/rail sample distance for the slope
+const CONSIST_PITCH_LERP = 0.28;      // matches the player's ramp-body attitude rate
+const _consistPitchQ = new THREE.Quaternion();
+function tiltConsistCars(cars, leadY, state) {
+  for (const mesh of cars) {
+    const w = mesh.userData.wobble;
+    if (!w) continue;
+    let target = 0;
+    if (w.grounded) {
+      const yaw = mesh.rotation.y;
+      const sn = Math.sin(yaw) * CONSIST_PITCH_STEP;
+      const cs = Math.cos(yaw) * CONSIST_PITCH_STEP;
+      const fh = trainCarY(mesh.position.x + sn, mesh.position.z + cs, leadY, state);
+      const rh = trainCarY(mesh.position.x - sn, mesh.position.z - cs, leadY, state);
+      target = -Math.atan2(fh - rh, CONSIST_PITCH_STEP * 2);
+    }
+    w.pitch += (target - w.pitch) * CONSIST_PITCH_LERP;
+    _consistPitchQ.setFromEuler(new THREE.Euler(w.pitch, 0, 0));
+    w.rig.quaternion.copy(_consistPitchQ).multiply(w.tiltQ);
+  }
+}
+
+// ===== Car showroom (gear icon, top-left) =====
+// Clicking the gear pauses the game and drops you onto a black sound stage: a
+// dedicated scene renders your current car alone, spinning slowly over a blue
+// glow on the main canvas (the pause already hides the minimap + joystick).
+// The side arrows carousel the cars; clicking the spinning car drives that car
+// and returns to the game immediately. While the showroom is up the gear icon
+// turns into a return arrow — it exits without changing your ride. The car
+// swap keeps `car`'s transform and scene parenting (it survives the enter*World
+// switches), only the visible children change. Playing as the steamroller lets
+// you smash traffic (see the traffic collision code below).
+let selectScene = null;
+let selectCamera = null;
+let selectCarGroup = null;
+let selectLastNow = 0;
+// Showroom display scale — the on-screen car is half the size it would fill
+// the frame at, leaving generous dark space around it on the stage.
+const SELECT_CAR_SHOW_SCALE = 0.5;
+
+// Radial blue-haze texture for the showroom stage: bright at the centre and
+// fading to fully transparent, so the glow melts away instead of ending at a
+// hard disc edge.
+function makeGlowTexture() {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(150, 210, 255, 0.85)');
+  grad.addColorStop(0.3, 'rgba(80, 160, 255, 0.45)');
+  grad.addColorStop(0.6, 'rgba(40, 100, 235, 0.16)');
+  grad.addColorStop(1, 'rgba(25, 60, 160, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
+function buildSelectScene() {
+  selectScene = new THREE.Scene();
+  selectScene.background = new THREE.Color(0x020407);
+  selectCamera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 200);
+  selectCamera.position.set(0, 2.4, 10.5);
+  selectCamera.lookAt(0, 0.95, 0);
+
+  // Soft haze under the car: one wide additive-bright plane whose texture
+  // fades out at the edges. Bigger and further from the car than a hard disc,
+  // so there's breathing room all around.
+  const glow = new THREE.Mesh(
+    new THREE.PlaneGeometry(8, 8),
+    new THREE.MeshBasicMaterial({
+      map: makeGlowTexture(),
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    })
+  );
+  glow.rotation.x = -Math.PI / 2;
+  glow.position.y = 0.02;
+  selectScene.add(glow);
+
+  selectScene.add(new THREE.HemisphereLight(0xffffff, 0x102040, 0.5));
+  const key = new THREE.DirectionalLight(0xffffff, 0.9);
+  key.position.set(3, 6, 4);
+  selectScene.add(key);
+  const rim = new THREE.DirectionalLight(0x4aa8ff, 0.55);
+  rim.position.set(-3.5, 3, -4);
+  selectScene.add(rim);
+  const back = new THREE.DirectionalLight(0x7ef9ff, 0.35);
+  back.position.set(0, 2.5, -5);
+  selectScene.add(back);
+}
+
+function refreshSelectCar(kind) {
+  if (selectCarGroup) selectScene.remove(selectCarGroup);
+  const entry = CAR_KINDS.find((k) => k.id === kind);
+  if (!entry) return;
+  const model = entry.build();
+  const inner = new THREE.Group();
+  // Show cars at half size on the showroom stage so they sit small within the
+  // glow instead of filling the frame (the little car scales too). The robot's
+  // `show` shrinks it even further — its full 15 units would tower over the
+  // stage framing.
+  inner.scale.setScalar(entry.scale * SELECT_CAR_SHOW_SCALE * (entry.show || 1));
+  while (model.children.length > 0) inner.add(model.children[0]);
+  selectCarGroup = inner;
+  selectScene.add(inner);
+  selectPreview = kind;
+  // The arrows arm the tab you're on; the other tab's arm is left alone.
+  if (pickerTab === 'chase') chasePreview = kind;
+  else playerPreview = kind;
+  if (carHintEl) carHintEl.textContent = entry.label;
+}
+
+function enterSelectMode() {
+  if (selectMode || selectScene === null) return;
+  selectWasPaused = isPaused;
+  selectLastNow = performance.now();
+  refreshSelectCar(pickerTab === 'chase' ? chasePreview : playerPreview);
+  selectMode = true;
+  document.body.classList.add('select-mode');
+  gearBtn.textContent = '←';
+  gearBtn.title = 'Back to the game';
+  setPaused(true);   // hides the minimap + joystick and freezes the world
+}
+
+function exitSelectMode(apply) {
+  if (!selectMode) return;
+  selectMode = false;
+  document.body.classList.remove('select-mode');
+  gearBtn.textContent = '⚙';
+  gearBtn.title = 'Settings';
+  // Committing applies BOTH arms — the player ride you picked and the chaser
+  // you picked, on whichever tab — so a click / Enter drives every choice home
+  // at once. Only the ← Back button (or Esc) returns without changing anything.
+  if (apply) {
+    if (playerPreview !== playerCarKind) {
+      swapPlayerCar(playerPreview);
+      playHorn();   // audibly confirm the new ride
+    }
+    if (chasePreview !== chaseCarKind) {
+      applyChaseCar(chasePreview);
+      playHorn();   // audibly confirm the new chaser
+    }
+  }
+  setPaused(selectWasPaused);
+}
+
+function cycleCar(dir) {
+  const i = CAR_KINDS.findIndex((k) => k.id === selectPreview);
+  refreshSelectCar(CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id);
+}
+
+// Switch the showroom to the PLAYER or CHASE tab — the carousel now spins and
+// applies whichever kind the active tab is allowed to change.
+function setPickerTab(tab) {
+  pickerTab = tab;
+  const tabEl = (id) => document.getElementById(id);
+  const pt = tabEl('tab-player');
+  const ct = tabEl('tab-chase');
+  if (pt) pt.classList.toggle('active', tab === 'player');
+  if (ct) ct.classList.toggle('active', tab === 'chase');
+  // Restore that tab's own armed preview — the other one is left untouched.
+  refreshSelectCar(tab === 'chase' ? chasePreview : playerPreview);
+}
+
+function updateSelectCar() {
+  if (!selectMode || !selectCarGroup) return;
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - selectLastNow) / 1000) || 0;
+  selectLastNow = now;
+  if (selectCamera.aspect !== window.innerWidth / window.innerHeight) {
+    selectCamera.aspect = window.innerWidth / window.innerHeight;
+    selectCamera.updateProjectionMatrix();
+  }
+  selectCarGroup.rotation.y += dt * 0.55;   // slow spin
+}
+
+buildSelectScene();
+const gearBtn = document.getElementById('gear-btn');
+if (gearBtn) gearBtn.addEventListener('click', () => (selectMode ? exitSelectMode(false) : enterSelectMode()));
+const carHintEl = document.getElementById('car-hint');
+const carPrevBtn = document.getElementById('car-prev');
+if (carPrevBtn) carPrevBtn.addEventListener('click', () => cycleCar(-1));
+const carNextBtn = document.getElementById('car-next');
+if (carNextBtn) carNextBtn.addEventListener('click', () => cycleCar(1));
+const tabPlayerBtn = document.getElementById('tab-player');
+if (tabPlayerBtn) tabPlayerBtn.addEventListener('click', () => setPickerTab('player'));
+const tabChaseBtn = document.getElementById('tab-chase');
+if (tabChaseBtn) tabChaseBtn.addEventListener('click', () => setPickerTab('chase'));
+
+// The chase defaults to the little blue car, so dress the chaser right away.
+applyChaseCar(chaseCarKind);
+
+// Clicking the spinning car itself drives it and returns to the game. Clicks
+// on the arrow buttons / gear are handled above and ignored here.
+const selectRay = new THREE.Raycaster();
+const selectNdc = new THREE.Vector2();
+window.addEventListener('pointerdown', (e) => {
+  if (!selectMode) return;
+  if (e.target && e.target.closest && e.target.closest('#gear-btn,button')) return;
+  selectNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
+  selectNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  selectRay.setFromCamera(selectNdc, selectCamera);
+  if (selectCarGroup && selectRay.intersectObject(selectCarGroup, true).length > 0) {
+    exitSelectMode(true);
+  }
+});
 
 // Scroll-wheel camera zoom: wheel up zooms in, wheel down zooms out. Works
 // paused or not, so you can zoom in on the action for a screenshot. On touch
@@ -3204,10 +4535,11 @@ function summonBumperToRamp() {
   scene.remove(bumperCar);
   rampScene.add(bumperCar);
   bumperInRamp = true;
+  reparentChaseTrainConsist();
   bumperKnock = null;
   bumperState.stopped = false;
   bumperCar.visible = true;
-  bumperCar.scale.set(0.5, 0.5, 0.5);
+  bumperCar.scale.set(1, 1, 1);
   // Drop it just behind the player so it visibly catches up and follows.
   const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
   dir.y = 0;
@@ -3296,6 +4628,146 @@ function updateRampWorldBumper(delta) {
   bumperCar.position.y = terrainHeightAt(bumperCar.position.x, bumperCar.position.z) + groundHeight;
 }
 
+// ===== Wild monster truck in the ramp world =====
+// A second ramp-world visitor: a huge purple monster truck that roams a loop
+// of waypoints at full throttle, wiping out the launch ramps and the velodrome
+// rim so it sails enormous jumps. It does NOT chase, it never knocks props
+// over (knockAt is deliberately never called), but driving over the player
+// squashes them flat — the same pancake the city steamroller gives out.
+const MONSTER_WAYPOINTS = [
+  { x: 30, z: -70 }, { x: 64, z: -45 }, { x: 82, z: -10 }, { x: 66, z: 32 },
+  { x: 40, z: 82 }, { x: -2, z: 106 }, { x: -45, z: 86 }, { x: -78, z: 52 },
+  { x: -70, z: 6 }, { x: -55, z: -46 },
+];
+
+// The ramp guardian's scramble trail reuses the monster truck's patrol loop.
+rampTarantula.waypoints = MONSTER_WAYPOINTS;
+
+function summonMonsterToRamp() {
+  if (monsterTruck === null) monsterTruck = createMonsterTruck();
+  monsterTruck.visible = true;
+  monsterTruck.scale.set(1, 1, 1);
+  rampScene.add(monsterTruck);
+  monsterInRamp = true;
+  monsterAir = false;
+  monsterVy = 0;
+  monsterWasRamp = null;
+  // Roam starts at the first waypoint that is far from the player.
+  let best = 0, bestDist = -1;
+  for (let i = 0; i < MONSTER_WAYPOINTS.length; i++) {
+    const w = MONSTER_WAYPOINTS[i];
+    const d = Math.hypot(w.x - car.position.x, w.z - car.position.z);
+    if (d > bestDist) { bestDist = d; best = i; }
+  }
+  monsterPatrol = best;
+  const wp = MONSTER_WAYPOINTS[best];
+  const tx = wp.x - 10, tz = wp.z - 10;
+  const y = terrainHeightAt(tx, tz) + groundHeight;
+  monsterTruck.position.set(tx, y, tz);
+  const dx = wp.x - tx, dz = wp.z - tz;
+  monsterTruck.rotation.set(0, Math.atan2(dz, -dx), 0);
+}
+
+function updateRampWorldMonster(delta) {
+  if (worldState !== 'ramp') return;
+  // Countdown before the truck shows up.
+  if (!monsterInRamp) {
+    monsterRampTimer -= delta;
+    if (monsterRampTimer <= 0) summonMonsterToRamp();
+    return;
+  }
+  const mt = monsterTruck;
+  // Forward = (-cosθ, sinθ); rebuild from the current heading each frame so
+  // mid-air drifts along the last direction.
+  const yaw = mt.rotation.y;
+  const fwdX = -Math.cos(yaw);
+  const fwdZ = Math.sin(yaw);
+
+  if (monsterAir) {
+    // Ballistic: fall under gravity, land on terrain or a ramp top.
+    monsterVy -= gravity * delta;
+    mt.position.y += monsterVy * delta;
+    const rGround = terrainHeightAt(mt.position.x, mt.position.z) + groundHeight;
+    const info = rampRampInfoAt(mt.position.x, mt.position.z);
+    const rSurf = info ? info.baseY + info.height * info.s : -Infinity;
+    if (mt.position.y <= Math.max(rGround, rSurf)) {
+      mt.position.y = Math.max(rGround, rSurf);
+      monsterVy = 0;
+      monsterAir = false;
+      monsterWasRamp = null;
+      shake.intensity = Math.max(shake.intensity, 0.18);
+    }
+    // Ease level in the air.
+    mt.rotation.x += (0 - mt.rotation.x) * Math.min(1, 2 * delta);
+  } else {
+    // Steer toward the current waypoint at full throttle.
+    const wp = MONSTER_WAYPOINTS[monsterPatrol];
+    let dx = wp.x - mt.position.x;
+    let dz = wp.z - mt.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 10) monsterPatrol = (monsterPatrol + 1) % MONSTER_WAYPOINTS.length;
+    dx = wp.x - mt.position.x;
+    dz = wp.z - mt.position.z;
+    const dd = Math.hypot(dx, dz) || 1;
+    const step = Math.min(MONSTER_SPEED * delta, dd);
+    mt.position.x += (dx / dd) * step;
+    mt.position.z += (dz / dd) * step;
+    const targetYaw = Math.atan2(dz / dd, -dx / dd);
+    let dy = targetYaw - yaw;
+    dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+    mt.rotation.y += dy * Math.min(1, 2.4 * delta);
+
+    // Ramps: ride the ramp surf, launch off the high edge (the real fun part).
+    const info = rampRampInfoAt(mt.position.x, mt.position.z);
+    if (info) {
+      mt.position.y = info.baseY + info.height * info.s;
+      monsterWasRamp = { runX: info.runX, runZ: info.runZ, height: info.height, len: info.len, boost: info.boost };
+      mt.rotation.x += (0 - mt.rotation.x) * Math.min(1, 4 * delta);
+    } else {
+      const launched =
+        monsterWasRamp &&
+        monsterWasRamp.boost > 0 &&
+        (fwdX * monsterWasRamp.runX + fwdZ * monsterWasRamp.runZ) > 0.25;
+      if (launched) {
+        monsterAir = true;
+        monsterVy = MONSTER_SPEED * (monsterWasRamp.height / monsterWasRamp.len) * monsterWasRamp.boost;
+        shake.intensity = Math.max(shake.intensity, 0.12);
+      } else {
+        // Ride the bumpy dirt with a gentle nose-up/climb pitch like a car.
+        const fx = mt.position.x + fwdX * 2.0;
+        const fz = mt.position.z + fwdZ * 2.0;
+        const rx = mt.position.x - fwdX * 2.0;
+        const rz = mt.position.z - fwdZ * 2.0;
+        const frontH = terrainHeightAt(fx, fz);
+        const rearH = terrainHeightAt(rx, rz);
+        mt.position.y = (frontH + rearH) * 0.5 + groundHeight;
+        const pitch = -Math.atan2(frontH - rearH, 4);
+        mt.rotation.x += (pitch - mt.rotation.x) * Math.min(1, 5 * delta);
+        monsterWasRamp = null;
+      }
+    }
+
+    // Drive over the player → a proper monster-truck flatten (same pancake as
+    // the city steamroller, skipped for a player driving a heavy too). Raw
+    // deltas — the truck patrols the open band and never chases a wrapped
+    // copy of you.
+    if (!monsterAir && !playerSteamroller && !playerKnock && !jumpState.inAir) {
+      const pdx = mt.position.x - car.position.x;
+      const pdz = mt.position.z - car.position.z;
+      if (pdx * pdx + pdz * pdz < 4.4 * 4.4) flattenCarFromRock();
+    }
+  }
+
+  // Spin the monster's knobby wheels as it rolls.
+  const spin = MONSTER_SPEED * delta * 1.6;
+  for (const w of mt.userData.wheels) w.rotation.y += spin;
+
+  // Keep it inside the playable band (nudge back rather than wrap — the ramp
+  // world doesn't wrap for this patrol).
+  mt.position.x = Math.max(-90, Math.min(90, mt.position.x));
+  mt.position.z = Math.max(-90, Math.min(122, mt.position.z));
+}
+
 // ===== Game loop =====
 const clock = new THREE.Clock();
 
@@ -3322,6 +4794,35 @@ function updateCamera(delta) {
     cameraYawOffset = THREE.MathUtils.lerp(cameraYawOffset, 0, blend);
     cameraOrbit.phi = THREE.MathUtils.lerp(cameraOrbit.phi, 1.25, blend);
     cameraOrbit.radius = THREE.MathUtils.lerp(cameraOrbit.radius, 8, blend);
+  }
+
+  // ===== Express-tube ride camera montage =====
+  // The glass tube hugs the checkerboard ceiling (y≈28) over the obstacle
+  // course, so the normal chase cam climbs ABOVE the rooftop tiles and ends up
+  // staring at their backs — the car vanishes from view. The chase cam rides
+  // the car up from the intake pad and keeps following for the first 3 seconds
+  // (s ≈ 0.268; by then the car is past the giant staircase), then we cut
+  // through the FIXED cameras in EXPRESS_CAM_SHOTS — positions placed a good
+  // distance OFF the tube's line so the aim stays low (roughly 30-40° — never
+  // aimed straight up or directly below): one ground-level tripod on the
+  // course floor that pans — aim only, never move — at the little car flying
+  // underneath the tiles (holding through the westbound transit), then one
+  // aerial vantage hung below the ceiling that starts a bit earlier and
+  // watches the dive and burst out at the exit. The exit drop arms a post-cine
+  // ease for a smooth return to the chase cam.
+  if (expressState.active || expressCinT > 0) {
+    if (expressCinT > 0) expressCinT -= delta;
+    // After a completed ride the montage holds on the landing: for a forward
+    // (glass→skate) ride `lastDir` is +1 and s snaps to the far exit shot; for
+    // a return ride it watches the intake drop instead.
+    const s = expressState.active ? expressState.s : (expressState.lastDir > 0 ? 1 : 0.45);
+    const shot = EXPRESS_CAM_SHOTS.find((sh) => s >= sh.lo && s <= sh.hi);
+    if (shot) {
+      camera.position.set(shot.x, shot.y, shot.z);
+      _lookTarget.set(car.position.x, car.position.y + 0.8, car.position.z);
+      camera.lookAt(_lookTarget);
+      return;   // the fixed tube camera owns the frame — skip the chase cam
+    }
   }
 
   // ===== Holy-chamber cinematic override =====
@@ -3390,10 +4891,12 @@ function updateCamera(delta) {
     const wp = spiralWatchPose();
 
     // Angle: from the opening pose (north-west, the back of the coil) sweep
-    // the long way around to the watch point east of the exit. Unwrap the
-    // end angle so the sweep always turns the same direction.
+    // the long way around to the watch point east of the exit, turning the
+    // OPPOSITE way to the tube's own winding (so the camera spins the other
+    // way past the Glass City corridors). Unwrap the end angle below the
+    // opening angle so the sweep always turns one consistent direction.
     let endAng = wp.watchAngle;
-    while (endAng <= SPIRAL_PIVOT_ANG) endAng += Math.PI * 2;
+    while (endAng > SPIRAL_PIVOT_ANG) endAng -= Math.PI * 2;
     const th = SPIRAL_PIVOT_ANG + (endAng - SPIRAL_PIVOT_ANG) * ease;
     const radius = THREE.MathUtils.lerp(SPIRAL_PIVOT_R, wp.watchRadius, ease);
     const orbitY = THREE.MathUtils.lerp(SPIRAL_START_Y, wp.watchY, ease);
@@ -3405,15 +4908,18 @@ function updateCamera(delta) {
     );
     camera.position.copy(_spiralCamTarget);
 
-    // Look: ALWAYS face the tunnel — aim straight at the axis so the gaze
-    // rides the arc (back → side → front) instead of staring one way, easing
-    // the glance height down from the top coil to the exit floor. The car
-    // emerges through the front mouth right in line with this gaze, so the
-    // post-cinematic ease hands off to chasing the car with no swing-around.
+    // Look: ALWAYS face the tunnel while spiralling — the opening glance sits
+    // high over the top coil on the axis (SPIRAL_LOOK), and as the arc eases
+    // the gaze slides DOWN AND ONTO THE EXIT MOUTH (tunnelPoint(1)), where the
+    // car bursts out. The mouth is 21 units south of the axis — keeping the
+    // gaze pinning the axis would leave the car right at the frame edge (or
+    // off it entirely in a narrow vertical window). Ending dead on the mouth
+    // centres the exiting car in ANY frame shape.
+    const mouthP = tunnelPoint(1);
     _spiralLookTarget.set(
-      SPIRAL_LOOK.x,
+      THREE.MathUtils.lerp(SPIRAL_LOOK.x, mouthP.x, ease),
       THREE.MathUtils.lerp(SPIRAL_LOOK.y, SPIRAL_FOOT_Y, ease),
-      SPIRAL_LOOK.z
+      THREE.MathUtils.lerp(SPIRAL_LOOK.z, mouthP.z, ease)
     );
     _lookTarget.copy(_spiralLookTarget);
     camera.lookAt(_lookTarget);
@@ -3527,8 +5033,17 @@ function updateCamera(delta) {
   cameraTarget.copy(car.position);
   // Follow the car up ramps / into the robot's mouth — but during the mine
   // dive the car sinks below grade, so let the camera follow it DOWN into
-  // the shaft instead of clamping to the surface.
-  cameraTarget.y = minePortal.active ? car.position.y : Math.max(0.8, car.position.y);
+  // the shaft instead of clamping to the surface. The sunken skate park is
+  // the same idea: the halfpipe and bowls drop 6–16 below the y=0 floor, so
+  // the look target rides the car's descent instead of hanging at the 0.8
+  // surface line (which left the car shrinking out of the bottom of frame).
+  cameraTarget.y = minePortal.active
+    ? car.position.y
+    : (worldState === 'underground' && car.position.y < 0.8 ? car.position.y : Math.max(0.8, car.position.y));
+  // Playing as the giant robot: aim up at the mech's chest (its head is ~14
+  // tall) so the whole body fills the frame instead of the camera staring at
+  // its feet.
+  if (playerRobot) cameraTarget.y += 7;
 
   // Hole-fall cinematic: the car dropped through a crumbled checkerboard
   // tile in the underground ceiling. Arm the close-up camera while the car
@@ -3551,6 +5066,58 @@ function updateCamera(delta) {
   const heading = Math.atan2(-fwd.z, -fwd.x);
   const theta = heading + cameraYawOffset;
 
+  // Driving the train: frame the ACTUAL train instead of a point along the
+  // locomotive's heading. A bounding box is built from the loco's nose, every
+  // trailing car, and the caboose's tail — so as the consist snakes around
+  // corners and the caboose swings off the loco's line, it STILL fits in the
+  // shot. The camera dollies to the box's centre and the radius tracks its
+  // extent (the max distance from that centre to any train part), eased so the
+  // zoom glides instead of snapping while the chain bends.
+  let trainCamRadius = 34;
+  if (playerTrain && trainCars.length > 0) {
+    // UNDERGROUND: the cavern ceiling is a slab of colorful checkerboard tiles
+    // (underside y=30.15). The whole-consist framing below would park the
+    // camera up at y≈130, INSIDE the tiles, and they'd block the locomotive.
+    // So underground we never frame the consist: the camera rides a tight,
+    // loco-only radius that shrinks as the loco climbs toward the roof, and
+    // stays centred on the engine instead of the consist midpoint. Once the
+    // loco is up ON the roof (above the slab) the normal framing returns.
+    if (worldState === 'underground') {
+      trainCamDesired.set(0, 0, 0);
+      trainCamShift.lerp(_camZeroV, Math.min(1, 3.5 * delta));
+      const undergroundPhiCos = Math.max(Math.cos(1.0), 0.06);
+      const headroom = UG_TRAIN_CAM_MAX_Y - 2.2 - car.position.y;
+      trainCamRadius = THREE.MathUtils.clamp(headroom / undergroundPhiCos, 8, 52);
+    } else {
+      const pts = [
+        new THREE.Vector3(car.position.x + fwd.x * 6.5, 0, car.position.z + fwd.z * 6.5),
+      ];
+      const n = trainCars.length;
+      for (const m of trainCars) pts.push(m.position);
+      const last = trainCars[n - 1];
+      const prev = n > 1 ? trainCars[n - 2] : null;
+      const cdx = prev ? last.position.x - prev.position.x : -fwd.x;
+      const cdz = prev ? last.position.z - prev.position.z : -fwd.z;
+      const clen = Math.hypot(cdx, cdz) || 0.001;
+      pts.push(new THREE.Vector3(last.position.x - (cdx / clen) * 6.5, 0, last.position.z - (cdz / clen) * 6.5));
+      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      for (const p of pts) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.z < minZ) minZ = p.z; if (p.z > maxZ) maxZ = p.z;
+      }
+      const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+      let ball = 0;
+      for (const p of pts) ball = Math.max(ball, Math.hypot(p.x - cx, p.z - cz));
+      ball = Math.min(ball, 130);   // a snagged single car must not balloon the view
+      trainCamDesired.set(cx - car.position.x, 0, cz - car.position.z);
+      trainCamShift.lerp(trainCamDesired, Math.min(1, 3.5 * delta));
+      cameraTarget.add(trainCamShift);
+      // 1.55× + 26 keeps both ends inside the 60° frame at the phi below, with a
+      // healthy margin for the near (caboose) end sitting close to the camera.
+      trainCamRadius = THREE.MathUtils.clamp(ball * 1.55 + 26, 44, 240);
+    }
+  }
+
   // Zoom way out whenever the giant robot is close so its whole body — and
   // face — stays in view, not just while it's eating. The robot only exists
   // in the city, so there's no robot zoom in the ramp world.
@@ -3571,13 +5138,52 @@ function updateCamera(delta) {
   // Only zoom out while the car is actually climbing a ramp or airborne —
   // standing on a high flat surface (a rooftop, the underground ceiling, a
   // building top) keeps the normal chase view, not the flight framing.
-  const onRampOrAir = jumpState.inAir || !!currentRamp;
+  // The underground blue-wave halfpipe is excluded: its walls are only ~16
+  // tall and the fun is watching the car pump/trick inside the bowl, so the
+  // flight cutaway would just yank the camera out over the coping to a far,
+  // sideways vantage that can't see into the pipe. While the car is in the
+  // pipe the chase cam stays right behind it, following it up the walls and
+  // through vert-pops instead of parking outside and watching.
+  const inHalfpipe = worldState === 'underground' && ugPipe &&
+    Math.abs(car.position.z - ugPipe.cz) <= ugPipe.len / 2 + 1.6 &&
+    Math.abs(car.position.x - ugPipe.cx) <= ugPipe.bottomHalf + ugPipe.wallRun + 1;
+  const onRampOrAir = !inHalfpipe && (jumpState.inAir || !!currentRamp);
   // Suppressed during a hole fall — the close-up camera owns the framing.
   const flightZoomT = holeFallActive ? 0 : onRampOrAir ? THREE.MathUtils.clamp((car.position.y - groundHeight) / FLIGHT_CAM_HEIGHT, 0, 1) : 0;
 
-  const zoomT = Math.max(robotZoomT, flightZoomT);
-  const camTargetRadius = cameraOrbit.radius + (Math.max(ROBOT_CAM_MAX_RADIUS, FLIGHT_CAM_MAX_RADIUS) - cameraOrbit.radius) * zoomT;
+  // Tarantula zoom: the whole spider — spread legs and all — must fit in view.
+  // While you're PLAYING as the spider the chase cam always pulls back just far
+  // enough to frame the entire creature; and in the ramp world the sleeping or
+  // rampaging guardian also triggers the zoom-out when it's close, the same way
+  // the robot does, so the giant lurching thing never walks out of shot.
+  const tarantulaZoomT = playerTarantula
+    ? 1
+    : worldState === 'ramp'
+      ? THREE.MathUtils.clamp(
+          1 - Math.hypot(car.position.x - rampTarantula.mesh.position.x, car.position.z - rampTarantula.mesh.position.z) / SPIDER_CAM_DIST,
+          0, 1
+        )
+      : 0;
+
+  const zoomT = Math.max(robotZoomT, flightZoomT, tarantulaZoomT);
+  // When the spider is the reason we're zoomed out it uses its OWN, tighter
+  // frame — it's about a third of the robot's bulk, so the full 62-unit
+  // robot/flight radius would shrink it to a speck.
+  const spiderDominant = tarantulaZoomT > Math.max(robotZoomT, flightZoomT) + 0.001;
+  // Driving the robot: hold the camera far enough BACK (and, via the chest
+  // target above, up) that the whole 14-tall mech, head to feet, fits in view.
+  const camTargetRadius = playerRobot
+    ? 18
+    : playerTrain
+      ? trainCamRadius
+      : spiderDominant
+        ? cameraOrbit.radius + (TARANTULA_CAM_MAX_RADIUS - cameraOrbit.radius) * tarantulaZoomT
+        : cameraOrbit.radius + (Math.max(ROBOT_CAM_MAX_RADIUS, FLIGHT_CAM_MAX_RADIUS) - cameraOrbit.radius) * zoomT;
   camRadius += (camTargetRadius - camRadius) * Math.min(1, 4.0 * delta);
+
+  // Driving the train: lift the camera a touch higher and steeper so the whole
+  // long consist (engine to caboose) sits plainly in the frame rather than the
+  // receding ribbon slipping to the horizon.
 
   // On the big ramps the camera swings up and to the SIDE of the flight path —
   // a high "drone" shot looking down at the car — so you watch yourself launch
@@ -3605,6 +5211,11 @@ function updateCamera(delta) {
     mineCamT = THREE.MathUtils.clamp((car.position.z - p.camZ) / (p.triggerZ - p.camZ), 0, 1);
   }
   camPhi = THREE.MathUtils.lerp(camPhi, MINE_PHI, mineCamT);
+  // Driving the train: sit a touch higher than the default chase camera — but
+  // NOT steep overhead. A steep look-down hides the caboose, because it sits on
+  // the NEAR side (toward the camera) and dips below the bottom view edge; a
+  // relatively level shot with the big zoom-out radius keeps both ends in frame.
+  if (playerTrain) camPhi = THREE.MathUtils.lerp(camPhi, 1.0, Math.min(1, 2 * delta));
   // Swing the camera around perpendicular to the flight path (the side view)
   // as the flight zoom kicks in; the camOffset lerp below eases the arc.
   const camTheta = theta - (flightDominant ? (Math.PI / 2) * flightZoomT : 0);
@@ -3630,11 +5241,46 @@ function updateCamera(delta) {
   robot.mesh.userData.head.getWorldPosition(robotHead);
   if (worldState === 'city') cameraTarget.lerp(robotHead, robotZoomT);
 
+  // Driving the locomotive under the underground's checkerboard ceiling — the
+  // HARD guarantee behind the tight framing above: while the loco is under the
+  // colorful tiles (and NOT riding up on the roof itself), the camera NEVER
+  // gets to sit inside or above the slab. The final eased camera height must
+  // stay under the tile underside; if the radius or phi snuck too high, clamp
+  // the radius down so the camera ducks back below the tiles. The earlier
+  // target already zooms in to just the loco, so this just makes hitting the
+  // ceiling impossible rather than unlikely.
+  if (worldState === 'underground' && playerTrain && car.position.y < UG_TILE_UNDER) {
+    const camY = cameraTarget.y + camRadius * Math.cos(camPhi) + 2.2;
+    if (camY > UG_TRAIN_CAM_MAX_Y) {
+      const camPhiCos = Math.max(Math.cos(camPhi), 0.06);
+      const rMax = (UG_TRAIN_CAM_MAX_Y - 2.2 - cameraTarget.y) / camPhiCos;
+      camRadius = Math.min(camRadius, Math.max(rMax, 8));
+    }
+    // Pin the framing centre to the locomotive (never the consist midpoint),
+    // so the tight shot is always looking down the rails at the engine.
+    trainCamShift.lerp(_camZeroV, Math.min(1, 3.5 * delta));
+    _camTempV.set(car.position.x, cameraTarget.y, car.position.z);
+    cameraTarget.lerp(_camTempV, Math.min(1, 3.5 * delta));
+  }
+
   const desiredOffset = new THREE.Vector3(
     camRadius * Math.sin(camPhi) * Math.cos(camTheta),
     camRadius * Math.cos(camPhi) + 2.2,
     camRadius * Math.sin(camPhi) * Math.sin(camTheta)
   );
+
+  // Sunken-pit framing (the skate park bowls and the blue-wave halfpipe sit
+  // below floor level): stand the camera ABOVE the rim looking DOWN into the
+  // bowl. Without this it parks at the y≈1 line and the far wall of the pipe
+  // slides between the camera and the car (or the car drops off the bottom of
+  // the frame). The lift fades out as the car crests a lip, so the height
+  // eases back to the normal chase shot right at the edge of the pit.
+  const sunkenLift = worldState === 'underground' && car.position.y < -0.4
+    ? THREE.MathUtils.clamp((-car.position.y - 0.3) / 3.5, 0, 1)
+    : 0;
+  if (sunkenLift > 0) {
+    desiredOffset.y += (Math.max(0, -car.position.y) + 1.6) * sunkenLift;
+  }
 
   // Look slightly ahead of the car in the direction of travel (off when the
   // shot is focused on the robot).
@@ -3732,31 +5378,44 @@ function updateCamera(delta) {
 function animate() {
   requestAnimationFrame(animate);
 
+  // If a background underground rebuild finished while we were away, swap it
+  // in now that the underground is off camera (already guarded inside).
+  maybeSwapUnderground();
+
   // Paused: the whole world is frozen (no clock.getDelta(), so every
-  // elapsedTime-driven animation holds still too). Only the camera keeps
+  // elapsedTime-driven animation holds still too). When the car showroom is
+  // open we render its black sound stage instead of the world — the spinning
+  // car over the blue glow on the main canvas. Otherwise only the camera keeps
   // updating so scroll-wheel zoom + drag orbit still work for screenshots,
   // and the frame keeps rendering so you can grab it.
   if (isPaused) {
-    updateCamera(1 / 60);
-    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene, camera);
+    if (selectMode) {
+      updateSelectCar();
+      renderer.render(selectScene, selectCamera);
+    } else {
+      updateCamera(1 / 60);
+      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene, camera);
+    }
     return;
   }
 
   const delta = clock.getDelta();
   const accel = 10 * delta;
   const turnRate = 1.7 * delta;
-  wallBounceCd = Math.max(0, wallBounceCd - delta);
 
   // While the giant robot has the player in its claw, the player's car is
   // inert — it just rides up to the robot's mouth. Physics resume on respawn.
   // The spiral-arrival, mine-ascent, tunnel-ascent and holy-chamber
   // cinematics also own the car completely while they run.
-  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active) {
+  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold) {
 
   let forward = 0;
   let reverse = 0;
   if (keys['ArrowUp'] || keys['KeyW']) forward = 1;
   if (keys['ArrowDown'] || keys['KeyS']) reverse = 1;
+  // Hold Shift anywhere for a nitro-style 2× boost: acceleration AND top speed
+  // both double, in either direction (forward or reverse).
+  const boost = (keys['ShiftLeft'] || keys['ShiftRight']) ? 2 : 1;
   if (joy.active) {
     // Analog joystick: push up = go, pull down = reverse
     const f = Math.max(0, -joy.y);
@@ -3765,10 +5424,12 @@ function animate() {
     else if (r > 0.08) reverse = Math.max(reverse, r);
   }
 
+  // The Indy racer tops out 1.5× faster than every other car (both directions).
+  const speedMul = playerIndy ? 1.5 : 1;
   if (forward > 0) {
-    velocity.value = Math.min(velocity.value + accel * 2.2 * forward, 14);
+    velocity.value = Math.min(velocity.value + accel * 2.2 * forward * boost, 14 * boost * speedMul);
   } else if (reverse > 0) {
-    velocity.value = Math.max(velocity.value - accel * 1.5 * reverse, -7);
+    velocity.value = Math.max(velocity.value - accel * 1.5 * reverse * boost, -7 * boost * speedMul);
   } else {
     if (jumpState.trebuchetBoost && jumpState.trebuchetBoost > 0) {
       // During the trebuchet flight keep horizontal speed from decaying so
@@ -3798,6 +5459,33 @@ function animate() {
   // the controls around at a standstill.
   const reverseFlip = velocity.value < -0.5 ? -1 : 1;
   car.rotation.y += steering.value * delta * 2.3 * reverseFlip;
+  // Spinning turntable (underground): while the car is riding (or flying just
+  // over) the giant platter, the disk's spin adds directly to the heading AND
+  // sweeps the car's position around the platter centre by the same rotation.
+  // Carrying the position keeps the contact point glued to one radius of the
+  // disk, so the car parks on a single colour wedge and turns with it like a
+  // car on a turntable — the pattern spins under the WHEELS' own carriage, not
+  // sliding out from beneath a fixed car (which read as tyres slipping). The
+  // heading rotates with the disk too, and because the movement vector is
+  // rebuilt from the heading below, the car's actual driving direction follows
+  // the disk instead of cutting a straight line across it.
+  if (worldState === 'underground') {
+    for (const c of ugColliders) {
+      if (c.spin
+        && Math.abs(car.position.y - c.h) < 1.5
+        && Math.abs(car.position.x - c.x) <= c.halfW
+        && Math.abs(car.position.z - c.z) <= c.halfD) {
+        car.rotation.y += c.spin * delta;
+        const dx = car.position.x - c.x;
+        const dz = car.position.z - c.z;
+        const a = c.spin * delta;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        car.position.x = c.x + dx * ca - dz * sa;
+        car.position.z = c.z + dx * sa + dz * ca;
+        break;
+      }
+    }
+  }
   const direction = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
   direction.y = 0;
   direction.normalize();
@@ -3827,38 +5515,85 @@ function animate() {
   if (canMove) {
     car.position.copy(nextCarPos);
   } else {
-    velocity.value *= 0.3;
-    shake.intensity = Math.max(shake.intensity, 0.22);
-    // Wedged against geometry with the throttle down: bounce off. The nose
-    // deflects away from the wall (plus a little random fan, so repeated
-    // hits walk you free instead of grinding into the same spot) and the car
-    // rebounds slightly. Together with the anti-stuck pass below this makes
-    // getting permanently stuck impossible. The normal query adds a small
-    // epsilon because the anti-stuck pass parks the car at EXACT contact
-    // (zero penetration) — without it, resting against a wall could never
-    // produce a normal and the bounce would be dead code.
-    if (forward > 0.05 && wallBounceCd <= 0 && !buildingLevitate.levitating) {
+    // ===== Wall-slide (the car-wash slip, global) =====
+    // A blocked hit no longer knocks the car off the wall. The intended move
+    // is decomposed against the contact normal: only the part pointing INTO
+    // the wall is dropped, and the tangential part carries the car forward,
+    // so the car glides along the wall the same way the soapy car-wash
+    // lattice slides it — no nose deflection, no velocity reversal. Speed is
+    // preserved along the face (slippery), with a small drain each frame so
+    // pressing straight into a wall bleeds down to a low idle instead of
+    // pinning you at full throttle. Only a nearly head-on impact bounces a
+    // little (so you can never get glued to a building dead-on); glancing
+    // hits keep sliding.
+    if (!buildingLevitate.levitating) {
+      const mvX = direction.x * velocity.value * delta;
+      const mvZ = direction.z * velocity.value * delta;
+      // The normal query adds a small epsilon because the anti-stuck pass parks
+      // the car at EXACT contact (zero penetration) — without it, resting
+      // against a wall could never produce a normal and sliding would die.
       const n = wallNormal(car.position.x, car.position.z, playerSolids(), playerCarRadius + 0.06);
       if (n) {
-        wallBounceCd = 0.45;
-        const yaw = 0.42 + Math.random() * 0.2;   // deflection angle (rad)
-        const h = car.rotation.y;
-        if (isInMineApproach()) {
-          // Mine wall-guide: turn the nose TOWARD the tunnel axis (x=-55) so
-          // the car lines up with the entrance instead of bouncing away from
-          // it, and keep a little forward speed so it slides along the bank
-          // into the tunnel.
-          car.rotation.y += (car.position.x < minePortal.triggerX ? 1 : -1) * yaw;
-          velocity.value = Math.max(velocity.value * 0.6, 2.0);
+        const into = mvX * n.nx + mvZ * n.nz;   // <0: this move heads into the wall
+        if (into < 0) {
+          const moveLen = Math.hypot(mvX, mvZ) + 1e-6;
+          const headOn = -into / moveLen;       // 1 = dead-on, ~0 = glancing
+          if (headOn > 0.7 && !isInMineApproach()) {
+            // (Nearly) head-on: while forward is held, keep deflecting the
+            // nose AWAY from the wall every blocked frame and pop the car
+            // back a little along the face normal, until the car is angled
+            // enough that the slip takes over and it slides free. The old
+            // version reversed velocity — that drove the TAIL into the wall
+            // (only the nose had turned), so a dead-on press turned once and
+            // wedged. Forward momentum is kept so the car keeps pressing and
+            // re-deflecting instead. The mine approach is excluded — it
+            // guides the nose INTO the shaft instead.
+            if (forward > 0.05) {
+              const yaw = 0.5;
+              const h = car.rotation.y;
+              const away = (s) => -Math.cos(h + s * yaw) * n.nx + Math.sin(h + s * yaw) * n.nz;
+              car.rotation.y += (away(1) >= away(-1) ? 1 : -1) * yaw;
+              // n points away from the wall (into free space): nudge out so
+              // the car isn't pinned at exact contact, letting it turn free.
+              car.position.x += n.nx * 0.4;
+              car.position.z += n.nz * 0.4;
+              velocity.value = Math.max(1.5, Math.abs(velocity.value) * 0.8);
+              shake.intensity = Math.max(shake.intensity, 0.18);
+            } else {
+              velocity.value *= 0.97;
+            }
+          } else {
+            // Glancing hit: keep only the component of the move parallel to
+            // the wall face.
+            const slideX = car.position.x + (mvX - n.nx * into);
+            const slideZ = car.position.z + (mvZ - n.nz * into);
+            // Slide only where the slide position is clear too — corners and
+            // wedges pinch, and there the anti-stuck pass below frees us.
+            if (!isPositionBlocked(slideX, slideZ, playerCarRadius, true) &&
+                !isPositionBlockedByFiretruck(slideX, slideZ, playerCarRadius) &&
+                !isPositionBlockedByRobot(slideX, slideZ, playerCarRadius)) {
+              car.position.x = slideX;
+              car.position.z = slideZ;
+            }
+            velocity.value *= 0.97;
+            shake.intensity = Math.max(shake.intensity, 0.1);
+          }
         } else {
-          // Pick the turn direction whose resulting nose points most away
-          // from the wall (forward(h) = (-cos h, 0, sin h)).
-          const away = (s) => -Math.cos(h + s * yaw) * n.nx + Math.sin(h + s * yaw) * n.nz;
-          car.rotation.y += (away(1) >= away(-1) ? 1 : -1) * yaw;
-          velocity.value = -Math.min(Math.abs(velocity.value) * 0.45 + 1.6, 4.2);
+          velocity.value *= 0.97;
         }
-        shake.intensity = Math.max(shake.intensity, 0.32);
+      } else {
+        // No discernible contact normal (e.g. pinched between two props):
+        // slow gently instead of stopping dead or jittering in place.
+        velocity.value *= 0.9;
       }
+    } else {
+      velocity.value *= 0.3;
+    }
+    if (isInMineApproach() && forward > 0.05 && !buildingLevitate.levitating) {
+      // Mine wall-guide: nudge the nose TOWARD the tunnel axis (x=-55) so the
+      // sliding car lines up with the entrance instead of gliding on past the
+      // bank.
+      car.rotation.y += (car.position.x < minePortal.triggerX ? 1 : -1) * 0.42;
     }
   }
 
@@ -3921,8 +5656,11 @@ function animate() {
       }
     }
   } else if (worldState === 'underground') {
+    const __air0 = jumpState.inAir;
+    let __airRan = false;
     if (jumpState.inAir) {
       ugDbg = 'airborne';
+      __airRan = true;
       // Airborne in the underground: fall under gravity, land on the cavern
       // floor (local y ≈ 0 — the floor mesh top sits at y = -0.02), back on
       // a course ramp's slope, or on top of anything with a collider footprint
@@ -3935,10 +5673,54 @@ function animate() {
       stairPrevY = 0;
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
+      // Halfpipe keep-in: no matter how the car went aloft over the trough
+      // (a vert launch off the lip, a stall, steering during a trick, a knock
+      // from another prop), it must ALWAYS come back down inside the pipe —
+      // never out over the lip and never out an open mouth. While airborne
+      // within the pipe's footprint, rein the car in to just inside each lip
+      // and to the pipe's length, so its fall lands on the bowl's upper wall
+      // and rolls back into the trough. Unlike the old pipeAir-gated air-lock
+      // this runs for ANY airborne frame over the pipe, not just ones we popped.
+      if (ugPipe) {
+        const dz = car.position.z - ugPipe.cz;
+        const rimHalf = ugPipe.bottomHalf + ugPipe.wallRun;   // lip x-offset from cx
+        const rimLo = ugPipe.cx - rimHalf;                    // west lip
+        const rimHi = ugPipe.cx + rimHalf;                    // east lip
+        if (Math.abs(dz) <= ugPipe.len / 2 + 1.6 && car.position.y > 1) {
+          // Mouth caps: keep a flying car within the pipe's length so it
+          // drops back into the trough instead of sailing out an open end.
+          const zCap = ugPipe.len / 2 - 0.5;
+          if (dz > zCap) car.position.z = ugPipe.cz + zCap;
+          else if (dz < -zCap) car.position.z = ugPipe.cz - zCap;
+          // Lateral rein: pull a car drifting out over a lip back to a spot
+          // just inside it. The wall itself is a thin ~90° face with no top
+          // band to land on, so the rein parks it on the bowl's upper arc —
+          // it drops there and rolls back down instead of cresting the lip.
+          const inFromRim = Math.min(1.1, ugPipe.bottomHalf * 0.11);
+          if (car.position.x > rimHi - inFromRim && car.position.y > 6) {
+            car.position.x = rimHi - inFromRim;
+            if (direction.x > 0.1) velocity.value = Math.min(velocity.value, 0);
+          } else if (car.position.x < rimLo + inFromRim && car.position.y > 6) {
+            car.position.x = rimLo + inFromRim;
+            if (direction.x < -0.1) velocity.value = Math.min(velocity.value, 0);
+          }
+        }
+      }
       const bTop = buildingTopAt(car.position.x, car.position.z);
       const tfloor = tunnelFloorYRaw(car.position.x, car.position.z);
       const tfloorSurface = (tfloor !== null && tfloor <= car.position.y + 0.4) ? tfloor : -Infinity;
-      const surface = Math.max(0, ugRampSurfaceY(car.position.x, car.position.z), tfloorSurface, bTop <= car.position.y + 0.4 ? bTop : 0);
+      const machineTop = ugMachineTopAt(car.position.x, car.position.z);
+      // The sunken skate park carves BELOW the cavern floor (negative y), so a
+      // ramp surface here must be allowed to land the car below ground level —
+      // never clamped back up to the y=0 floor plane. Off any ramp the plain
+      // floor (y=0) still applies.
+      const ugSurf = ugRampSurfaceY(car.position.x, car.position.z);
+      const sunkenSurf = ugSurf === -Infinity ? 0 : ugSurf;
+      // Sunken bowls sit BELOW the y=0 floor plane. When the falling car is
+      // above a carved bowl (ugSurf finite), the plain y=0 floor term must not
+      // win the max() or the car snaps back up to y=0 mid-fall — glass again.
+      const floorPlane = ugSurf > -Infinity ? -Infinity : 0;
+      const surface = Math.max(sunkenSurf, tfloorSurface, bTop > 0 && bTop <= car.position.y + 0.4 ? bTop : -Infinity, machineTop > 0 && car.position.y > 1.5 ? machineTop : -Infinity, floorPlane);
       if (window.__ugLog && car.position.z < 52) window.__ugLog.push({ t: 'air', yVel: +jumpState.yVelocity.toFixed(2), y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2), bTop: +bTop.toFixed(2), surf: +surface.toFixed(2), land: car.position.y <= surface });
       if (car.position.y <= surface) {
         car.position.y = surface;
@@ -3975,28 +5757,86 @@ function animate() {
         wasOnRamp = null;
       } else {
         tunnelFloorState.active = false;
-        const r = ugRampInfoAt(car.position.x, car.position.z);
+        const r = ugRampRideAt(car.position.x, car.position.z, car.position.y);
         const rampSurf = r ? r.baseY + r.height * r.s : -Infinity;
-        // Only ride a ramp when the car is near its surface. A ramp sitting
-        // on the cavern floor below the ceiling (e.g. the test ramp at
-        // (80,-35)) must NOT yank the car down off the checkerboard — that
-        // read as "falling through the ceiling when there's no hole".
-        const onRamp = r !== null && Math.abs(car.position.y - rampSurf) < 2.0;
+        // ugRampRideAt already requires the surface to be within the ride
+        // range, so the car only attaches to a ramp it is genuinely near and
+        // overlapping steep ramps (e.g. the spiral road lapping the holy
+        // mountain's cone face) can no longer mask the gentle foot band and
+        // swallow a floor-level car.
+        const onRamp = r !== null;
         currentRamp = onRamp ? r : null;
         if (onRamp) {
           ugDbg = 'ramp';
           car.position.y = rampSurf;
-          wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+          wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost, pipeTop: !!r.def.pipeTop, pipeLaunch: r.def.pipeLaunch || null };
+          // Halfpipe: you can't park on a steep face. The car is not spiderman —
+          // with no throttle it bleeds speed (~×0.92/frame) and a car that
+          // stalls on the pipe's steeper banks slides back DOWN the wall toward
+          // the bowl's centre instead of clinging mid-air. Only the shallow
+          // bowl (< ~25°) lets you come to rest.
+          if (r.def.pipeSlide && velocity.value < 2.5) {
+            ugDbg = 'wall-slide';
+            const steep = r.height / Math.max(0.001, r.len);   // slope gradient (tan)
+            const amt = THREE.MathUtils.clamp((steep - 0.47) / 1.6, 0, 1) * 3.6 * delta;
+            car.position.x -= r.runX * amt;
+            car.position.z -= r.runZ * amt;
+          } else if (r.def.pipeTop) {
+            // Vert launch: reach the top of the vert wall with speed and you
+            // take off like a rocket — straight up, float on gravity, and the
+            // halfpipe keep-in above brings you back down into the bowl. The
+            // launch is pure vertical (the keep-in handles lateral drift), so
+            // it doesn't matter which way you're carving — the lip is never a
+            // wall you scrape past. No apex cap: gravity alone decides how
+            // high your speed buys you.
+            //
+            // Outward-travel gate: only launch when the car PHYSICALLY moved
+            // out toward the lip this frame (position delta along the wall's
+            // run). A heading check isn't enough — a car entering diagonally
+            // down the lip faces outward while still rolling in, so the old
+            // dot-product test popped it on entry at speed and the halfpipe
+            // read as an invisible wall/glass. Position delta is direction-
+            // and angle-proof: rolling in always moves AGAINST the run, so
+            // the only way outward > 0 is genuinely driving up and out.
+            const along = (car.position.x - r.x) * r.runX + (car.position.z - r.z) * r.runZ;
+            const s = (along + r.len / 2) / r.len;
+            const outward = (car.position.x - playerPrevX) * r.runX + (car.position.z - playerPrevZ) * r.runZ;
+            if (s > 0.3 && velocity.value > 2.5 && outward > 0.02) {
+              jumpState.inAir = true;
+              ugDbg = 'vert-pop';
+              jumpState.yVelocity = wasOnRamp.pipeLaunch
+                ? Math.max(6, Math.abs(velocity.value) * wasOnRamp.pipeLaunch)
+                : Math.max(6, 2 + Math.abs(velocity.value) * 0.85);
+              velocity.value = -Math.max(1.0, Math.min(3, Math.abs(velocity.value) * 0.15));
+              shake.intensity = Math.max(shake.intensity, 0.08);
+              if (window.__ugLog && car.position.z < 52) window.__ugLog.push({ t: 'vert-pop', yVel: +jumpState.yVelocity.toFixed(2), y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2) });
+            }
+          }
         } else {
-          // Drive off the far (high) edge of the ramp we were just riding:
-          // launch off it, same as the city/ramp-world ramps.
-          if (window.__ugLog && car.position.z < 52) window.__ugLog.push({ t: 'else', wasOnRamp: !!wasOnRamp, vel: +velocity.value.toFixed(2), dot: +(direction.x * (wasOnRamp ? wasOnRamp.runX : 0) + direction.z * (wasOnRamp ? wasOnRamp.runZ : 0)).toFixed(2), y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2), rampSurf: +rampSurf.toFixed(2) });
-          const launched =
-            wasOnRamp &&
-            wasOnRamp.boost > 0 &&
-            velocity.value > 2 &&
-            (direction.x * wasOnRamp.runX + direction.z * wasOnRamp.runZ) > 0.3;
-          if (launched) {
+          // Halfpipe backstop: if the rim pop band was skipped (a heavy frame),
+          // the car exits the rim wedge outward — vert-pop it straight up
+          // instead of letting it drift over the edge and fall past the pipe's
+          // outer face onto the floor.
+          if (wasOnRamp && wasOnRamp.pipeTop &&
+              (car.position.x - playerPrevX) * wasOnRamp.runX + (car.position.z - playerPrevZ) * wasOnRamp.runZ > 0.02) {
+            jumpState.inAir = true;
+            ugDbg = 'vert-pop';
+            jumpState.yVelocity = wasOnRamp.pipeLaunch
+              ? Math.max(6, Math.abs(velocity.value) * wasOnRamp.pipeLaunch)
+              : Math.max(6, 2 + Math.abs(velocity.value) * 0.85);
+            velocity.value = -Math.max(1.2, Math.min(5, Math.abs(velocity.value) * 0.3));
+            shake.intensity = Math.max(shake.intensity, 0.08);
+            if (window.__ugLog && car.position.z < 52) window.__ugLog.push({ t: 'pipeTopExit', y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2) });
+          } else {
+            // Drive off the far (high) edge of the ramp we were just riding:
+            // launch off it, same as the city/ramp-world ramps.
+            if (window.__ugLog && car.position.z < 52) window.__ugLog.push({ t: 'else', wasOnRamp: !!wasOnRamp, vel: +velocity.value.toFixed(2), dot: +(direction.x * (wasOnRamp ? wasOnRamp.runX : 0) + direction.z * (wasOnRamp ? wasOnRamp.runZ : 0)).toFixed(2), y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2), rampSurf: +rampSurf.toFixed(2) });
+            const launched =
+              wasOnRamp &&
+              wasOnRamp.boost > 0 &&
+              velocity.value > 2 &&
+              (direction.x * wasOnRamp.runX + direction.z * wasOnRamp.runZ) > 0.3;
+            if (launched) {
             ugDbg = 'launch';
             jumpState.inAir = true;
             jumpState.yVelocity = velocity.value * (wasOnRamp.height / wasOnRamp.len) * wasOnRamp.boost;
@@ -4009,7 +5849,37 @@ function animate() {
             // Mounting is proximity-gated so a high surface passing overhead
             // never yo-yos the car off the floor.
             const eTop = ugElevatorTopAt(car.position.x, car.position.z, car.position.y);
-            if (eTop > 0.05 && Math.abs(car.position.y - eTop) < 1.4) {
+            if (ugSunkHoleAt(car.position.x, car.position.z) && car.position.y <= 0.05) {
+              // Full-speed pit entry: the wall under the lip drops faster than
+              // the 2.0 ride gate can follow, so the car skips the steep face
+              // and would otherwise snap back to the y=0 floor — hovering over
+              // the carved-out hole like invisible glass. Checked FIRST so no
+              // soft-surface hook (eTop) can ever pin the car to the floor
+              // plane above a pit. The descent is SELF-CONTAINED here in the
+              // grounded branch — it must not rely on the airborne branch
+              // (jumpState.inAir can be cleared by a per-frame touchdown reset
+              // before the next pass, which left the car floating at y=0). It
+              // falls straight down onto the sunken surface and lands.
+              ugDbg = 'sunk-fall';
+              onStairs = false;
+              const sinkSurf = ugRampSurfaceY(car.position.x, car.position.z);
+              const sinkLim = sinkSurf === -Infinity ? 0 : sinkSurf;
+              if (car.position.y > sinkLim + 0.02) {
+                jumpState.inAir = true;
+                jumpState.yVelocity = Math.min(jumpState.yVelocity - gravity * delta, 0);
+                car.position.y = Math.max(sinkLim, car.position.y + jumpState.yVelocity * delta);
+                if (car.position.y <= sinkLim + 0.02) {
+                  car.position.y = sinkLim;
+                  jumpState.inAir = false;
+                  jumpState.yVelocity = 0;
+                  shake.intensity = Math.max(shake.intensity, 0.15);
+                }
+                wasOnRamp = null;
+              } else {
+                jumpState.inAir = false;
+                jumpState.yVelocity = 0;
+              }
+            } else if (eTop > 0.05 && Math.abs(car.position.y - eTop) < 1.4) {
               ugDbg = 'surface';
               car.position.y = eTop;
               // Track riser bumps: when the car's height jumps up a step,
@@ -4036,15 +5906,43 @@ function animate() {
               jumpState.yVelocity = 0;
               onStairs = false;
             } else {
-              ugDbg = 'floor';
-              car.position.y = 0;
+              // A sunken surface can sit BELOW the y=0 floor plane (carved
+              // pipe bowls). Never snap a car that already rests under the
+              // floor back up onto it — that teleport read as invisible glass.
+              const sunkBelow = ugRampSurfaceY(car.position.x, car.position.z);
+              if (sunkBelow > -Infinity && car.position.y < -0.05) {
+                ugDbg = 'sunk-floor';
+                car.position.y = sunkBelow;
+              } else {
+                ugDbg = 'floor';
+                car.position.y = 0;
+              }
               onStairs = false;
             }
           }
+          }   // end halfpipe backstop
           wasOnRamp = null;
           // Not on stairs unless the eTop branch above set onStairs.
           if (!onStairs) stairPrevY = 0;
         }
+      }
+      // End of the underground physics pass: record the player's position so
+      // next frame's vert-pop gate can measure genuine outward travel.
+      playerPrevX = car.position.x;
+      playerPrevZ = car.position.z;
+      // Rolling park-region trace (?debug): keep the last ~4s of physics
+      // branch labels while the car is around the sunken skate park, so a
+      // "glass over the pipes" report can be diagnosed after the drive from
+      // one console paste.
+      if (car.position.x < -105 && car.position.z < -15) {
+        window.__ugTraceHistory = window.__ugTraceHistory || [];
+        window.__ugTraceHistory.push({
+          x: +car.position.x.toFixed(2), y: +car.position.y.toFixed(2), z: +car.position.z.toFixed(2),
+          dbg: ugDbg, inAir: jumpState.inAir, air0: __air0, airRan: __airRan, eTop: +ugElevatorTopAt(car.position.x, car.position.z, car.position.y).toFixed(2),
+          hole: undergroundWorld.sunkHoleAt ? undergroundWorld.sunkHoleAt(car.position.x, car.position.z) : null,
+          lc: littleCar.mesh ? { x: +littleCar.mesh.position.x.toFixed(2), y: +littleCar.mesh.position.y.toFixed(2), z: +littleCar.mesh.position.z.toFixed(2) } : null,
+        });
+        if (window.__ugTraceHistory.length > 240) window.__ugTraceHistory.shift();
       }
     }
   } else if (jumpState.inAir) {
@@ -4107,11 +6005,36 @@ function animate() {
     }
   }
 
-  // Wheel spin + front-wheel steering + body lean
+  // Wheel spin + front-wheel steering + body lean (skipped while driving the
+  // giant robot — it stomps its legs instead, see below).
   const spin = velocity.value * delta * 2.6;
-  for (const w of car.userData.wheels) w.rotation.y += spin;
-  for (let i = 0; i < 2; i++) {
-    car.userData.wheelPivots[i].rotation.y = steering.value * 0.55;
+  if (!playerRobot && !playerTarantula) {
+    for (const w of car.userData.wheels) w.rotation.y += spin;
+    const pivs = car.userData.wheelPivots;
+    for (let i = 0; i < Math.min(2, pivs.length); i++) {
+      pivs[i].rotation.y = steering.value * 0.55;
+    }
+  } else if (playerRobot) {
+    updatePlayerRobotWalk(delta, velocity.value);
+  } else if (playerTarantula) {
+    updatePlayerTarantulaWalk(delta, velocity.value);
+  }
+  // Hot-rod engine FX: the raccoon's rod rumbles and the twin tailpipes
+  // breathe fire — louder and longer the faster you go, with random pops.
+  if (car.userData.effects) {
+    const fx = car.userData.effects;
+    fx.phase += delta;
+    const rev = Math.min(Math.abs(velocity.value) / 14, 1);
+    fx.engine.rotation.z = Math.sin(fx.phase * 47) * 0.05 * (0.4 + rev)
+      + Math.sin(fx.phase * 101 + 1.3) * 0.035;
+    for (let i = 0; i < fx.flames.length; i++) {
+      const fl = fx.flames[i];
+      const pop = Math.sin(fx.phase * (29 + i * 9) + i * 2.4) > 0.86 ? 1 : 0;
+      const l = Math.max(0.3, (0.3 + rev * 0.8) * (0.8 + Math.sin(fx.phase * 53 + i * 2.1) * 0.25) + pop * 0.55);
+      fl.visible = l > 0.35;
+      fl.children[0].scale.y = l;   // outer flame tongue
+      fl.children[1].scale.y = Math.min(l, 0.65);   // inner core, always shy
+    }
   }
   // Body lean. On a ramp the car pitches to match the slope (nose up when
   // climbing, nose down when descending) so all four tires sit on the slanted
@@ -4170,15 +6093,25 @@ function animate() {
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
   }
 
-  // Pothole wobble — car rocks when driven through the pothole on the main road.
-  // Does not block movement; just adds a fun visual wobble.
+  // Pothole + park lake wobble — the car rocks when driven over the pothole on
+  // the main road or into the shallow lake in the NE park. Does not block
+  // movement; just adds a fun visual wobble (with splashes in the lake).
   if (worldState === 'city') {
-    const pdx = car.position.x - POTHOLE.x;
-    const pdz = car.position.z - POTHOLE.z;
-    const overHole = pdx * pdx + pdz * pdz < POTHOLE.radius * POTHOLE.radius;
-    if (overHole && !potholeWobble.active) {
+    const WATER_ZONES = [
+      { x: POTHOLE.x, z: POTHOLE.z, radius: POTHOLE.radius, bump: 0.6, splash: false },
+      { x: LAKE.x, z: LAKE.z, radius: LAKE.radius, bump: -0.45, splash: true },
+    ];
+    let activeZone = null;
+    for (const zone of WATER_ZONES) {
+      const dx = car.position.x - zone.x;
+      const dz = car.position.z - zone.z;
+      if (dx * dx + dz * dz < zone.radius * zone.radius) { activeZone = zone; break; }
+    }
+    if (activeZone && !potholeWobble.active) {
       potholeWobble.active = true;
       potholeWobble.t = 0;
+      potholeWobble.zone = activeZone;
+      if (activeZone.splash) spawnLakeSplash(activeZone.x, activeZone.z, car.position.x, car.position.z);
     }
     if (potholeWobble.active) {
       potholeWobble.t += delta;
@@ -4187,10 +6120,14 @@ function animate() {
         const decay = 1.0 - wt;
         car.rotation.z += Math.sin(wt * 18) * 0.22 * decay;
         car.rotation.x += Math.cos(wt * 22) * 0.16 * decay;
-        // Small vertical bump — car hops slightly on entry
-        if (wt < 0.25) car.position.y += (0.25 - wt) * 0.6;
+        // Vertical bump on entry — the pothole hops the car up; the lake sinks
+        // it a touch into the water before it floats back out.
+        if (wt < 0.3 && potholeWobble.zone) {
+          car.position.y += (0.3 - wt) * potholeWobble.zone.bump;
+        }
       } else {
         potholeWobble.active = false;
+        potholeWobble.zone = null;
       }
     }
   }
@@ -4266,6 +6203,38 @@ function animate() {
     car.position.x += -dx * Math.min(1, MINE_CENTER_PULL * delta);
   }
 
+  // ===== Car wash soap-glide =====
+  // The wash bay's lattice walls are SOAPY: main.js never knocks or wall-bounces
+  // the car against them (isPositionBlocked + playerSolids skip the soapy
+  // colliders). Instead, while the car is grounded inside the bay its lateral
+  // position is eased back toward the lane centre — no hard invisible stop at
+  // the lattice, just a smooth soapy slide along the wall back into the middle.
+  // A hard inner boundary still keeps the body from crossing the lattice.
+  const washBay = undergroundWorld.carWash && undergroundWorld.carWash.bay;
+  if (worldState === 'underground' && !jumpState.inAir && !buildingLevitate.levitating &&
+      car.position.y < 2 && washBay &&
+      Math.abs(car.position.x - washBay.cx) <= washBay.len / 2) {
+    const half = washBay.wid / 2;             // wall centre-line offset from the bay centre
+    const dz = car.position.z - washBay.cz;   // lateral offset off the centre lane
+    // Only soap when the car is genuinely INSIDE the bay — its z must already
+    // be between the two lattice walls. A car driving past beside the wash
+    // (within the bay's x range but off to one side) must be left alone; the
+    // old version clamped it into the lane, which read as being yanked inside.
+    if (Math.abs(dz) < half) {
+      const innerFace = half - 0.15;          // the lattice's inner face
+      const glideBand = half * 0.5;           // beyond this, ease back to centre
+      if (Math.abs(dz) > innerFace) {
+        // Reaching the lattice inside the bay: hold it at the wall (a small,
+        // sub-half-unit correction) while the glide below slides it free.
+        car.position.z = washBay.cz + Math.sign(dz) * innerFace;
+      }
+      if (Math.abs(dz) > glideBand) {
+        // Soapy ease back to the centre lane, frame-rate independent.
+        car.position.z += -dz * Math.min(1, 2.5 * delta);
+      }
+    }
+  }
+
   // Knock over props near the player. The city wraps across the seam, so its
   // knock uses the torus spans; the ramp world's props sit well inside the
   // band, so it knocks without wrap (which would otherwise let a ramp prop
@@ -4275,6 +6244,157 @@ function animate() {
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value);
 
   }  // end !robot.playerCaptured
+
+// ===== 2026-09-23 factory-floor attraction physics =====
+  // This block runs EVERY frame (inside the robot/cinematic gate close above,
+  // so it never fights a cutscene). Two attractions own the car outright:
+  // the express tube ride and the magnet hold each set the
+  // car position directly and are excluded from the normal physics gate above;
+  // the taffy pullers and bubble wrap just poke the car (scale + wobble).
+  if (worldState === 'underground' && undergroundWorld && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active) {
+    const ug = undergroundWorld;
+
+    // ---- 5. Express tube RIDE (owns the car completely). Works BOTH ways:
+    // board at the glass-city intake (s≈0, dir +1) and ride to the skate-park
+    // mouth (s≈1), or board at the skate-park mouth (dir -1) and ride back to
+    // the intake pad. The air-jet rings flip flow to match while a ride runs.
+    if (expressState.active) {
+      const len = expressTubeLength();
+      expressState.s += expressState.dir * (EXPRESS_TUBE.RIDE_SPEED / len) * delta;
+      const done = expressState.dir > 0 ? expressState.s >= 1 : expressState.s <= 0;
+      if (done) {
+        // Exit: drop off the reached mouth. Forward rides land on the empty
+        // floor of the far SW corner near the skate park; return rides pop out
+        // just OFF the intake pad (both mouths are grab windows now, so the
+        // cooldown lets the drop settle before a mouth can catch the car on
+        // the hop). A small hop lets the normal underground airborne branch
+        // bring the car down onto the floor; the aerial exit shot (expressCinT)
+        // holds to watch the landing, then the post-cine ease glides the
+        // camera back to the chase view.
+        expressState.active = false;
+        expressState.lastDir = expressState.dir;
+        expressState.cooldown = 2.5;
+        if (ug.expressTube) ug.expressTube.dir = 1;   // rings resume normal flow
+        stopTubeHum();   // the suction's over — kill the buzz as it spits out
+        const ex = expressTubePoint(expressState.dir > 0 ? 1 : 0);
+        const et = expressTubeTangent(expressState.dir > 0 ? 1 : 0);
+        car.position.set(
+          ex.x + (expressState.dir > 0 ? 0 : 2.8),
+          Math.max(0.4, ex.y),
+          ex.z + (expressState.dir > 0 ? 0 : 0.4)
+        );
+        // Spit the car OUT away from the mouth with a bit of speed so it
+        // shoots clear of the glass instead of tumbling where the pipe ends —
+        // forward rides aim SW over the corner, return rides shoot past the
+        // pad eastward, clear of the Glass City towers.
+        car.rotation.y = expressState.dir > 0
+          ? Math.atan2(et.tz, -et.tx)
+          : Math.atan2(-et.tz, et.tx);
+        jumpState.inAir = true;
+        jumpState.yVelocity = 4;
+        velocity.value = 6;
+        shake.intensity = Math.max(shake.intensity, 0.2);
+        expressCinT = 1.6;
+        _postCineCamPos.copy(camera.position);
+        _postCineLookPos.copy(_lookTarget);
+        _postCineTimer = 1.5;
+      } else {
+        const p = expressTubePoint(expressState.s);
+        const t = expressTubeTangent(expressState.s);
+        car.position.set(p.x, p.y, p.z);
+        // Face along the travel direction: forward rides head up the rising
+        // tube, return rides head back down it into the intake.
+        const tx = expressState.dir > 0 ? t.tx : -t.tx;
+        const tz = expressState.dir > 0 ? t.tz : -t.tz;
+        const ty = expressState.dir > 0 ? t.ty : -t.ty;
+        car.rotation.y = Math.atan2(tz, -tx);
+        car.rotation.z = -Math.atan2(ty, Math.hypot(t.tx, t.tz));   // nose pitched along the climb/descent
+        car.rotation.x = 0;
+        tunnelFloorState.active = false;
+        onStairs = false;
+      }
+    } else {
+      // ---- 5b. Express tube GRAB check (either mouth) ----
+      // A grounded, moving car at either open mouth (s < GRAB_S_MAX or past
+      // 1 − GRAB_S_MAX) gets sucked through the whole tube toward the far end.
+      // The vertical window keeps the cave floor below the elevated tube from
+      // grabbing a grounded car, and `cooldown` lets an exit drop settle
+      // before the mouth it landed at can catch the car again.
+      if (expressState.cooldown > 0) expressState.cooldown -= delta;
+      const nn = expressTubeNearest(car.position.x, car.position.z);
+      const groundedTube = !jumpState.inAir && car.position.y < 2;
+      const atInlet = nn.s < EXPRESS_TUBE.GRAB_S_MAX;
+      const atOutlet = nn.s > 1 - EXPRESS_TUBE.GRAB_S_MAX;
+      if (expressState.cooldown <= 0
+        && groundedTube
+        && (atInlet || atOutlet)
+        && nn.horizDist < EXPRESS_TUBE.GRAB_R
+        && Math.abs(nn.y - car.position.y) < 1.2
+        && Math.abs(velocity.value) > 2) {
+        expressState.active = true;
+        expressState.dir = atInlet ? 1 : -1;
+        expressState.s = nn.s;
+        if (ug.expressTube) ug.expressTube.dir = expressState.dir;  // flip the air-jet rings
+        playFwoosh();
+        startTubeHum();   // power-line buzz for the whole suction ride
+        shake.intensity = Math.max(shake.intensity, 0.4);
+      }
+    }
+
+    // ---- 3. Magnet hold (owns the car while the field is on) ----
+    const mag = ug.magnet;
+    if (mag) {
+      if (mag.active) {
+        const mdx = car.position.x - mag.x, mdz = car.position.z - mag.z;
+        if (magnetHold) {
+          // Keep hoisting toward the ceiling coil; the car hangs there.
+          const tgtY = mag.holdY - 1.6;
+          car.position.y += (tgtY - car.position.y) * Math.min(1, 1.8 * delta);
+          // Hold horizontally steady, wheels spinning in place reads as magnetic.
+          if (Math.abs(mdx) > 0.8 || Math.abs(mdz) > 0.8) {
+            car.position.x += -mdx * Math.min(1, 2.5 * delta);
+            car.position.z += -mdz * Math.min(1, 2.5 * delta);
+          }
+          for (const w of car.userData.wheels) w.rotation.y += delta * 14;
+          velocity.value *= 0.92;
+        } else if (!jumpState.inAir
+          && Math.abs(mdx) < mag.r
+          && Math.abs(mdz) < mag.r
+          && car.position.y < 1.5) {
+          magnetHold = { t: 0 };
+          shake.intensity = Math.max(shake.intensity, 0.28);
+        }
+      } else if (magnetHold) {
+        // Field dropped — release the car to fall under gravity.
+        magnetHold = null;
+        jumpState.inAir = true;
+        jumpState.yVelocity = 0;
+        shake.intensity = Math.max(shake.intensity, 0.18);
+      }
+    }
+
+    // ---- 2. Taffy pullers: poll the hooks (the state machine itself is
+    // stepped in updateFlatCarState so a stretch survives world switches).
+    const taf = ug.taffy;
+    if (taf && taf.hookedAt) {
+      if (!taffyState.active && taf.hookedAt(car.position.x, car.position.z)) {
+        taffyState = createTaffyState(true);
+        playTaffySnap();
+        shake.intensity = Math.max(shake.intensity, 0.3);
+      }
+    }
+
+    // ---- 1. Bubble wrap steering wobble ----
+    if (bubbleWobble > 0) {
+      // A fresh pop throws the car sideways a beat; the wobble decays over
+      // ~half a second so popping a long strip down the lane reads as bumpy.
+      const j = (Math.random() - 0.5) * 3.2 * bubbleWobble * delta;
+      car.rotation.y += j;
+      car.rotation.z += (Math.random() - 0.5) * 1.6 * bubbleWobble * delta;
+      car.rotation.x += (Math.random() - 0.5) * 1.2 * bubbleWobble * delta;
+      bubbleWobble = Math.max(0, bubbleWobble - delta * 2);
+    }
+  }
 
 // ===== Holy-chamber cinematic trigger =====
   // Rolling into the open summit skylight sends the car down the shaft into
@@ -4504,6 +6624,13 @@ function animate() {
   if (worldState === 'city') {
   // ===== Traffic: drive straight on the road, hold at red lights =====
   traffic.forEach((t) => {
+    // A crushed car runs the same flat-mode lifecycle as the player: it lies
+    // low while it keeps driving, then pops back up. `t.flat` only exists
+    // once the player's steamroller has flattened it (see the crush below).
+    if (t.flat) {
+      t.flat = stepFlatCarState(t.flat, delta, Math.abs(t.speedCur || 0) > 0.8);
+      t.mesh.scale.y = getFlatCarScaleY(t.flat);
+    }
     // Knocked by the player/firetruck: slide + spin out of the way. The knock
     // overrides normal lane driving until it dies down, then the car eases
     // back to its lane and straightens up to its lane heading.
@@ -4603,10 +6730,32 @@ function animate() {
     t.mesh.position.x = wrapCoordX(t.mesh.position.x);
     t.mesh.position.z = wrapCoordZ(t.mesh.position.z);
 
+    // The PLAYER's heavy rides (steamroller drum / monster truck nose) crush
+    // traffic: when the front is partway over a car, that car goes flat — the
+    // very same flat-mode as the player gets run over by the traveling
+    // steamroller. Each car is tracked separately, so a whole row can be
+    // squashed at once; a crushed car pops back up after it drives around for
+    // a while.
+    if (playerSteamroller && !jumpState.inAir) {
+      const pfwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
+      const reach = playerMonster ? 2.9 : 2.3;
+      const pdrumX = car.position.x + pfwd.x * reach;
+      const pdrumZ = car.position.z + pfwd.z * reach;
+      const cdx = wrappedDeltaX(pdrumX, t.mesh.position.x);
+      const cdz = wrappedDeltaZ(pdrumZ, t.mesh.position.z);
+      if (cdx * cdx + cdz * cdz < 3.5 * 3.5 && !(t.flat && t.flat.phase === 'bounce')) {
+        if (!t.flat) t.flat = createFlatCarState(false);
+        t.flat.active = true;
+        t.flat.phase = 'flat';
+        t.flat.timer = 0;
+      }
+    }
+
     // A steamroller flattens the player car when its drum drives over it.
     // It's a ghost — no knock, no shove — the drum just rolls over the car
-    // and squashes it flat.
-    if (t.isSteamroller && !playerKnock && !jumpState.inAir) {
+    // and squashes it flat. A player DRIVING a steamroller doesn't get
+    // flattened (it's their shtick now).
+    if (t.isSteamroller && !playerSteamroller && !playerKnock && !jumpState.inAir) {
       const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(t.mesh.quaternion);
       const drumX = t.mesh.position.x + fwd.x * 2.3;
       const drumZ = t.mesh.position.z + fwd.z * 2.3;
@@ -4631,6 +6780,7 @@ function animate() {
     wrapDeltaZ: wrappedDeltaZ,
     colliders,
     player: { mesh: car },
+    playerIsRobot: playerRobot,
     bumper: { mesh: bumperCar },
     traffic,
     onPlayerEaten: respawnPlayer,
@@ -4694,6 +6844,7 @@ function animate() {
   // Chase camera — held in updateCamera() so it can also keep running while
   // the game is paused (scroll-wheel zoom + drag orbit stay live).
   updateCamera(delta);
+  updateTubeHum();   // distance-fade the express-tube buzz to the camera
 
   // City ambience (traffic lights, props, fountains, pedestrians) — only in
   // the city; the ramp world has none of these.
@@ -4713,6 +6864,9 @@ function animate() {
 
   // Fire hydrant water sprays
   updateHydrantSprays(delta);
+
+  // Park lake splash droplets (city scene only — the spawn is gated above)
+  updateLakeSplashes(delta);
 
   // Animate hovering rings in the open building
   updateHoveringRings(clock.elapsedTime);
@@ -4739,14 +6893,22 @@ function animate() {
   // car that entered too low to snap up just sits in the boxes). After a
   // moment it gets a gentle nudge back north out onto open floor.
   if (worldState === 'underground') {
-    undergroundWorld.update(delta, car.position);
-    // Rotating platter (idea #2): while the car is carried around the hub its
-    // HEADING turns with the disk too, so it reads like the car is actually
-    // sitting on the turntable instead of skating around it. The level spins
-    // a single clock `spin.t`; add the per-frame delta to the car's yaw.
-    const plat = undergroundWorld.platter;
-    if (plat && plat.gripped) car.rotation.y += plat.spin.t - platterSpinLast;
-    platterSpinLast = plat.spin.t;
+    // Feed the little car follower position in too (only when it's actually
+    // driving around — not while it's hidden waiting or inside the tunnel), so
+    // it also advances the checkerboard tile colors when it drives over the
+    // second roof. When the player is driving the train, every trailing car
+    // advances the tiles it drives over as well.
+    undergroundWorld.update(
+      delta,
+      car.position,
+      littleCar.mesh && littleCar.mesh.visible ? littleCar.mesh.position : null,
+      playerTrain && trainCars.length ? trainCars.map((m) => m.position) : null
+    );
+    // The underground's steam press flattens the car when it's under the head
+    // while it's slammed down (same flatten/bounce as the boulder/steamroller).
+    if (undergroundWorld.steamPress && undergroundWorld.steamPress.slamActive) {
+      flattenCarFromRock();
+    }
     // Record the player's path so the little car can follow it up the ramps
     // and onto the ceiling, then advance the little car follower: waits ~30s,
     // rides the spiral tunnel out, then follows the player around the cavern.
@@ -4754,6 +6916,12 @@ function animate() {
     // the mountain — don't record that so the little car can't follow into it.
     if (!chamberCine.active) recordLittleCarTrail(delta);
     updateLittleCar(delta);
+    // The little car is hittable like a city traffic car — shove it out of
+    // the way when the player drives into it. Skipped during cinematics so
+    // the scripted spiral descent can't be thrown off course.
+    if (!chamberCine.active && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active) {
+      resolveLittleCarCollision(delta);
+    }
     // Task #35a: off-slab recovery — the cavern floor mesh spans the slab
     // (292×276 centered at (0,41.5)) but nothing walls its edges, so a huge
     // knock can throw the car past the rim onto invisible floor. Settle it
@@ -4789,6 +6957,22 @@ function animate() {
 
   // Blue car follow in the ramp world: countdown, then chase + knock props.
   updateRampWorldBumper(delta);
+
+  // Wild monster truck in the ramp world: patrols, ramp-jumps, flattens you.
+  updateRampWorldMonster(delta);
+
+  // A dumpling of a guardian tarantula sleeps in the velodrome bowl until you
+  // bump it — contact blazes its eyes red and starts its 30-second roam.
+  if (rampTarantula.mode === 'sleep') {
+    const td = Math.hypot(car.position.x - rampTarantula.mesh.position.x, car.position.z - rampTarantula.mesh.position.z);
+    if (td < 4.5) wakeTarantula(rampTarantula);
+  }
+  updateTarantulaNpc(rampTarantula, delta);
+
+  // The freight consist follows the locomotive wherever you drive.
+  updateTrainCars(delta);
+  // A train chosen as the CHASE ride drags its own consist after the bumper.
+  updateChaseTrainCars(delta);
 
   // ===== Portal triggers: driving under the ramp-world vortex swaps worlds =====
   // under the ramp-world vortex swaps worlds =====
@@ -4980,6 +7164,8 @@ function animate() {
 
 animate();
 
+await __loaderYield(0.98, 'the finish line');
+
 // ===== Loading screen handoff =====
 // Everything is built and the first frame is about to render: tell the loader
 // (index.html) to snap to 100% and fade out, revealing the game.
@@ -5006,6 +7192,9 @@ if (location.search.includes('debug')) {
   }
   window.__game = {
     car: () => ({ x: car.position.x, y: car.position.y, z: car.position.z, rx: car.rotation.x, rz: car.rotation.z, ry: car.rotation.y, scaleY: +car.scale.y.toFixed(3), world: worldState }),
+    // Gear menu: which car body the player is driving right now.
+    carKind: () => ({ kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster, indy: playerIndy, train: playerTrain, robot: playerRobot, tarantula: playerTarantula }),
+    setCar(kind) { swapPlayerCar(kind); },
     // TEMP DEBUG: camera position + hole-fall cinematic state.
     cam: () => ({
       x: +camera.position.x.toFixed(2), y: +camera.position.y.toFixed(2), z: +camera.position.z.toFixed(2),
@@ -5019,6 +7208,11 @@ if (location.search.includes('debug')) {
       paused: isPaused,
     }),
     vel: () => ({ v: +velocity.value.toFixed(2), s: +steering.value.toFixed(2) }),
+    monster: () => ({
+      inRamp: monsterInRamp, timer: +monsterRampTimer.toFixed(2),
+      patrol: monsterPatrol, air: monsterAir, vy: +monsterVy.toFixed(2),
+      pos: monsterTruck ? { x: +monsterTruck.position.x.toFixed(1), y: +monsterTruck.position.y.toFixed(1), z: +monsterTruck.position.z.toFixed(1) } : null,
+    }),
     // TEMP DEBUG: expose the car's quaternion and computed forward direction.
     fwd: () => {
       const d = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
@@ -5084,57 +7278,9 @@ if (location.search.includes('debug')) {
       enterUndergroundWorld();
       if (spiralCine.active) finishSpiralCine();
     },
-    // Roofline obstacle-course readout (?debug only): the live course the
-    // level built — gate positions, START/FINISH, completed runs, and whether
-    // the pennant/gate/banner meshes actually exist in the scene.
-    ugCourse: () => {
-      const c = undergroundWorld.course;
-      const pennantWorld = [];
-      for (const w of (undergroundWorld.coursePennants || [])) {
-        const p = new THREE.Vector3();
-        w.getWorldPosition(p);
-        pennantWorld.push({ x: +p.x.toFixed(1), y: +p.y.toFixed(1), z: +p.z.toFixed(1) });
-      }
-      return {
-        gates: c.gates.map((g) => ({ cx: g.cx, cz: g.cz, dir: g.dir })),
-        start: c.start,
-        finish: { x: c.finishX, z: c.finishZ, half: c.finishHalf },
-        finishCount: undergroundWorld.finishCount,
-        pennantCount: c.pennants,
-        pennantWorld,
-      };
-    },
-    // Underground prompt-block bump state (tasks #6–#7) for automated testing.
-    ugBumps: () => ({
-      count: undergroundWorld.bumpCount,
-      last: undergroundWorld.lastBump,
-      blocks: undergroundWorld.promptBlocks.map((b) => ({
-        x: b.x, y: b.y, z: b.z, armed: b.armed,
-        cooldown: +b.cooldown.toFixed(2), flash: +b.flash.toFixed(2),
-        emissive: +b.mat.emissiveIntensity.toFixed(2),
-      })),
-    }),
-    // Live foam-collectible state (task #8) for automated testing.
-    ugFoam: () => undergroundWorld.foamPieces.map((f) => ({
-      x: +f.mesh.position.x.toFixed(1),
-      y: +f.mesh.position.y.toFixed(1),
-      z: +f.mesh.position.z.toFixed(1),
-      bounces: f.bounces,
-      age: +f.age.toFixed(2),
-      scale: +f.mesh.scale.x.toFixed(2),
-    })),
-    // Debug-only foam spawner (task #9): lets tests drive the FOAM_MAX
-    // recycle path instantly instead of waiting on real bump rates.
-    ugSpawnFoam: (x, y, z) => undergroundWorld.spawnFoam(x, y, z),
-    // Conduit-pipe state (tasks #11–#14) for automated testing.
-    ugPipes: () => undergroundWorld.conduitPipes.map((p) => ({
-      x: +p.mesh.position.x.toFixed(2),
-      y: +p.mesh.position.y.toFixed(1),
-      z: +p.mesh.position.z.toFixed(1),
-      axis: p.axis,
-      hits: p.hitCount,
-      cd: +Math.max(0, p.hitCooldown).toFixed(2),
-    })),
+    // Underground course readout (?debug only): how many runs have crossed the
+    // FINISH ribbon since the level loaded.
+    ugCourse: () => ({ finishCount: undergroundWorld.finishCount }),
     // Giant conveyor lane (idea #33): footprint + drag direction/speed, plus
     // whether the car is currently over the belt.
     ugConveyor: () => {
@@ -5146,13 +7292,6 @@ if (location.search.includes('debug')) {
         gems: undergroundWorld.beltGems.filter((g) => g.active).length,
       };
     },
-    // Disco ball state (idea #14): swing tilts in degrees + spin + hits.
-    ugDisco: () => ({
-      ax: +(undergroundWorld.disco.ax * 180 / Math.PI).toFixed(1),
-      az: +(undergroundWorld.disco.az * 180 / Math.PI).toFixed(1),
-      spin: +undergroundWorld.disco.spin.toFixed(2),
-      hits: undergroundWorld.disco.hits,
-    }),
     // Shooting-star state (idea #15): active meteor count + positions.
     ugMeteors: () => undergroundWorld.sky.meteors
       .filter((m) => m.active)
@@ -5166,7 +7305,7 @@ if (location.search.includes('debug')) {
       goats: undergroundWorld.holy.goats.map((g) => +g.rotation.y.toFixed(2)),
       honk: () => undergroundWorld.holy.honk(),
     }),
-    // Glass City crystal state (idea #25): alive/respawn per cluster.
+    // Glass City plaza balloons: alive/respawn per balloon (pop on drive-over).
     ugCrystals: () => undergroundWorld.glassCrystals.map((c) => ({
       x: c.x, z: c.z, alive: c.alive, respawn: +Math.max(0, c.respawn).toFixed(1),
     })),
@@ -5235,11 +7374,15 @@ if (location.search.includes('debug')) {
       eTop: +ugElevatorTopAt(car.position.x, car.position.z, car.position.y).toFixed(2),
       wasOnRamp: wasOnRamp ? { runX: wasOnRamp.runX, runZ: wasOnRamp.runZ, h: wasOnRamp.height, len: wasOnRamp.len } : null,
       dbg: ugDbg,
+      hole: undergroundWorld && undergroundWorld.sunkHoleAt ? undergroundWorld.sunkHoleAt(car.position.x, car.position.z) : null,
       rampSurf: (() => {
         const r = ugRampInfoAt(car.position.x, car.position.z);
         return r ? +(r.baseY + r.height * r.s).toFixed(2) : null;
       })(),
     }),
+    // Rolling park-region trace (?debug): branch labels + position while the
+    // car is around the sunken skate park (last ~4s).
+    ugParkFrames: () => (window.__ugTraceHistory || []).map((f) => `${f.x},${f.y} dbg=${f.dbg} air0=${f.air0} airRan=${f.airRan} inAir=${f.inAir} eTop=${f.eTop} hole=${f.hole}`),
     // Glowing hole-outline frames (?debug): world position of each orange
     // frame around a crumbled tile, so tests can confirm they sit exactly on
     // the hole.
@@ -5299,11 +7442,6 @@ if (location.search.includes('debug')) {
         color: g.mesh.material.color.getHex(),
         slamCd: +g.slamCd.toFixed(2),
       })),
-    }),
-    // Padded-pole impact state (tasks #31–#32) for automated testing.
-    ugPole: () => ({
-      hits: undergroundWorld.poleState.hits,
-      last: undergroundWorld.poleState.last,
     }),
     // Holy Mountain state (?debug): layout config, mystery-light pulse and
     // whether the car has discovered the hollow chamber yet.
@@ -5542,6 +7680,7 @@ if (location.search.includes('debug')) {
       speed: +t.speedCur.toFixed(2),
       knock: t.knock ? +t.knock.t.toFixed(2) : 0,
       roller: !!t.isSteamroller,
+      flatY: t.flat ? +t.mesh.scale.y.toFixed(2) : 1,   // < 1 when steamrollered flat
     })),
     // Foreboding sky state (?debug): the dark dome, drifting dark clouds,
     // star field and colorful constellations above the cavern ceiling.

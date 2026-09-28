@@ -320,6 +320,11 @@ function makeStreetCone(scene, x, z) {
 // Position on the main east-west road, far east of the intersection.
 export const POTHOLE = { x: -50, z: 8, radius: 3 };
 
+// Park lake: the shallow blue pond in the NE park (centre 62,62) behaves like
+// the pothole — driving in rocks the car, dips it into the water and kicks up
+// splashes. Slightly bigger than the pothole's pool (the pond's top rim is 4).
+export const LAKE = { x: 62, z: 62, radius: 4.4 };
+
 function makePothole(scene) {
   const { x, z, radius } = POTHOLE;
 
@@ -891,26 +896,46 @@ function addStreetFurniture(scene) {
 // ===== Fence (park border) =====
 const fenceMat = new THREE.MeshStandardMaterial({ color: 0x9a8a72, roughness: 0.9 });
 
-function makeFenceLine(scene, x1, z1, x2, z2, n = 6) {
-  const group = new THREE.Group();
-  const cx = (x1 + x2) / 2;
-  const cz = (z1 + z2) / 2;
+function makeFenceLine(scene, x1, z1, x2, z2, sections = 12) {
+  // The fence comes apart in MANY little sections — each one is its own
+  // knockable (two posts + a short rail), so bumping the park border knocks
+  // pieces every which way and the whole perimeter visibly crumbles into
+  // scattered fencing rather than sliding away as one rigid 26-unit wall.
+  //
+  // Each section's GROUP is positioned at THAT SECTION's midpoint, with the
+  // posts/rail in local coords — so the knockable's origin rides the fence
+  // itself instead of the world origin (which would scatter every section the
+  // moment anything bumped near the city centre).
   const len = Math.hypot(x2 - x1, z2 - z1);
   const rotY = Math.atan2(z2 - z1, x2 - x1);
-  for (let i = 0; i < n; i++) {
-    const t = n === 1 ? 0 : i / (n - 1);
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), fenceMat);
-    post.position.set(x1 - cx + (x2 - x1) * t, 0.45, z1 - cz + (z2 - z1) * t);
-    post.castShadow = true;
-    group.add(post);
+  const segLen = len / sections;
+  for (let i = 0; i < sections; i++) {
+    const t0 = i / sections;
+    const t1 = (i + 1) / sections;
+    const cx = x1 + (x2 - x1) * (t0 + t1) / 2;
+    const cz = z1 + (z2 - z1) * (t0 + t1) / 2;
+    const g = new THREE.Group();
+    for (const t of [t0, t1]) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), fenceMat);
+      post.position.set(x1 + (x2 - x1) * t - cx, 0.45, z1 + (z2 - z1) * t - cz);
+      post.castShadow = true;
+      g.add(post);
+    }
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(segLen, 0.09, 0.07), fenceMat);
+    rail.position.set(0, 0.75, 0);
+    rail.rotation.y = rotY;
+    rail.castShadow = true;
+    g.add(rail);
+    g.position.set(cx, 0, cz);
+    scene.add(g);
+    addKnockable(g, segLen * 0.5 + 0.28, {
+      mode: 'slide',
+      slideDistance: 0.9 + Math.random() * 0.9,
+      fallTime: 0.45,
+      shovePower: 6,
+      shoveSpinPower: 2.2,
+    });
   }
-  const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.09, 0.07), fenceMat);
-  rail.position.set(0, 0.75, 0);
-  rail.rotation.y = rotY;
-  group.add(rail);
-  group.position.set(cx, 0, cz);
-  scene.add(group);
-  addKnockable(group, 5, { mode: 'slide', slideDistance: 1.2, fallTime: 0.5 });
 }
 
 // ===== Park (northeast) =====
@@ -1261,7 +1286,16 @@ function makeFountain(scene, x, z, fountains) {
 
   group.position.set(x, 0, z);
   scene.add(group);
-  addKnockable(group, 2.4, { fallTime: 0.9 });   // heavy — tips over slowly
+  // Heavy stone — it TOPPLES over in a satisfying way, tipping around its
+  // base edge so it lands on the plaza instead of slowly rotating into the
+  // ground (which read as a useless wobble). Once down it can be shoved.
+  addKnockable(group, 2.4, {
+    mode: 'topple',
+    fallTime: 0.7,
+    toppleRadius: 2.4,
+    shovePower: 9,
+    shoveSpinPower: 2.2,
+  });
   fountains.push({ jet, droplets, time: 0 });
 }
 
@@ -1413,10 +1447,10 @@ export function addProps(scene) {
   makeFireHydrant(scene, -20, 58);    // near rightmost shop
   makeFireHydrant(scene, 60, 48);     // near park edge
 
-  makeFenceLine(scene, 49, 49, 49, 75, 7);
-  makeFenceLine(scene, 49, 75, 75, 75, 7);
-  makeFenceLine(scene, 75, 75, 75, 49, 7);
-  makeFenceLine(scene, 75, 49, 49, 49, 7);
+  makeFenceLine(scene, 49, 49, 49, 75, 13);
+  makeFenceLine(scene, 49, 75, 75, 75, 13);
+  makeFenceLine(scene, 75, 75, 75, 49, 13);
+  makeFenceLine(scene, 75, 49, 49, 49, 13);
 
   addPark(scene);
   addParkingLot(scene);

@@ -49,6 +49,6 @@ To stop the server, press `Ctrl+C` in the PowerShell window.
   for each changed file, then reload the page.
 - Append `?debug` to the URL for the `window.__game` test hooks (`.car()`,
   `.teleport(x,z,heading)`, surface-aware `.tp2(x,z,heading)`, per-feature
-  probes like `.ugStairs()`, `.ugPole()`, `.perf()`, `.sceneStats()`).
+  probes like `.ugStairs()`, `.ugConveyor()`, `.perf()`, `.sceneStats()`).
 - Run the unit tests with
   `node --test src/carFlatMode.test.mjs src/modules/portalRules.test.mjs src/modules/stairCycle.test.mjs`.

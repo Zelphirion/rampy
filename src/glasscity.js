@@ -4,8 +4,8 @@ import { addKnockable } from './physics.js';
 // ===== The Glass City (north of the world) =====
 // A grid of silent, monolithic skyscrapers made of coloured translucent glass,
 // with surreal street-level tableaux visible through shop windows — a room
-// full of mechanical birds, an orchard of blue trees growing through marble
-// floors, and figures locked in motionless tableaux.
+// full of mechanical birds, an orchard plaza of glowing blue balloons, and
+// figures locked in motionless tableaux.
 //
 // Region: z in [132, 173], spanning the whole world width x in [-140, 140].
 // Built for the old, larger surface map; since the map shrank to its wrapped
@@ -32,7 +32,7 @@ const towerCols = [];
 for (let x = -126; x <= 134; x += 20) towerCols.push(x);
 const towerRows = [134, 152, 170];
 
-// Towers removed to make room for the blue-tree orchard plaza.
+// Towers removed to make room for the balloon plaza.
 function towerSkipped(x, z) {
   if (z === 152 && (x === 34 || x === 54)) return true;
   return false;
@@ -137,12 +137,14 @@ function makeBirdShop(scene, x, z) {
   };
 }
 
-// ---- Tableau 2: an orchard of blue trees growing through marble ----
-function makeBlueTree(scene, x, z) {
+// ---- Tableau 2: an orchard plaza of glowing blue balloons ----
+// Each balloon bobs on its gold stand; the car pops them by driving over
+// them (they vanish with a blue shard burst, then regrow after a beat).
+function makeBalloon(scene, x, z) {
   const g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 2.2, 8), goldMat);
-  trunk.position.y = 1.1;
-  g.add(trunk);
+  const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.28, 2.2, 8), goldMat);
+  stand.position.y = 1.1;
+  g.add(stand);
   const canopyMat = new THREE.MeshStandardMaterial({ color: 0x2f8fe0, emissive: 0x1a5f9e, emissiveIntensity: 0.5, transparent: true, opacity: 0.8, roughness: 0.3 });
   for (let i = 0; i < 3; i++) {
     const blob = new THREE.Mesh(new THREE.SphereGeometry(1.0 - i * 0.2, 12, 10), canopyMat);
@@ -159,43 +161,62 @@ function makeOrchardPlaza(scene, cx, cz) {
   floor.position.set(cx, 0.02, cz);   // top ~0.145 (car rides over it level)
   floor.receiveShadow = true;
   scene.add(floor);
-  const trees = [];
+  const balloons = [];
   for (let i = 0; i < 7; i++) {
     const tx = (i % 3 - 1) * 6 + ((i * 7) % 5) * 1.2;
     const tz = (Math.floor(i / 3) - 1) * 5 + ((i * 3) % 4) * 1.0;
-    trees.push(makeBlueTree(scene, cx + tx, cz + tz));
+    const g = makeBalloon(scene, cx + tx, cz + tz);
+    balloons.push({ g, x: cx + tx, z: cz + tz, radius: 2.6, alive: true, respawn: 0 });
   }
-  return trees;
+  return balloons;
 }
 
-// ---- Tableau 3: figures that slowly "change pose" on a clock (idea #26) ----
-function makeMannequin(color) {
+// ---- Tableau 3: dancers that dance all the time (idea #26) ----
+// A dapper little figure in a pointy hat. They never stop: they bounce, bob
+// side to side, flail their arms and wiggle their hat, each on its own phase
+// so they never move in lockstep — just like the birds in the other shop.
+function makeDancer(color) {
   const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.4 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 1.1, 0.4), mat);
-  body.position.y = 1.3;
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10), mat);
+  body.position.y = 1.35;
   g.add(body);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), new THREE.MeshStandardMaterial({ color: 0xf5f1e8, roughness: 0.5 }));
-  head.position.y = 2.25;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 10, 8), new THREE.MeshStandardMaterial({ color: 0xf5f1e8, roughness: 0.5 }));
+  head.position.y = 2.2;
   g.add(head);
-  const hat = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.8, 8), new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.6 }));
-  hat.position.y = 2.85;
+  // Two small dark eyes on the +Z side so the dancer has a friendly front.
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x1c1c22, roughness: 0.4 });
+  const eyeGeo = new THREE.SphereGeometry(0.05, 8, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.1, 2.27, 0.25);
+  g.add(eyeL);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeR.position.set(0.1, 2.27, 0.25);
+  g.add(eyeR);
+  // The pointy hat — kept, it's their signature.
+  const hat = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.85, 8), new THREE.MeshStandardMaterial({ color: 0x22242a, roughness: 0.6 }));
+  hat.position.y = 2.82;
   g.add(hat);
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), mat);
-  armL.position.set(-0.42, 1.2, 0);
-  armL.rotation.z = 0.5;
+  const hatBand = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 0.1, 8), mat);
+  hatBand.position.y = 2.55;
+  g.add(hatBand);
+  // Arms as groups so they can flail independently.
+  const armL = new THREE.Group();
+  armL.position.set(-0.42, 1.35, 0);
+  armL.add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.65, 0.14), mat));
   g.add(armL);
-  const armR = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.7, 0.14), mat);
-  armR.position.set(0.42, 1.2, 0);
-  armR.rotation.z = -0.6;
+  const armR = new THREE.Group();
+  armR.position.set(0.42, 1.35, 0);
+  armR.add(new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.65, 0.14), mat));
   g.add(armR);
-  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.7, 0.16), mat);
-  legL.position.set(-0.18, 0.4, 0);
+  // Legs.
+  const legL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), mat);
+  legL.position.set(-0.18, 0.3, 0);
   g.add(legL);
-  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.7, 0.16), mat);
-  legR.position.set(0.18, 0.35, 0);
+  const legR = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.6, 0.16), mat);
+  legR.position.set(0.18, 0.3, 0);
   g.add(legR);
-  return { g, head, hat, armL, armR };
+  return { g, head, hat, armL, armR, legL, legR };
 }
 
 function makeTableauShop(scene, x, z, color, colors) {
@@ -207,35 +228,74 @@ function makeTableauShop(scene, x, z, color, colors) {
   box.position.y = 3;
   box.receiveShadow = true;
   g.add(box);
-  const win = new THREE.Mesh(new THREE.BoxGeometry(5.4, 4, 0.2), windowMat);
-  win.position.set(0, 3, 3.55);
-  g.add(win);
-  const sign = new THREE.Mesh(new THREE.BoxGeometry(6.4, 0.8, 0.3), goldMat);
-  sign.position.set(0, 5.3, 3.5);
-  g.add(sign);
+  // The building is clear glass all the way round, so no window pane — the
+  // dancers are visible from every side. They face the CENTRE OF THE WORLD
+  // (0,0), not the outer cave wall.
+  const cdx = 0 - x;
+  const cdz = 0 - z;
+  const clen = Math.hypot(cdx, cdz) || 1;
+  const disX = cdx / clen, disZ = cdz / clen;   // inward-facing display normal
+  const faceYaw = Math.atan2(cdx, cdz);         // rotate +Z so it faces centre
+  // Spread the dancers side by side ALONG the shop face (perpendicular to the
+  // display normal) so they all stand at the same depth looking into the city.
+  const perpX = -disZ, perpZ = disX;
   const figures = [];
   for (let i = 0; i < colors.length; i++) {
-    const m = makeMannequin(colors[i]);
-    m.g.position.set((i - 1) * 1.4, 0.05, 0);
-    const baseYaw = 0.2 + (i % 2) * 0.5;
+    const m = makeDancer(colors[i]);
+    const ox = (i - 1) * 1.4;
+    m.g.position.set(perpX * ox, 0.05, perpZ * ox);
+    const baseYaw = faceYaw + (i - 1) * 0.16;
     m.g.rotation.y = baseYaw;
     g.add(m.g);
-    figures.push({ ...m, baseYaw, phase: i * 2.1 + x * 0.03, speed: 0.5 + (i % 3) * 0.25 });
+    figures.push({
+      ...m, baseYaw, phase: i * 2.1 + x * 0.03, speed: 0.6 + (i % 3) * 0.2,
+      xOff: perpX * ox, zOff: perpZ * ox,   // dancer's world offsets inside the shop
+      dance: (i % 2 === 0) ? 1 : -1,       // alternate swing direction
+    });
   }
   g.position.set(x, 0, z);
   scene.add(g);
+  // The dancers start dancing when you get close (within 4 car lengths of the
+  // shop, ~17 units) and settle back to a relaxed stance as you drive away —
+  // like the birds in the other shop.
+  const DANCE_RADIUS = 4 * 4.3;   // 4 car lengths (car body is 4.3 long)
   return {
     x, z, halfW: 3.5, halfD: 3.5, h: 6,
-    // Slow living-exhibit motion: arms drift, the body turns a little, head
-    // scans — each figure on its own phase so they don't move in lockstep.
-    update(delta, t) {
+    update(delta, t, player) {
+      let dancing = false;
+      if (player) {
+        const dx = player.x - x;
+        const dz = player.z - z;
+        dancing = dx * dx + dz * dz < DANCE_RADIUS * DANCE_RADIUS;
+      }
       for (const f of figures) {
         const w = t * f.speed + f.phase;
-        f.armL.rotation.z = 0.5 + Math.sin(w) * 0.4;
-        f.armR.rotation.z = -0.6 + Math.sin(w * 0.8 + 1.3) * 0.35;
-        f.g.rotation.y = f.baseYaw + Math.sin(w * 0.4) * 0.4;
-        f.head.rotation.y = Math.sin(w * 0.7 + 2) * 0.35;
-        f.hat.rotation.z = Math.sin(w * 0.5 + 0.5) * 0.12;
+        if (dancing) {
+          // Easy bounce, stepping on the beat — only while the car is near.
+          f.g.position.x = f.xOff + Math.sin(t * 3.2 + f.phase) * 0.25 * f.dance;
+          f.g.position.z = f.zOff + Math.cos(t * 4.1 + f.phase) * 0.18 * f.dance;
+          f.g.position.y = 0.05 + Math.abs(Math.sin(t * 4.6 + f.phase)) * 0.32;
+          // Body leans into the groove.
+          f.g.rotation.y = f.baseYaw + Math.sin(t * 2.3 + f.phase) * 0.3;
+          f.g.rotation.z = Math.sin(t * 5.1 + f.phase) * 0.08;
+          // Arms flail.
+          f.armL.rotation.z = Math.sin(w * 1.7) * 0.9 + 0.3;
+          f.armR.rotation.z = -Math.sin(w * 1.9) * 0.9 - 0.3;
+          // Head bobs, hat wiggles.
+          f.head.rotation.y = Math.sin(t * 5.4 + f.phase) * 0.4;
+          f.hat.rotation.z = Math.sin(t * 6.2 + f.phase) * 0.2;
+        } else {
+          // Hush — still as statues, looking into the city until a car nears.
+          f.g.position.x = f.xOff;
+          f.g.position.z = f.zOff;
+          f.g.position.y = 0.05;
+          f.g.rotation.y = f.baseYaw;
+          f.g.rotation.z = 0;
+          f.armL.rotation.z = 0.4;
+          f.armR.rotation.z = -0.5;
+          f.head.rotation.y = 0;
+          f.hat.rotation.z = 0;
+        }
       }
     },
   };
@@ -270,44 +330,6 @@ function redBandMat() {
   return new THREE.MeshStandardMaterial({ color: 0xb84040, roughness: 0.6 });
 }
 
-// ---- Crystals (idea #25) ----
-// Glowing crystal clusters along the streets (like the mine gems) that POP when
-// the car runs into them, plus one big central citadel crystal the towers ring.
-const crystalColors = [0x7ef9ff, 0xff8ad8, 0x9dff8f, 0xffd27e, 0xb48cff];
-
-function makeCrystalCluster(color) {
-  const g = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
-    color, emissive: color, emissiveIntensity: 0.95,
-    transparent: true, opacity: 0.85, roughness: 0.12, metalness: 0.25,
-    flatShading: true,
-  });
-  const base = new THREE.Mesh(
-    new THREE.CylinderGeometry(1.0, 1.25, 0.4, 7),
-    new THREE.MeshStandardMaterial({ color: 0x3a3548, roughness: 0.9 })
-  );
-  base.position.y = 0.2;
-  base.castShadow = true;
-  g.add(base);
-  const n = 4 + Math.floor(Math.random() * 3);
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + Math.random() * 0.6;
-    const h = 1.4 + Math.random() * 1.8;
-    const shard = new THREE.Mesh(new THREE.ConeGeometry(0.22 + Math.random() * 0.22, h, 6), mat);
-    shard.position.set(Math.cos(a) * 0.55, 0.35 + h / 2, Math.sin(a) * 0.55);
-    shard.rotation.set((Math.random() - 0.5) * 0.7, 0, (Math.random() - 0.5) * 0.7);
-    shard.castShadow = true;
-    g.add(shard);
-  }
-  const core = new THREE.Mesh(new THREE.ConeGeometry(0.34, 2.6 + Math.random(), 6), mat);
-  core.position.y = 0.35 + (2.6 + Math.random()) / 2;
-  core.castShadow = true;
-  g.add(core);
-  g.userData.color = color;
-  g.userData.mat = mat;
-  return g;
-}
-
 export function addGlassCity(scene, opts = {}) {
   const onCrystalPop = typeof opts.onCrystalPop === 'function' ? opts.onCrystalPop : null;
   makeCityFloor(scene);
@@ -338,7 +360,8 @@ export function addGlassCity(scene, opts = {}) {
   const birdShop = makeBirdShop(scene, -16, 143);
   colliders.push({ x: -16, z: 143, halfW: 3.5, halfD: 3.5, h: 6, noGhost: true });
 
-  const blueTrees = makeOrchardPlaza(scene, 44, 154);
+  // ---- Balloon plaza: the blue "orchard" balloons pop when driven over ----
+  const blueBalloons = makeOrchardPlaza(scene, 44, 154);
 
   // ---- Central citadel crystal (idea #25) ----
   // One big double-terminated crystal in the corridor the towers ring, with a
@@ -376,19 +399,8 @@ export function addGlassCity(scene, opts = {}) {
   colliders.push({ x: spireX, z: spireZ, halfW: 2.6, halfD: 2.6, h: 20 });
 
   // ---- Crystal clusters along the streets ----
-  const CRYSTAL_SPOTS = [
-    [-116, 143], [-76, 143], [-36, 143], [24, 143], [64, 143], [104, 143], [124, 143],
-    [-116, 161], [-76, 161], [-36, 161], [24, 161], [64, 161], [104, 161], [124, 161],
-  ];
-  const crystals = [];
-  for (let i = 0; i < CRYSTAL_SPOTS.length; i++) {
-    const [x, z] = CRYSTAL_SPOTS[i];
-    const color = crystalColors[i % crystalColors.length];
-    const group = makeCrystalCluster(color);
-    group.position.set(x, 0, z);
-    scene.add(group);
-    crystals.push({ group, x, z, color, radius: 2.8, alive: true, respawn: 0 });
-  }
+  // (removed — the street crystal clusters were deleted at the player's
+  // request; only the citadel spire above remains.)
 
   // Shard bursts for a popped cluster — small flying cones that fade out.
   const crystalBursts = [];
@@ -421,43 +433,41 @@ export function addGlassCity(scene, opts = {}) {
     // Only animate when the player is in/near the Glass City.
     if (Math.abs(player.z - ((Z0 + Z1) / 2)) > 60) return;
     birdShop.update(delta, clockT);
-    tableauA.update(delta, clockT);
-    tableauB.update(delta, clockT);
+    tableauA.update(delta, clockT, player);
+    tableauB.update(delta, clockT, player);
     clockT += delta;
-    for (const t of blueTrees) {
-      t.rotation.y += delta * 0.05;   // the blue trees turn slowly, like living things
+    // The plaza balloons bob and rotate slowly; drive over one and it pops.
+    for (const b of blueBalloons) {
+      if (b.alive) {
+        b.g.rotation.y += delta * 0.05;
+        if (b.g.visible && player.y < 3) {
+          const dx = player.x - b.x;
+          const dz = player.z - b.z;
+          if (dx * dx + dz * dz < b.radius * b.radius) {
+            b.alive = false;
+            b.g.visible = false;
+            b.respawn = 6;
+            spawnCrystalBurst(b.x, b.z, 0x2f8fe0);
+            if (onCrystalPop) onCrystalPop(b);
+          }
+        }
+      } else {
+        b.respawn -= delta;
+        if (b.respawn <= 0) {
+          b.alive = true;
+          b.g.visible = true;
+          b.g.scale.setScalar(0.001);
+        }
+      }
+      if (b.alive && b.g.scale.x < 1) {
+        b.g.scale.setScalar(Math.min(1, b.g.scale.x + delta * 2.5));
+      }
     }
     // The citadel crystal slowly turns and its halo pulses.
     spire.rotation.y += delta * 0.25;
     spireHalo.rotation.z += delta * 0.6;
     spireLight.intensity = 2.6 + 0.9 * Math.sin(clockT * 1.8);
     spireHalo.material.opacity = 0.5 + 0.25 * Math.sin(clockT * 1.8);
-    // Crystals pop when the car drives into them, then regrow after a beat.
-    for (const c of crystals) {
-      if (c.alive) {
-        if (c.group.visible && player.y < 3) {
-          const dx = player.x - c.x;
-          const dz = player.z - c.z;
-          if (dx * dx + dz * dz < c.radius * c.radius) {
-            c.alive = false;
-            c.group.visible = false;
-            c.respawn = 6;
-            spawnCrystalBurst(c.x, c.z, c.color);
-            if (onCrystalPop) onCrystalPop(c);
-          }
-        }
-      } else {
-        c.respawn -= delta;
-        if (c.respawn <= 0) {
-          c.alive = true;
-          c.group.visible = true;
-          c.group.scale.setScalar(0.001);
-        }
-      }
-      if (c.alive && c.group.scale.x < 1) {
-        c.group.scale.setScalar(Math.min(1, c.group.scale.x + delta * 2.5));
-      }
-    }
     // Animate the shard bursts.
     for (let i = crystalBursts.length - 1; i >= 0; i--) {
       const b = crystalBursts[i];
@@ -484,5 +494,5 @@ export function addGlassCity(scene, opts = {}) {
     }
   }
   let clockT = 0;
-  return { colliders, update, crystals, spire };
+  return { colliders, update, balloons: blueBalloons, spire };
 }

@@ -124,6 +124,125 @@
         }
       }
 
+      /* ===== Car showroom (gear icon opens it) ===== */
+      #gear-btn {
+        position: fixed;
+        top: 14px;
+        left: 14px;
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        background: rgba(5, 10, 18, 0.68);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #eef2ff;
+        font-size: 21px;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 20;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+        transition: background 0.2s, transform 0.15s;
+      }
+      #gear-btn:hover {
+        background: rgba(25, 40, 65, 0.9);
+        transform: scale(1.07);
+      }
+      body.select-mode #gear-btn { background: rgba(20, 30, 55, 0.8); }
+
+      /* Next / previous arrows at the bottom corners of the showroom */
+      #car-prev,
+      #car-next {
+        position: fixed;
+        bottom: 24px;
+        width: 58px;
+        height: 58px;
+        border-radius: 50%;
+        background: rgba(12, 20, 38, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #dbe7ff;
+        font-size: 24px;
+        line-height: 1;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 26;
+        box-shadow: 0 4px 22px rgba(0, 0, 0, 0.5);
+        transition: background 0.2s, border-color 0.2s, transform 0.15s;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body.select-mode #car-prev,
+      body.select-mode #car-next { display: flex; }
+      #car-prev { left: 20px; }
+      #car-next { right: 20px; }
+      #car-prev:hover,
+      #car-next:hover {
+        background: rgba(30, 55, 95, 0.85);
+        border-color: #7ef9ff;
+        transform: scale(1.1);
+      }
+
+      /* Car-name caption under the car; clicks pass through */
+      #car-hint {
+        position: fixed;
+        bottom: 32px;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        color: #d7e6ff;
+        font-size: 17px;
+        letter-spacing: 0.18em;
+        font-family: Arial, sans-serif;
+        font-weight: 600;
+        text-transform: uppercase;
+        text-shadow: 0 0 16px rgba(90, 170, 255, 0.6), 0 0 3px rgba(0, 0, 0, 0.9);
+        z-index: 26;
+        pointer-events: none;
+        display: none;
+      }
+      body.select-mode #car-hint { display: block; }
+
+      /* Player / Chase tabs across the top of the showroom — player swaps the
+         ride you drive, chase swaps what hounds you around the world */
+      #picker-tabs {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: none;
+        gap: 6px;
+        z-index: 25;
+      }
+      body.select-mode #picker-tabs { display: flex; }
+      .picker-tab {
+        padding: 8px 24px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(12, 20, 38, 0.6);
+        color: #dbe7ff;
+        font-size: 13px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        font-weight: 600;
+        font-family: Arial, sans-serif;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .picker-tab.active {
+        background: rgba(40, 80, 140, 0.85);
+        border-color: #7ef9ff;
+        box-shadow: 0 0 18px rgba(126, 249, 255, 0.35);
+      }
+      .picker-tab:not(.active):hover {
+        background: rgba(30, 55, 95, 0.85);
+        border-color: #7ef9ff;
+      }
+
       /* ===== Loading screen ===== */
       #loader {
         position: fixed;
@@ -192,9 +311,11 @@
       <div id="loader-item"></div>
     </div>
     <script>
-      // Fake loader. The module build below runs synchronously, so this animates
-      // progress while the modules fetch/parse, then main.js calls
-      // window.__loadingDone() when the first frame is ready to render.
+      // Real event-driven loader. main.js reports genuine progress as it builds
+      // the world chunk by chunk (window.__loadingProgress) and yields a painted
+      // frame between heavy pieces, so the % below always reflects actual work —
+      // it never freezes at a made-up number. __loadingDone() snaps to 100% only
+      // once the first frame is ready to render.
       window.__loaderItems = [
         'the city streets',
         'the traffic lights',
@@ -242,28 +363,56 @@
         const pctEl = document.getElementById('loader-percent');
         const itemEl = document.getElementById('loader-item');
         const items = window.__loaderItems;
-        const DURATION = 3200; // ms of fake loading animation
-        const start = performance.now();
         let done = false;
+        // Real target percentage as reported by main.js (0..100). The bar only
+        // ever moves TOWARD this — it never runs ahead of real work, so it never
+        // gets stuck at a number that isn't backed by actual progress.
+        let target = 0;
+        // Displayed percentage: eases toward `target` so the bar glides smoothly
+        // between reports instead of snapping, but can never exceed target.
+        let shown = 0;
+        // Themed cycling list is shown only until the first real report lands,
+        // then real progress takes over the % and item label entirely.
+        let real = false;
         let lastIdx = -1;
 
-        function tick(now) {
+        function tick() {
           if (done) return;
-          const frac = Math.min(1, (now - start) / DURATION);
-          const pct = Math.floor(frac * 97);
-          const idx = Math.min(items.length - 1, Math.floor(frac * items.length));
-          if (idx !== lastIdx) {
-            lastIdx = idx;
-            itemEl.textContent = 'Loading ' + items[idx] + '…';
+          if (!real) {
+            // Very first moments (modules still fetching/parsing): let the themed
+            // list walk while thirsting at 0% — the second a real report lands it
+            // hands over the numbers. Keeps the pause before first report lively.
+            const idx = Math.min(items.length - 1, Math.floor((performance.now() / 4000) % items.length));
+            if (idx !== lastIdx) {
+              lastIdx = idx;
+              itemEl.textContent = 'Loading ' + items[idx] + '…';
+            }
+          } else {
+            shown += (target - shown) * 0.5;
+            if (target - shown < 1) shown = target;   // arrive exactly
           }
-          pctEl.textContent = pct + '%';
+          pctEl.textContent = Math.floor(Math.max(0, Math.min(100, shown))) + '%';
           requestAnimationFrame(tick);
         }
         requestAnimationFrame(tick);
 
+        // Report a fraction of real work done (0..1) + an optional label of the
+        // piece being built. Monotonic: later reports are clamped so the bar only
+        // moves forward.
+        window.__loadingProgress = function (frac, label) {
+          if (done) return;
+          real = true;
+          if (!label) label = items[lastIdx] || 'the world';
+          itemEl.textContent = 'Loading ' + label + '…';
+          frac = Math.max(0, Math.min(1, frac));
+          if (frac * 100 > target) target = frac * 100;
+        };
+
         window.__loadingDone = function () {
           if (done) return;
           done = true;
+          target = 100;
+          shown = 100;
           pctEl.textContent = '100%';
           itemEl.textContent = 'Ready to drive!';
           loader.classList.add('loader-done');
@@ -280,6 +429,23 @@
     <div id="joystick"><div id="joy-knob"></div></div>
     <div id="joystick-hit"></div>
 
+    <!-- Settings (gear) button, top-left. Opens the car showroom; while the
+         showroom is open it becomes the return-to-game button. -->
+    <div id="gear-btn" title="Settings">&#9881;</div>
+
+    <!-- Car showroom overlay (pure UI; the 3D car is rendered on the canvas):
+         side arrows cycle the cars, clicking the spinning car drives it. -->
+    <button id="car-prev" type="button" title="Previous car" aria-label="Previous car">&larr;</button>
+    <button id="car-next" type="button" title="Next car" aria-label="Next car">&rarr;</button>
+    <div id="car-hint"></div>
+
+    <!-- Showroom tabs: PLAYER swaps your ride, CHASE swaps the car that chases
+         you around the town/ramp worlds. Only visible while the showroom is up. -->
+    <div id="picker-tabs">
+      <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
+      <button id="tab-chase" class="picker-tab" type="button" title="Choose the car that chases you">&nbsp;Chase&nbsp;</button>
+    </div>
+
     <!-- Inline error capture for debugging: records runtime errors before modules run -->
     <script>
       window._errs = window._errs || [];
@@ -295,6 +461,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1789754557000"></script>
+    <script type="module" src="./src/main.js?v=1790448808386"></script>
   </body>
 </html>

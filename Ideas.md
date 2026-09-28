@@ -1,3 +1,7 @@
+-get proper cordinates from the minimap on where you should the start and finish lines
+-Add the disco ball and spinner and conveery belt back
+
+
 
 
 
@@ -8,53 +12,15 @@
 -In jungle world, a swinging bridge to drive acroos, between two high points on the map.  made of old boards and rope.  some of the boards are missing or broken, you have to drive carfully on the bridge to avoid falling trhough the holes caused by the missing and broken boards, but it is possible to drive all the way acress and get to the treehouse.  There is a giant treehouse in a massive tall giant tree with many branches, only accessible via the dangerous bridge.
 
 
--The holy mountian.  you can drive up to it's snow capped peak, but inside it is hollow.  if you drive around to the other side, you can see inside there is a man with a huge brimmed white hat.  on either side of him is a goat. 
 
+-Add build step to minify JS
+-allow you to pick which car you want to play as.  If you are the steamroller, you can flatten any of the traffic cars.
+-play as the giant robot?
+-Multiplayer mode
+---Giant green hovering arrow float over the other players cars P1 and P2 etc
+---P1 P2 appear on the minimap
 
-
--give the neon glowing foam a texture so it looks more like foam
-
-
-
-
-
---
-
-
-
-
-
-
--
-
-more intereesting cars on teh train - logs, 
-
-
-
-thumbnails for socail images for kidweb
-
-trigger more tiles - touching tiles
-
-abscrtact scupltures on the colorful tiles the fall down
-
-
-rotating platter
-disco light up squares, color changing, disappearing? 
-
-
-
-
-
-
-fix all the notes in the repo referrinng to cordinatants.  We know that the big arrows is pointing to X=0 and Y=0, and that is showing up correctly on the mini map.  make sure any cordinate references in comments match this updated layout.  (don't add new coordinates where we don't have them, I just don't want any lingering incorrect coordinates that will confuse future prompts)
-
-
-
-
--don't make the tube trasparent in the animation entering the underground
-
-
--
+fix the logo, it has a faint white outline when it is against black, and ther are three stray pixels
 
 
 

@@ -4,11 +4,18 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // A colossal stomping robot that patrols the city on a big diamond loop, spots
 // nearby cars, chases them down, picks them up in its claw and eats them.
 //   - The player gets eaten too, then respawns at a safe spot (brief cooldown
-//     so it can't be instantly re-eaten).
+//     so it can't be instantly re-eaten). A player DRIVING the robot is off
+//     the menu (and it can't be squashed flat either).
 //   - Traffic + the blue bumper car are eaten and respawn back on the map.
 //   - The fire engine is too heavy/hot — the robot leaves it alone.
 // The model's front faces +Z, so rotation.y = atan2(dx, dz) points it at its
 // target (same convention as the pedestrians).
+//
+// `buildRobotModel()` returns the mech as a reusable THREE.Group (the AI robot
+// calls it, and the car picker borrows it so you can drive it). The player
+// body is planted on the car group with its front rotated to the car's -X
+// forward, and the frame loop swings its legs/arms from the userData refs
+// (legL/legR/armL/armR).
 
 const WALK_SPEED = 4.0;    // patrol speed (units/s)
 const SEEK_SPEED = 4.6;    // chase speed when a car is spotted
@@ -35,7 +42,7 @@ const LIFT_ANG = -2.0;
 
 const lerp = (a, b, k) => a + (b - a) * k;
 
-export function addRobot(scene) {
+export function buildRobotModel() {
   // ---- Materials ----
   const metalMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.5, metalness: 0.55 });
   const panelMat = new THREE.MeshStandardMaterial({ color: 0xb6bec7, roughness: 0.45, metalness: 0.5 });
@@ -224,8 +231,15 @@ export function addRobot(scene) {
   }
 
   robot.userData = { legL, legR, armL, armR, clawR, head, jaw, eyes, reactor, beacon };
+  return robot;
+}
+
+export function addRobot(scene) {
+  // The AI patroller uses the same model as the drivable player robot.
+  const robot = buildRobotModel();
   robot.position.set(0, 0, -PATROL_R);
   scene.add(robot);
+  robot.userData.player = false;
 
   // ===== Public API =====
   const api = {
@@ -273,7 +287,7 @@ export function addRobot(scene) {
   const face = (dx, dz) => { robot.rotation.y = Math.atan2(dx, dz); };
 
   const clawWorld = () => {
-    clawR.getWorldPosition(tmpV);
+    robot.userData.clawR.getWorldPosition(tmpV);
     return tmpV;
   };
 
@@ -295,7 +309,9 @@ export function addRobot(scene) {
       const d = Math.hypot(dx, dz);
       if (!best || d < best.d) best = { kind, mesh, t, d, dx, dz };
     };
-    consider('player', ctx.player.mesh);
+    // A player DRIVING the giant robot isn't on the menu — it would be a
+    // robot eating a robot. main.js passes ctx.playerIsRobot for that case.
+    if (!ctx.playerIsRobot) consider('player', ctx.player.mesh);
     consider('bumper', ctx.bumper.mesh);
     // The steamroller is too heavy for the robot to pick up — it stays in
     // traffic so it can keep flattening the player car.

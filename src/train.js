@@ -146,8 +146,9 @@ function makeTrainWheels(group, positions, withHubs) {
 // Steam locomotive from 1869 (front faces +Z): a wood-burning American
 // engine with a diamond stack, rounded steam + sand domes, a bell, a smokebox
 // with a round door, and a headlight mounted on a bracket on the smokebox
-// front (bolted on, never floating).
-function makeLocomotive() {
+// front (bolted on, never floating). Exported so the car picker can drive a
+// standalone copy of the same locomotive.
+export function makeLocomotive() {
   const g = new THREE.Group();
   const dark = new THREE.MeshStandardMaterial({ color: 0x232830, roughness: 0.7 });
   const iron = new THREE.MeshStandardMaterial({ color: 0x2c323d, roughness: 0.8 });
@@ -752,15 +753,14 @@ function makeStockCar() {
 
 // ===== Build the train =====
 const TRAIN_SPEED = 6.5;   // it ambles along; the player (top speed 14) can catch it
-const SPACING = 6.6;       // gap between unit centres
+export const SPACING = 6.6;   // gap between unit centres
 const UNIT_R = 1.7;        // per-car collision radius
 
-export function addTrain(scene) {
-  const path = buildLoopPath();
-  buildRails(scene, path);
-
-  const units = [
-    makeLocomotive(),
+// The trailing consist — everything behind the locomotive (fresh copies each
+// call). Exported so a copy of the same cars follows the player when they're
+// driving the train around town.
+export function buildFreightCars() {
+  return [
     makeBoxcar(0x8a2b2b),
     makeCoveredHopper(),
     makeOpenTopHopper(),
@@ -777,6 +777,13 @@ export function addTrain(scene) {
     makeStockCar(),
     makeCaboose(),
   ];
+}
+
+export function addTrain(scene) {
+  const path = buildLoopPath();
+  buildRails(scene, path);
+
+  const units = [makeLocomotive(), ...buildFreightCars()];
   units.forEach((u) => {
     u.position.y = 0.15;
     scene.add(u);

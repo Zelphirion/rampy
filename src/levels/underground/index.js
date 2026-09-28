@@ -1,9 +1,13 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addGlassCity } from '../../glasscity.js';
+import { addGlassCity } from '../../glasscity.js?v=1790448808372';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
-import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js';
+import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js?v=1790448808372';
+// The Pneumatic Express Tube: pure path math (verified by expressTube.test.mjs).
+// This file turns the sampled centre line into a glass TubeGeometry and the
+// travelling air-jet rings; main.js imports the same module for the forced ride.
+import { EXPRESS_TUBE, expressTubeSamples, expressTubePoint, expressTubeTangent } from '../../modules/expressTube.js?v=1790448808372';
 
 export const UNDERGROUND_Y = -30;
 
@@ -104,24 +108,6 @@ function makeVinylFloorTexture() {
   tex.anisotropy = 4;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
-}
-
-// Squared distance from point P to the segment A→B (clamped to the ends).
-// Used by trigger checks so a slow frame rate (huge per-frame car steps)
-// can't tunnel straight through a trigger radius between updates.
-function segDistSq(ax, ay, az, bx, by, bz, px, py, pz) {
-  const dx = bx - ax, dy = by - ay, dz = bz - az;
-  const len2 = dx * dx + dy * dy + dz * dz;
-  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy + (pz - az) * dz) / len2 : 0;
-  t = Math.max(0, Math.min(1, t));
-  const cx = ax + dx * t - px;
-  const cy = ay + dy * t - py;
-  const cz = az + dz * t - pz;
-  return cx * cx + cy * cy + cz * cz;
-}
-function pointDistSq(px, py, pz, qx, qy, qz) {
-  const dx = px - qx, dy = py - qy, dz = pz - qz;
-  return dx * dx + dy * dy + dz * dz;
 }
 
 // ===== Foreboding sky above the cavern ceiling =====
@@ -459,28 +445,32 @@ export function tunnelPoint(s) {
   };
 }
 
-export function addUnderground(parent, opts = {}) {
-  // Optional callbacks fired from update(): onBlockBump when an airborne car
-  // bumps a prompt-block (task #6), onPipeShove(dirX) when a sliding conduit
-  // sweeps through the car (task #13, dirX = ±1 travel direction),
-  // onPoleHit(nx,nz,speed) when a fast-enough car slams the padded pole
-  // (task #32; nx/nz point from the pole toward the car), and
-  // onGemSlam(dirX,dirZ) when the car plows into a large heavy candy gem
-  // (dirX/dirZ point back down the grand ramp). Lets the callers own the
-  // physics/audio response without the level knowing how.
-  // onPlatterEject(nx,nz,s) fires when the rotating platter flings the car
-  // off its edge (nx/nz = tangent of the spin at the exit point, s ∈ [0,1]
-  // scaled by how fast the ride was carrying the car when it let go).
+export async function addUnderground(parent, opts = {}) {
+  // Real loader progress: the underground is one enormous synchronous build, so
+  // it reports its own internal phases to the caller (opts.onUndergroundPhase)
+  // and paints a frame between major sections. Each phase's `frac` is the
+  // level's OWN 0..1 scale; main.js maps it onto the loader's global scale.
+  const ugPhase = async (frac, label) => {
+    if (typeof opts.onUndergroundPhase === 'function') {
+      try { opts.onUndergroundPhase(frac, label); } catch (e) {}
+    }
+    await new Promise((res) => {
+      if (window.requestAnimationFrame) window.requestAnimationFrame(() => window.requestAnimationFrame(res));
+      else setTimeout(res, 0);
+    });
+  };
+  // Optional callbacks fired from update(): onGemSlam(dirX,dirZ) when the car
+  // plows into a large heavy candy gem (dirX/dirZ point back down the grand
+  // ramp). Lets the callers own the physics/audio response without the level
+  // knowing how.
   // onTrampoline() fires when the car drives onto a launch pad; main.js sets
   // the big vertical launch that throws it onto the second roof.
-  const onBlockBump = typeof opts.onBlockBump === 'function' ? opts.onBlockBump : null;
-  const onPipeShove = typeof opts.onPipeShove === 'function' ? opts.onPipeShove : null;
-  const onPoleHit = typeof opts.onPoleHit === 'function' ? opts.onPoleHit : null;
   const onGemSlam = typeof opts.onGemSlam === 'function' ? opts.onGemSlam : null;
-  const onPlatterEject = typeof opts.onPlatterEject === 'function' ? opts.onPlatterEject : null;
   const onTrampoline = typeof opts.onTrampoline === 'function' ? opts.onTrampoline : null;
   const onStatueTopple = typeof opts.onStatueTopple === 'function' ? opts.onStatueTopple : null;
   const onFinishLine = typeof opts.onFinishLine === 'function' ? opts.onFinishLine : null;
+  const onPickerGrab = typeof opts.onPickerGrab === 'function' ? opts.onPickerGrab : null;
+  const onBubblePop = typeof opts.onBubblePop === 'function' ? opts.onBubblePop : null;
 
   const rockMat = new THREE.MeshStandardMaterial({ color: 0x2b2627, roughness: 1 });
   const tubeMat = new THREE.MeshStandardMaterial({ color: 0x241f20, roughness: 1, side: THREE.DoubleSide });
@@ -488,16 +478,163 @@ export function addUnderground(parent, opts = {}) {
 
   const localY = (absY) => absY - UNDERGROUND_Y;
 
+  // ---- Sunken skate plaza: single source of truth ----
+  // Everything in the park sits BELOW the y=0 cavern floor: each entry here
+  // owns a `hole` polygon that the floor slab is cut open along (so the pit is
+  // actually visible/sunken, never a floaty ramp on top), and the build
+  // section further down carves the very same polygons into wedge ride
+  // surfaces at negative baseY. Nothing — lip, spine, bowl — rises above the
+  // floor line. Polygon samples are kept slightly UNDER the rim perimeter so
+  // the floor survives as a thin overhang and a car rolling in never floats
+  // over a ragged gap.
+  const SS = (() => {
+    const rect = (x0, z0, x1, z1) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+    const circlePts = (cx, cz, r, n = 22, f = 0.985) => {
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2;
+        out.push([cx + Math.cos(a) * r * f, cz + Math.sin(a) * r * f]);
+      }
+      return out;
+    };
+    // Superellipse |x/rx|^p + |z/rz|^p = 1, sampled as an n-gon scaled by f.
+    const superPts = (cx, cz, rx, rz, p, n, f = 0.98) => {
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const sc = Math.pow(Math.abs(ca / rx), p) + Math.pow(Math.abs(sa / rz), p);
+        const s = 1 / Math.pow(sc, 1 / p);
+        out.push([cx + ca * s * f, cz + sa * s * f]);
+      }
+      return out;
+    };
+    // Compact 2026-09-25: the whole park lives in one south-west cluster
+    // (x −144..−40, z −96..−42), each pit spaced ~3–10 units from its
+    // neighbours so every rim is a drivable drop-in. The giant halfpipe sits
+    // EAST in the corridor BETWEEN the neon staircase (west foot x=−56) and
+    // the cave walls, with open floor on both sides of it; the other eleven
+    // features scatter toward the south-west corner around it.
+    // The relocated giant halfpipe, fully sunken (lips at y=0, trough −16.5).
+    const pipe = {
+      cx: -100, cz: -78, len: 34, bottomHalf: 8, wallRun: 0.35, wallRise: 8.5,
+      wallThick: 0.9,
+      launch: 2.0,   // the giant pipe's vert-pop is ~2x the default (the rocket)
+      hole: rect(-108.35, -95, -91.65, -61),
+    };
+    // Mini vert pipe (sunken) — a second, tighter fullpipe.
+    const vert = {
+      cx: -136, cz: -88, len: 10, bottomHalf: 4, wallRun: 0.3, wallRise: 6,
+      wallThick: 0.6,
+      hole: rect(-140.3, -93, -131.7, -83),
+    };
+    // Spine: a V-trench carved along X with its crease 6 below the floor.
+    const spine = {
+      cx: -123, cz: -60, width: 10, tipBoost: 1.0,
+      prof: [[-129, 0], [-123, -6], [-117, 0]],
+      hole: rect(-129, -65, -117, -55),
+    };
+    // Hip: two quarter-walls meeting at an inner corner over a deep well.
+    const hip = { cx: -78, cz: -52, hole: rect(-83, -57, -73, -47) };
+    // Eurobox: drop-in arc → flat run → step-up shelf → exit lip, along X.
+    const euro = {
+      cx: -70, cz: -88, width: 10, tipBoost: 1.2,
+      prof: [[-77, 0], [-76, -1.9], [-75, -3.6], [-74, -5.0], [-73, -5.8], [-72, -6.1], [-69, -6], [-67, -3.6], [-65.4, -1.8], [-64, -0.6], [-63, 0]],
+      hole: rect(-77, -93, -63, -83),
+    };
+    // Pyramid: a near-square (p=14) funnel crater, 7 below the floor. Sat
+    // south-east of the rail, clear of the neon staircase footprint (x∈[−56,12],
+    // z∈[−56,−44]) with a wide drive gap on every side.
+    const pyramid = {
+      cx: -30, cz: -72, rx: 7, rz: 7, p: 14, depth: 7, tIn: 0.1714,
+      bands: 4, sectors: 16, rimBoost: 0.8, padY: -5.8, padHalf: 1.3,
+      hole: superPts(-30, -72, 7, 7, 14, 20),
+    };
+    // Foam pit: a wide round pool (soft vinyl bottom) with an inner kicker.
+    const foam = {
+      cx: -120, cz: -84, rx: 8, rz: 8, p: 2, depth: 3.3, tIn: 0.7375,
+      bands: 4, sectors: 16, rimBoost: 0.9, padY: -3.31, padHalf: 6.2,
+      hole: circlePts(-120, -84, 8),
+    };
+    // Escalator: stepped flights buried north-south, exit ramp downhill.
+    const escalator = {
+      cx: -84, cz: -66, width: 8, tipBoost: 1.2,
+      prof: [[-74, 0], [-72.6, -1.9], [-71.4, -3.0], [-70.8, -3.0], [-70.7, -3.8], [-69.4, -3.8], [-69.3, -4.6], [-68, -4.6], [-67.9, -5.4], [-66.6, -5.4], [-66.5, -6.2], [-65.2, -6.2], [-64, -4.6], [-62.8, -3.0], [-61.6, -1.5], [-60.6, -0.6], [-58, 0]],
+      hole: rect(-88, -74, -80, -58),
+    };
+    // Cradle: a perfect spherical bowl, rim flush at the floor. The magenta
+    // rim no longer boosts (was rocket-launching on a simple dip) — the big
+    // vert-pop now lives on the giant halfpipe instead.
+    const cradle = {
+      cx: -138, cz: -60, rx: 6, rz: 6, p: 2, depth: 6, tIn: 0.15, depth2: 6,
+      bands: 6, sectors: 16, rimBoost: 0, padY: -5.94, padHalf: 1.1,
+      hole: circlePts(-138, -60, 6),
+    };
+    // Kidney: a mellow shallow superellipse bowl.
+    const kidney = {
+      cx: -58, cz: -72, rx: 6.5, rz: 5, p: 2.4, depth: 3.5, tIn: 0.55,
+      bands: 4, sectors: 16, rimBoost: 0.9, padY: -1.575, padHalfX: 4.05, padHalfZ: 3.1,
+      hole: superPts(-58, -72, 6.5, 5, 2.4, 22),
+    };
+    // Kinked rail slot: a narrow north-south trench parked south-east of the
+    // eurobox (prof is along Z, so addTrench is called with axisZ=true).
+    const rail = {
+      cx: -44, cz: -78, width: 2.4, tipBoost: 1.0,
+      prof: [[-86, 0], [-85, -1.9], [-84, -3.0], [-79, -3.2], [-75, -3.2], [-74, -2.4], [-73.2, -1.5], [-72.4, -0.7], [-71.6, -0.2], [-70, 0]],
+      hole: rect(-45.2, -86, -42.8, -70),
+    };
+    return {
+      pipe, vert, spine, hip, euro, pyramid, foam, escalator, cradle, kidney, rail,
+      holes: [pipe.hole, vert.hole, spine.hole, hip.hole, euro.hole, pyramid.hole,
+        foam.hole, escalator.hole, cradle.hole, kidney.hole, rail.hole],
+    };
+  })();
+
   // Cavern floor: the whole slab is a 1970s vinyl kitchen floor. The pattern
-  // tiles every VINYL_TILE units across the 292×276 slab (the box's top face
-  // spans the full UV range, so repeat = slab size / tile size).
+  // tiles every VINYL_TILE units across the 292×276 slab. The slab is drawn
+  // as a shape with every sunken-park pit punched out as a hole (SS.holes), so
+  // the pits read as carved openings at floor level. The top face spans the
+  // full UV range over the same slab bounds, so the tile repeat is unchanged.
   const vinylTex = makeVinylFloorTexture();
   vinylTex.repeat.set(292 / VINYL_TILE, 276 / VINYL_TILE);
-  const vinylMat = new THREE.MeshStandardMaterial({ map: vinylTex, roughness: 0.55, metalness: 0 });
-  const plain = new THREE.Mesh(new THREE.BoxGeometry(292, 0.25, 276), vinylMat);
-  plain.position.set(0, -0.145, 41.5);
-  plain.receiveShadow = true;
-  parent.add(plain);
+  const vinylMat = new THREE.MeshStandardMaterial({
+    map: vinylTex, roughness: 0.55, metalness: 0, side: THREE.DoubleSide,
+  });
+  let plain;
+  {
+    const outline = new THREE.Shape();
+    outline.moveTo(-146, -96.5);
+    outline.lineTo(146, -96.5);
+    outline.lineTo(146, 179.5);
+    outline.lineTo(-146, 179.5);
+    outline.closePath();
+    for (const poly of SS.holes) {
+      const hp = new THREE.Path();
+      hp.moveTo(poly[0][0], poly[0][1]);
+      for (let i = 1; i < poly.length; i++) hp.lineTo(poly[i][0], poly[i][1]);
+      hp.closePath();
+      outline.holes.push(hp);
+    }
+    const geo = new THREE.ShapeGeometry(outline, 1);
+    // ShapeGeometry bakes raw local coords into UVs (x/y in world units), so
+    // the vinyl repeat would stretch to one tile per 146 world units instead
+    // of per 2. Overwrite UVs with the normalized 0..1 slab space so the
+    // kitchen pattern tiles exactly like the old box floor (repeat 146×138).
+    {
+      const pos = geo.attributes.position;
+      const uvs = new Float32Array(pos.count * 2);
+      for (let i = 0; i < pos.count; i++) {
+        uvs[i * 2] = (pos.getX(i) + 146) / 292;
+        uvs[i * 2 + 1] = (pos.getY(i) + 96.5) / 276;
+      }
+      geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+    plain = new THREE.Mesh(geo, vinylMat);
+    plain.rotation.x = Math.PI / 2;      // shape (x,y) → world (x,z)
+    plain.position.set(0, -0.02, 0);     // top face flush with the old slab top
+    plain.receiveShadow = true;
+    parent.add(plain);
+  }
 
   const pts = pathSamples.map((p) => new THREE.Vector3(p.x, localY(p.y) + TUNNEL.tubeR, p.z));
   const curve = new THREE.CatmullRomCurve3(pts);
@@ -617,6 +754,8 @@ export function addUnderground(parent, opts = {}) {
   }
   parent.add(spiralMouth.group);
 
+  await ugPhase(0.08, 'the spiral tunnel');
+
   // Cavern ceiling over the course zone (underside at CEIL_Y), clamped to the
   // slab so it never overhangs the void. (The old floor→ceiling support pillar
   // at (-40, 66) and the four course-zone columns were plain black ground cubes —
@@ -685,6 +824,13 @@ export function addUnderground(parent, opts = {}) {
   // wheels, or a boundary jitter) can't advance a tile twice in a single
   // pass. The car has to drive away and come back to trigger the next color.
   const TILE_ADVANCE_COOLDOWN = 1.0;   // seconds between color changes
+  // Per-car pacing for the trailing train cars: the global per-tile cooldown
+  // above would otherwise starve every car behind the loco (they arrive within
+  // a second of it and find each tile still locked). Instead each car guards
+  // only ITS OWN triggers — move onto a tile, trigger, then wait this long
+  // before that same car may trigger again (kills boundary-jitter re-dips
+  // without blocking the next freight car behind it).
+  const TRAIN_TILE_GUARD = 0.4;
   const checkerCooldown = new Float32Array(tileCount); // >0 = can't advance yet
   // Crumble state: when a tile reaches red it flashes red/white for a few
   // seconds (giving the car time to drive off), then shrinks and falls away,
@@ -699,6 +845,9 @@ export function addUnderground(parent, opts = {}) {
   const _v3a = new THREE.Vector3();
   const _v3b = new THREE.Vector3();
   const _quat = new THREE.Quaternion();
+  const _ringZ = new THREE.Vector3(0, 0, 1);   // torus hole axis (identity)
+  const _ringT = new THREE.Vector3(0, 0, 1);   // tube tangent temp (re-set per ring)
+  const _ringQuat = new THREE.Quaternion();    // per-ring orientation
   // Advance a tile toward `target` in the neon sequence: if it's below the
   // target color it jumps straight to it (dark → blue, blue → green, …), and
   // if it's already at or past the target it bumps up one more step — so the
@@ -928,16 +1077,23 @@ export function addUnderground(parent, opts = {}) {
     h: CEIL_Y + 1, soft: true, ceiling: true,
   }];
 
+  await ugPhase(0.2, 'the colorful ceiling tiles');
+
   // Dim neon PointLights along the course zone: enough colored light for the
   // glowing props to read against dark rock, but short-range and dim so they
   // never wash out the cool Glass City glow to the north. Each light gets a
   // small emissive bulb so its source is visible in the cavern.
   const courseLights = [
-    { color: NEON.cyan,    x: 45,  z: -55, y: 10 },
-    { color: NEON.magenta, x: 115, z: -55, y: 10 },
-    { color: NEON.lime,    x: 45,  z: 15,  y: 10 },
-    { color: NEON.amber,   x: 115, z: 15,  y: 10 },
-    { color: NEON.cyan,    x: 80,  z: -20, y: 12 },
+    { color: NEON.lime,    x: -6,   z: 84,  y: 12 },  // tundra straight under the START arch
+    { color: NEON.magenta, x: 6,    z: 60,  y: 12 },  // south leg — west flank of the candy waterfall
+    { color: NEON.cyan,    x: 26,   z: 40,  y: 12 },  // BEHIND the waterfall, under the roof edge
+    { color: NEON.amber,   x: 44,   z: -60, y: 12 },  // under-roof corridor south
+    { color: NEON.magenta, x: 88,   z: -84, y: 12 },  // bottom run
+    { color: NEON.lime,    x: 116,  z: -26, y: 12 },  // east-wing ramp-canyon apex
+    { color: NEON.cyan,    x: 116,  z: 24,  y: 12 },  // platter straight
+    { color: NEON.amber,   x: 66,   z: 40,  y: 12 },  // under-roof west transit
+    { color: NEON.magenta, x: -60,  z: -70, y: 12 },  // descent across the south-west tundra
+    { color: NEON.lime,    x: -100, z: -70, y: 12 },  // final northbound straight (toward the mountain)
   ];
   for (const L of courseLights) {
     const light = new THREE.PointLight(L.color, 1.0, 75, 2);
@@ -971,251 +1127,18 @@ export function addUnderground(parent, opts = {}) {
     ugRamps.push(def);
   }
 
-  // ---- Suspended neon prompt-blocks (tasks #5–#6) ----
-  // Glowing cubes hung off the cavern ceiling by thin rods. #5 parked the
-  // prototype at the test ramp's jump-apex spot; #6 adds pass-through bump
-  // detection: when an AIRBORNE car enters a block's trigger radius we fire
-  // `onBlockBump(block)` once per approach (each block re-arms once the car
-  // leaves its radius). No collider — the car flies straight through.
-  const BLOCK_SIZE = 3;
-  const BLOCK_RADIUS = 4;   // ≈ block half-size (1.5) + player car radius (2.2), rounded up
-  const AIRBORNE_Y = 1.2;   // cavern-floor ride height is 0; above this ⇒ airborne
-  // Task #7: bump feedback — a hit flashes the block's emissive (and its glow
-  // light) then fades back to base, and the block sits out a short cooldown
-  // during which it can't fire again.
-  const BLOCK_COOLDOWN = 0.6;   // seconds a block is un-bumpable after a hit
-  const FLASH_TIME = 0.45;      // seconds for the bump flash to fade back to base
-  const FLASH_EMISSIVE = 2.6;   // extra emissiveIntensity at flash peak
-  const FLASH_LIGHT = 2.2;      // extra PointLight intensity at flash peak
-  const promptBlocks = [];
-  function addPromptBlock(x, y, z, color = NEON.magenta) {
-    // Own material instance (NOT the shared makeGlowMat cache) so a future
-    // bump-flash can pulse one block without touching every other prop that
-    // shares the same color.
-    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: GLOW_INTENSITY });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE), mat);
-    mesh.position.set(x, y, z);
-    parent.add(mesh);
+  await ugPhase(0.28, 'the course ramps');
 
-    const rodLen = CEIL_Y - (y + BLOCK_SIZE / 2);
-    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, rodLen, 8), pillarMat);
-    rod.position.set(x, y + BLOCK_SIZE / 2 + rodLen / 2, z);
-    parent.add(rod);
-
-    // Small glow so the block reads as a light source at night-club levels.
-    const glow = new THREE.PointLight(color, 0.8, 30, 2);
-    glow.position.set(x, y, z);
-    parent.add(glow);
-
-    const block = { mesh, mat, glow, x, y, z, radius: BLOCK_RADIUS, armed: true, cooldown: 0, flash: 0 };
-    promptBlocks.push(block);
-    return block;
-  }
-
-  // ---- Foam collectibles (task #8) ----
-  // Every prompt-block bump pops out a big soft-colored foam ball: it launches
-  // upward with a random sideways kick, falls under the same gravity as the
-  // car, bounces on the cavern floor a couple of times (damped), then shrinks
-  // away and despawns. Pure decoration — no collider, nothing to pick up.
-  const FOAM_COLORS = [0xffd1dc, 0xc1f0c1, 0xc1d7f0, 0xf0e6c1, 0xe6c1f0]; // pastels
-  const FOAM_R = 1.4;           // big soft-looking ball radius
-  const FOAM_LIFE = 3.2;        // seconds of bouncing before it shrinks
-  const FOAM_SHRINK = 0.7;      // seconds the shrink-out takes
-  const FOAM_GRAVITY = 18;      // same gravity main.js uses for the car
-  const FOAM_BOUNCE = 0.45;     // vertical restitution per floor hit
-  const FOAM_MAX = 12;          // live-piece cap — beyond this, recycle the oldest
-  const foamPieces = [];
-  // ---- Foam that looks like foam ----
-  // The bump-pop collectibles used to be plain pastel spheres. Each colour now
-  // gets a canvas "foam" texture: a bubbly speckle of soft light cells on a
-  // slightly darker base — so the balls read as lumpy cushion foam, not
-  // balloons. One texture per colour, cached and shared by every piece.
-  const foamTexCache = new Map();
-  function makeFoamTexture(color) {
-    const cached = foamTexCache.get(color);
-    if (cached) return cached;
-    const S = 256;
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = S;
-    const ctx = canvas.getContext('2d');
-    const c = new THREE.Color(color);
-    const r = (c.r * 255) | 0, g = (c.g * 255) | 0, b = (c.b * 255) | 0;
-    // Base: a slightly darker mid-tone so the pale bubbles pop on top.
-    ctx.fillStyle = `rgb(${Math.max(0, r - 46)},${Math.max(0, g - 46)},${Math.max(0, b - 46)})`;
-    ctx.fillRect(0, 0, S, S);
-    // Soft pale cells scattered densely — the classic foam-in-a-ball look.
-    for (let i = 0; i < 90; i++) {
-      const x = Math.random() * S, y = Math.random() * S;
-      const rad = 6 + Math.random() * 16;
-      const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
-      grad.addColorStop(0, `rgba(255,255,255,${0.16 + Math.random() * 0.14})`);
-      grad.addColorStop(0.7, `rgba(255,255,255,${0.05 + Math.random() * 0.06})`);
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(x, y, rad, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // A few bright glints — the largest cells catch the neon light.
-    for (let i = 0; i < 18; i++) {
-      const x = Math.random() * S, y = Math.random() * S;
-      const rad = 3 + Math.random() * 5;
-      const grad = ctx.createRadialGradient(x, y, 0, x, y, rad);
-      grad.addColorStop(0, `rgba(255,255,255,0.8)`);
-      grad.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(x, y, rad, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(2, 1.6);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    foamTexCache.set(color, tex);
-    return tex;
-  }
-  function disposeFoamPiece(f) {
-    parent.remove(f.mesh);
-    f.mesh.geometry.dispose();
-    f.mesh.material.dispose();
-  }
-  function spawnFoam(x, y, z) {
-    // Task #9: hard cap on live pieces so rapid bumps on several blocks can't
-    // pile up geometry forever — once at the cap, the OLDEST piece is recycled
-    // (removed + disposed) immediately to make room for the new one.
-    while (foamPieces.length >= FOAM_MAX) disposeFoamPiece(foamPieces.shift());
-    const color = FOAM_COLORS[(Math.random() * FOAM_COLORS.length) | 0];
-    const mat = new THREE.MeshStandardMaterial({
-      map: makeFoamTexture(color),
-      color,
-      emissive: color,
-      emissiveIntensity: 0.18,
-      roughness: 0.85,
-    });
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(FOAM_R, 18, 14), mat);
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
-    parent.add(mesh);
-    foamPieces.push({
-      mesh,
-      vx: (Math.random() - 0.5) * 6,   // random sideways kick
-      vy: 6 + Math.random() * 3,       // guaranteed pop upward
-      vz: (Math.random() - 0.5) * 6,
-      age: 0,
-      bounces: 0,
-      nudgeCd: 0,   // idea #28: cooldown between car nudges
-    });
-  }
-  // Test ramp aimed at the block row — analytic jump apex at full throttle
-  // (v=14): vy = 14·(8/16)·1.2 = 8.4, apex = vy²/2g ≈ 2 above the y=8 lip
-  // → y ≈ 10, ~6.5 past the lip.
-  addUgRamp({ x: 80, z: -35, runX: 0, runZ: 1, len: 16, width: 8, height: 8, boost: 1.2 });
-
-  // Task #10: a row of prompt-blocks across the open zone at varied heights.
-  // Heights follow the test-ramp flight profile — tall blocks sit near the
-  // apex line (z ≈ -20), shorter ones further along the descent (z ≈ -14) —
-  // so different jumps (speed, mid-air steer) clip different blocks. The row
-  // spans the whole zone so later features (conduit lanes, the foam pit,
-  // the pyramid launch ramp) each have targets within reach. Spacing is 16
-  // units — more than double the 4-unit trigger radius, so adjacent triggers
-  // never overlap.
-  const BLOCK_ROW = [
-    { x: 32,  y: 5,  z: -14,   color: NEON.cyan },
-    { x: 48,  y: 7,  z: -17,   color: NEON.lime },
-    { x: 64,  y: 9,  z: -19,   color: NEON.amber },
-    { x: 80,  y: 10, z: -20.5, color: NEON.magenta }, // test-ramp apex block
-    { x: 96,  y: 9,  z: -19,   color: NEON.cyan },
-    { x: 112, y: 7,  z: -17,   color: NEON.lime },
-    { x: 128, y: 5,  z: -14,   color: NEON.amber },
-  ];
-  for (const spec of BLOCK_ROW) addPromptBlock(spec.x, spec.y, spec.z, spec.color);
-
-  // ---- Conduit pipes (tasks #11–#14) ----
-  // An oversized glowing conduit spans a narrow lane at bumper height on two
-  // end posts. The pipe shuttles side-to-side across its lane (animated in
-  // task #12) and shoves any car it sweeps through (knockback in task #13).
-  // Geometry: the pipe axis lies along Z; it slides along X. Posts stand at
-  // the slide extremes so a pipe end lands flush on a post at each turn-
-  // around; at mid-slide there's an `amp`-wide gap on either side to thread.
-  const PIPE_R = 1.2;
-  const PIPE_Y = 2.4;         // centre height — underside ≈ bumper height
-  const conduitPipes = [];
-  const pipePostColliders = [];
-  function addConduitPipe({ cx, cz, len, amp, axis = 'z', color = NEON.cyan, phase = 0, speed = 1, pattern = 'sweep' }) {
-    // axis 'z': pipe lies along Z, slides along X (north-south lane).
-    // axis 'x': pipe lies along X, slides along Z (east-west lane).
-    // pattern 'sweep': the original horizontal slide.
-    // pattern 'guillotine': the pipe hangs in the lane and slams straight down
-    // (amp = vertical travel).
-    // The dark end-posts and rail frames were removed (2026-09-19): the hazard
-    // is the glowing bar alone, so the lane stays completely open.
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(PIPE_R, PIPE_R, len, 14), makeGlowMat(color));
-    if (axis === 'x') mesh.rotation.z = Math.PI / 2;   // cylinder Y-axis → lie along X
-    else mesh.rotation.x = Math.PI / 2;                // cylinder Y-axis → lie along Z
-    mesh.position.set(cx, PIPE_Y, cz);
-    mesh.castShadow = true;
-    parent.add(mesh);
-    const pipe = { mesh, cx, cz, len, amp, axis, phase, speed, pattern, hitCooldown: 0, hitCount: 0 };
-    conduitPipes.push(pipe);
-    return pipe;
-  }
-
-  // A double-beam X: two perpendicular beams centered on the same lane, each
-  // sweeping along its own axis on opposite phases. Two beams to time, thread
-  // the open middle between them (the old corner posts were removed 2026-09-19).
-  function addConduitCross({ cx, cz, len, amp, color = NEON.magenta, color2 = NEON.cyan, phase = 0, speed = 1 }) {
-    const a = addConduitPipe({ cx, cz, len, amp, axis: 'z', color, phase, speed });
-    const b = addConduitPipe({ cx, cz, len, amp, axis: 'x', color: color2, phase: phase + Math.PI, speed });
-    a.cross = b;
-    b.cross = a;
-    return [a, b];
-  }
-
-  // Task #14 + idea #22: one serpentine obstacle course on the open floor.
-  // The pipes (sweeping arms, a double-beam X crossing, and two drop-gates /
-  // guillotines) are laid out in three N-S lanes stitched by two E-W runs so
-  // the car can drive the whole snake from start to finish. Sweeper pipes span
-  // the lane and slide across it: when the arm is at one extreme the far side
-  // of the lane is open to thread. Each hazard has its own speed + phase and
-  // the volumes are spaced so no two sweeps can physically touch -- the arms
-  // just drift past each other's rhythm over time.
-  // Waypoints of the course centreline (the painted dashes / flags follow it):
-  //   A (N-S south)  x=30   z 38→-84
-  //   B (E-W east)   z=-84  x 30→92
-  //   C (N-S north)  x=92   z -84→-8
-  //   D (E-W east)   z=-8   x 92→112
-  //   E (N-S north)  x=112  z -8→10
-  //   F (E-W east)   z=10   x 112→134  (finish)
-  const COURSE = [
-    { x: 30, z: 40 },   // P1 below the start banner — first pedal point
-    { x: 30, z: -84 },  // corridor A turn
-    { x: 92, z: -84 },  // bottom run turn
-    { x: 92, z: -8 },   // corridor B turn
-    { x: 112, z: -8 },  // short hop east
-    { x: 112, z: 10 },  // corridor C turn
-    { x: 134, z: 10 },  // final straight foot
-  ];
-
-  addConduitPipe({ cx: 30, cz: 16, len: 16, amp: 8, speed: 1.2, phase: 0, color: NEON.cyan });                            // A sweeper arm #1
-  addConduitPipe({ cx: 30, cz: -26, len: 12, amp: 16, speed: 1.1, phase: 0.4, color: NEON.red, axis: 'x', pattern: 'guillotine' }); // A guillotine #1
-  addConduitPipe({ cx: 30, cz: -52, len: 16, amp: 8, speed: 0.9, phase: 4.2, color: NEON.magenta });                      // A sweeper arm #2
-  addConduitPipe({ cx: 30, cz: -72, len: 16, amp: 8, speed: 1.5, phase: 2.1, color: NEON.lime });                         // A sweeper arm #3
-  addConduitPipe({ cx: 62, cz: -84, len: 14, amp: 6, speed: 1.1, phase: 1.0, color: NEON.amber, axis: 'x' });             // bottom run sweeper #4
-  addConduitCross({ cx: 92, cz: -72, len: 12, amp: 5, speed: 1.3, phase: 3.3, color: NEON.magenta, color2: NEON.cyan });  // corridor B conduit cross
-  addConduitPipe({ cx: 92, cz: -44, len: 14, amp: 8, speed: 1.4, phase: 5.0, color: NEON.amber });                        // B sweeper arm #5
-  addConduitPipe({ cx: 92, cz: -20, len: 14, amp: 6, speed: 1.0, phase: 1.8, color: NEON.cyan });                         // B sweeper arm #6
-  addConduitPipe({ cx: 112, cz: -2, len: 12, amp: 16, speed: 1.1, phase: 0.4, color: NEON.red, axis: 'x', pattern: 'guillotine' }); // C guillotine #2
-  addConduitPipe({ cx: 123, cz: 10, len: 14, amp: 5, speed: 1.2, phase: 3.0, color: NEON.magenta, axis: 'x' });           // final straight sweeper #7
-
-  // ---- Giant conveyor lane (idea #33) ----
-  // A long moving belt on the open floor: while the car is over it the belt
-  // drags it along the belt direction at CONVEYOR.speed (on top of the car's
-  // own motion), so you can fight it, ride it, or use it for parking tests.
-  // The chevron belt texture scrolls to sell the motion; the direction is
-  // purely +X here, but dirX/dirZ keep it swappable.
-  const CONVEYOR = { cx: 45, cz: -8, len: 48, wid: 9, dirX: 1, dirZ: 0, speed: 6 };
+  // ---- Giant conveyor lane (idea #33) — now part of the obstacle course ----
+  // A long moving belt SITTING RIGHT ON the eastbound z=0 guide lane
+  // (x∈[41,107]). The green guide dots lead the car up to it, the belt carries
+  // you across the machine shop, and the dots pick up on the far side. The belt
+  // now extends all the way UNDER the steam press at x=108 — if you do nothing,
+  // it carries you under the press head (the slam zone is |x−108| < 6.7 and the
+  // belt tips over at x=107) and you get stamped flat. The chevron texture
+  // scrolls to sell the motion; direction is +X here, but dirX/dirZ keep it
+  // swappable.
+  const CONVEYOR = { cx: 74, cz: 0, len: 66, wid: 9, dirX: 1, dirZ: 0, speed: 6 };
   const beltRepeatX = CONVEYOR.len / 6;   // one chevron pair every 6 world units
   const beltTex = (() => {
     const c = document.createElement('canvas');
@@ -1257,23 +1180,863 @@ export function addUnderground(parent, opts = {}) {
     rail.position.set(CONVEYOR.cx, 0.45, CONVEYOR.cz + s * (CONVEYOR.wid / 2 + 0.35));
     parent.add(rail);
   }
-  // Motor housing at the belt's downstream end.
-  const conMotor = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 2.4, 12), conFrameMat);
-  conMotor.rotation.z = Math.PI / 2;
-  conMotor.position.set(CONVEYOR.cx + CONVEYOR.len / 2 + 0.8, 1.2, CONVEYOR.cz);
-  conMotor.castShadow = true;
-  parent.add(conMotor);
+  // The motor-cylinder housing at the belt's downstream end was REMOVED
+  // (2026-09-22) at the user's request — the belt just scrolls off into the
+  // frame.
 
-  // ---- Foam pit (task #15) ----
-  // A recessed, padded landing zone built into the open western floor.
-  // Pure decoration: a dark soft-looking floor patch. (The rim walls that
-  // ringed the old elevator area — REMOVED 2026-09-18.)
-  const PIT = { cx: 30, cz: -42, halfW: 13, halfD: 7 };
-  const pitPadMat = new THREE.MeshStandardMaterial({ color: 0x191228, roughness: 1 });
-  const pitPatch = new THREE.Mesh(new THREE.BoxGeometry(PIT.halfW * 2, 0.12, PIT.halfD * 2), pitPadMat);
-  pitPatch.position.set(PIT.cx, 0.06, PIT.cz);
-  pitPatch.receiveShadow = true;
-  parent.add(pitPatch);
+  // ---- Articulated robot picker beside the conveyor (2026-09-22) ----
+  // One pick-and-place robot on the belt's SOUTH flank (on the belt's WEST
+  // end, so it meets cars as they're carried in), swinging its two-segment arm
+  // across the lane and HAMMERING a giant mechanical claw down into the belt.
+  // The claw hangs wide open while the arm raises, then SNAPS SHUT the instant
+  // the arm bottoms out — and if a car is under it the clamp genuinely SHOVES
+  // the car off the belt (onPickerGrab), as if the machine is really trying to
+  // grab it. A soft pad under the claw still gives cars on the belt a bump.
+  // The shell is OPAQUE (no ghost transparency) and compact — the arm hunkers
+  // over the belt instead of towering: the ONLY device collider is the tiny
+  // soft pad under the claw, so the rest of the machine stays ghostly and the
+  // lane stays navigable.
+  const conveyorPicker = { t: 0, pad: null, shoulder: null, elbow: null, wrist: null, level: null, jawL: null, jawR: null, grabbed: false };
+  const pickerMat = new THREE.MeshStandardMaterial({
+    color: 0x2fc79a, roughness: 0.4, metalness: 0.65,
+    emissive: 0x0e6a4e, emissiveIntensity: 0.85,
+  });
+  {
+    // Bolted base plate + turret standing on the south flank (z=6.0, just past
+    // the belt rails at z=±4.85), short so the whole robot stays compact.
+    const base = new THREE.Group();
+    base.position.set(CONVEYOR.cx - CONVEYOR.len / 2 + 4, 0, 6.0);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.22, 3.6), pickerMat);
+    plate.position.y = 0.11;
+    base.add(plate);
+    const boltGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.32, 10);
+    for (const [bx, bz] of [[-1.2, -1.45], [1.2, -1.45], [-1.2, 1.45], [1.2, 1.45]]) {
+      const bolt = new THREE.Mesh(boltGeo, pickerMat);
+      bolt.position.set(bx, 0.34, bz);
+      base.add(bolt);
+    }
+    const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.55, 0.9, 16), pickerMat);
+    turret.position.y = 0.6;
+    base.add(turret);
+    const turretGlow = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.06, 8, 20), makeGlowMat(NEON.cyan));
+    turretGlow.rotation.x = Math.PI / 2;
+    turretGlow.position.y = 1.05;
+    base.add(turretGlow);
+    parent.add(base);
+    // Shoulder joint on top of the turret — rotates about Y to swing the arm
+    // across the lane.
+    const shoulder = new THREE.Group();
+    shoulder.position.y = 1.1;
+    base.add(shoulder);
+    const upperArm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.2, 0.7), pickerMat);
+    upperArm.position.y = 1.1;
+    shoulder.add(upperArm);
+    const shoulderGlow = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.07, 8, 20), makeGlowMat(NEON.lime));
+    shoulderGlow.rotation.x = Math.PI / 2;
+    shoulderGlow.position.y = 0.04;
+    shoulder.add(shoulderGlow);
+    // Elbow joint — pitches the forearm over and DOWN into the belt (negative
+    // rotation.x folds the arm from the south flank so the claw swings north
+    // across the lane).
+    const elbow = new THREE.Group();
+    elbow.position.y = 2.2;
+    shoulder.add(elbow);
+    // Forearm is LONG so the folded reach carries the pincers halfway across
+    // the belt (belt z∈[−4.5,4.5]). The wrist top now stands ~4.8 above the
+    // elbow, and the dive folds that long stick over and down over the lane.
+    const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.6, 4.8, 0.6), pickerMat);
+    forearm.position.y = 2.4;
+    elbow.add(forearm);
+    const elbowGlow = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.06, 8, 18), makeGlowMat(NEON.cyan));
+    elbowGlow.rotation.x = Math.PI / 2;
+    elbow.add(elbowGlow);
+    // Wrist + GIANT mechanical pincers: two big tapered steel claws that hang
+    // from the wrist and OPEN/CLOSE about Z (spread wide across the lane, then
+    // SNAP SHUT as the arm hammers down) like it's really trying to grab the
+    // car. Each jaw is a tapered beam with a serrated grip edge and a hooked
+    // pointy tip. When the jaws shut WHILE THE CAR IS UNDER THEM, a genuine
+    // onPickerGrab() shove fires — the machine actually hits the car now.
+    const wrist = new THREE.Group();
+    wrist.position.y = 4.8;
+    elbow.add(wrist);
+    // Leveling clamp: the elbow folds the forearm over and DOWN past vertical
+    // near the bottom of the dive, which would otherwise swing the claw blades
+    // up-and-south onto the robot's own arm (the claws "grab the machine").
+    // This counter-rotating group undoes the fold so the two claws keep
+    // pointing straight down at the BELT the whole cycle — they hammer down
+    // over the car that's passing on the belt instead of curling back on the
+    // robot. The update loop sets clawLevel.rotation.x against the elbow.
+    const clawLevel = new THREE.Group();
+    clawLevel.rotation.x = 0;
+    wrist.add(clawLevel);
+    // Knuckle block bolting both jaws to the leveling clamp.
+    const knuckle = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.5, 1.1), pickerMat);
+    knuckle.position.y = -0.22;
+    wrist.add(knuckle);
+    const knuckleCap = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 1.1), makeGlowMat(NEON.lime));
+    knuckleCap.position.y = -0.5;
+    wrist.add(knuckleCap);
+    // One steel jaw. `side` (+1 / -1) sets which claw it is: the pincer tips
+    // hang straight down at rotation 0 (JUST about to clamp); opening rotation
+    // swings the tip out sideways so the pair gapes wide over the belt.
+    const jawMat = new THREE.MeshStandardMaterial({
+      color: 0x1b2a2f, roughness: 0.35, metalness: 0.85,
+      emissive: 0x0e6a4e, emissiveIntensity: 0.7,
+    });
+    function buildJaw(side) {
+      const jaw = new THREE.Group();
+      jaw.position.x = side * 0.85;
+      jaw.rotation.z = side * 0.72;           // rest: slightly open
+      // Tapered chain of boxes down the jaw, widest near the knuckle and
+      // pinching to a hooked point at the tip (~1.8 long when open).
+      const seg = (w, len, y, opt) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, len, 0.62), jawMat);
+        mesh.position.y = y;
+        jaw.add(mesh);
+        return mesh;
+      };
+      seg(0.82, 0.62, -0.86);                  // thick shoulder
+      seg(0.64, 0.62, -1.47);                  // mid claw
+      seg(0.44, 0.56, -2.04);                  // taper
+      const tip = seg(0.2, 0.5, -2.55);        // pointy tip
+      tip.rotation.x = -0.35;                  // hook the tip slightly inward
+      // Serrated grip edge down the outside of the claw.
+      const gripGeo = new THREE.BoxGeometry(0.13, 2.0, 0.7);
+      const grip = new THREE.Mesh(gripGeo, pickerMat);
+      grip.position.set(side * 0.4, -1.5, 0);
+      jaw.add(grip);
+      // Glowing bite-edge on the inside face (where the two claws meet).
+      const bite = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.7, 0.5), makeGlowMat(NEON.cyan));
+      bite.position.set(side * -0.3, -1.5, 0);
+      jaw.add(bite);
+      clawLevel.add(jaw);
+      return jaw;
+    }
+    const jawL = buildJaw(-1);
+    const jawR = buildJaw(1);
+    jawL.rotation.z = -1.2;                    // built open; update() walks them
+    jawR.rotation.z = 1.2;
+    shoulder.rotation.y = -0.15;
+    elbow.rotation.x = -0.6;
+    wrist.rotation.x = 0.1;
+    conveyorPicker.shoulder = shoulder;
+    conveyorPicker.elbow = elbow;
+    conveyorPicker.wrist = wrist;
+    conveyorPicker.level = clawLevel;
+    conveyorPicker.jawL = jawL;
+    conveyorPicker.jawR = jawR;
+  }
+  // The picker's only collider: a soft pad hanging under the claw. The update
+  // loop nudges it to follow the wrist and lifts it when the claw dives low, so
+  // a car rolling under a "grab" gets a gentle bump instead of being crushed or
+  // picked up.
+  const pickerPadColliders = [{ x: CONVEYOR.cx, z: CONVEYOR.cz, halfW: 2.0, halfD: 1.5, h: 0, soft: true }];
+  conveyorPicker.pad = pickerPadColliders[0];
+
+  // ---- Factory machinery on the course (2026-09-22) ----
+  // The serpentine course now crosses a factory floor: spinning gear clusters
+  // flank the lanes (the green guide dots thread the gap between each pair),
+  // the articulated picker robot nudges cars over the conveyor belt, a giant
+  // steam press straddles the eastbound z=0 lane (drive UNDER it — it slams
+  // down and finds you flat if you're under it when it drops), and a glowing
+  // car wash bay straddles the final westbound z=-30 lane just before the
+  // finish ribbon. The active bits: the picker's soft grab-pad (gives the car
+  // a gentle bump over the belt) and the steam press, which flags
+  // `steamPress.slamActive` for main.js to read (it flattens the car and
+  // bounces it back, same as the boulder/steamroller) — everything else stays
+  // ghostly, so the whole course stays navigable.
+  const gearSteel = new THREE.MeshStandardMaterial({ color: 0x4a3f35, roughness: 0.55, metalness: 0.6 });
+  const gearToothMat = new THREE.MeshStandardMaterial({
+    color: 0x74a5b5, roughness: 0.3, metalness: 0.9, emissive: 0x1c3a47, emissiveIntensity: 0.45,
+  });
+  const gearSpin = [];   // { mesh, speed } — spun every frame
+  // A single gear wheel: a flat "coin" cylinder (wide + thin, like a big
+  // coin) with little rounded bumps for teeth ringing its rim. It stands in
+  // the local XY plane (facing the road) and spins about the local Z axis via
+  // rotation.z.
+  function makeGear(radius, depth, teeth, glowColor) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, depth, 64), gearSteel);
+    body.rotation.x = Math.PI / 2;   // cylinder axis → +Z, the spin axis
+    g.add(body);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.22, radius * 0.22, depth + 0.3, 18), makeGlowMat(glowColor));
+    hub.rotation.x = Math.PI / 2;
+    g.add(hub);
+    // milled edge ring so the coin reads machined, like a real gear blank
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(radius, depth * 0.42, 10, 64), gearToothMat);
+    g.add(rim);
+    const bumpGeo = new THREE.SphereGeometry(0.2, 12, 9);   // little rounded tooth-bump
+    for (let i = 0; i < teeth; i++) {
+      const a = (i / teeth) * Math.PI * 2;
+      const b = new THREE.Mesh(bumpGeo, gearToothMat);
+      const out = radius + 0.15;
+      b.position.set(Math.cos(a) * out, Math.sin(a) * out, 0);
+      g.add(b);
+    }
+    return g;
+  }
+  // A meshing BIG+SMALL pair bolted together. The pair stands in the local XY
+  // plane; the whole group is rotated later so the gears face the road and
+  // their axles point along the lane (they spin in-plane).
+  function makeGearPair(bigR, smallR, depth, bigTeeth, smallTeeth, bigGlow, smallGlow) {
+    const pair = new THREE.Group();
+    const big = makeGear(bigR, depth, bigTeeth, bigGlow);
+    const small = makeGear(smallR, depth, smallTeeth, smallGlow);
+    const meshDist = (bigR + 0.15) + (smallR + 0.15);
+    small.position.set(meshDist, 0, 0);
+    pair.add(big, small);
+    gearSpin.push({ mesh: big, speed: 0.6 });
+    gearSpin.push({ mesh: small, speed: -0.6 * (bigR + 0.15) / (smallR + 0.15) });
+    return pair;
+  }
+  // ---- GIANT bed-and-slat machine — the ONLY two sets of gears live here ----
+  // The two interlocking coin-gear pairs are both bolted onto a single massive
+  // factory machine sitting RIGHT ON the westbound z=17 course lane (the
+  // second-long straight). The cars DRIVE OVER it like a bridge: the east ramp
+  // climbs onto its roof, the west ramp drops back off, and the roof is a soft
+  // "bridge" collider so the car snaps onto it from the ramps (and flyers land
+  // and roll across) instead of falling through. The belly is OPEN (no slab,
+  // no plinth) so a floor-level car just drives through underneath between the
+  // legs. The machine is a long steel housing on legs with OPEN sides — a roof
+  // slab, corner posts and side rails frame each bay so the spinning
+  // gear-drive shafts inside the body stay in view — and along its top a row
+  // of heavy "beds" and upright "slats" rise and fall in alternating waves
+  // (like a giant stacker / comb machine), visibly driven by the meshing gear
+  // wraps on its front face — they poke UP through the open roof (beds top
+  // ≈8.7, slats top ≈11.7) and churn right around the car as it crosses the
+  // bridge, so the moving machinery stays in view.
+  const MACHINE = { x: 71, z: 17, len: 42, halfD: 5.2, bodyH: 4.2, legs: 2.2 };
+  const machineSteel = new THREE.MeshStandardMaterial({
+    color: 0x5a6470, roughness: 0.45, metalness: 0.8,
+    emissive: 0x141c28, emissiveIntensity: 0.4,
+  });
+  const bedsAndSlats = [];   // { mesh, baseY, amp, speed, phase } — animated in update()
+  let machineT = 0;          // pump-cycle clock for the beds/slats
+  // Bolt one interlocking gear pair onto the machine's front face. Kept flat
+  // (axle along world Z, into the housing) so the gears face the road and spin
+  // about their own Z — the update loop's gearSpin handles the motion.
+  function mountGearDrive(px, pz, s) {
+    const pair = makeGearPair(2.6, 1.7, 0.5, 16, 11, NEON.amber, NEON.cyan);
+    pair.position.set(px, 3.15 * s + 0.15, pz);
+    pair.scale.setScalar(s);
+    parent.add(pair);
+    const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.3, 3.15 * s + 0.15, 18), gearSteel);
+    ped.position.set(px, (3.15 * s + 0.15) / 2, pz);
+    parent.add(ped);
+    // Drive shaft running back INTO the machine body + a glowing coupling at
+    // the gear hub. The shaft spins with the big driving gear.
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, MACHINE.halfD + 2.2, 14), gearSteel);
+    shaft.rotation.x = Math.PI / 2;   // axis → +Z (into the housing)
+    shaft.position.set(px, 3.15 * s + 0.15, MACHINE.z - 0.8);
+    parent.add(shaft);
+    gearSpin.push({ mesh: shaft, speed: 0.6 });
+    const coupling = new THREE.Mesh(new THREE.CylinderGeometry(0.66, 0.66, 0.42, 14), makeGlowMat(NEON.amber));
+    coupling.rotation.x = Math.PI / 2;
+    coupling.position.set(px, 3.15 * s + 0.15, pz - 0.1);
+    parent.add(coupling);
+  }
+  function makeSlatMachine() {
+    // Legs under the housing.
+    for (let i = 0; i < 4; i++) {
+      const lx = MACHINE.x - MACHINE.len / 2 + (MACHINE.len / 3) * i;
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(1.2, MACHINE.legs, 1.2), machineSteel);
+      leg.position.set(lx, MACHINE.legs / 2, MACHINE.z);
+      parent.add(leg);
+    }
+    // The long steel housing — now an OPEN framework instead of a solid box:
+    // a roof slab (the drive surface), corner/mid posts and side rails frame
+    // each bay so the spinning gear-drive shafts inside the body are visible
+    // through the sides (see mountGearDrive). The belly stays open for cars
+    // driving through underneath.
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(MACHINE.len, 0.5, MACHINE.halfD * 2), machineSteel);
+    roof.position.set(MACHINE.x, MACHINE.legs + MACHINE.bodyH - 0.25, MACHINE.z);
+    roof.castShadow = true;
+    parent.add(roof);
+    const postH = MACHINE.bodyH - 0.5;            // from the top of a leg to the roof
+    for (const ix of [-0.5, -0.16, 0.16, 0.5]) {
+      for (const s of [1, -1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.7, postH, 0.7), machineSteel);
+        post.position.set(MACHINE.x + ix * MACHINE.len, MACHINE.legs + postH / 2, MACHINE.z + s * MACHINE.halfD);
+        parent.add(post);
+      }
+    }
+    for (const s of [1, -1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(MACHINE.len - 1.4, 0.4, 0.3), machineSteel);
+      rail.position.set(MACHINE.x, MACHINE.legs + MACHINE.bodyH * 0.55, MACHINE.z + s * MACHINE.halfD);
+      parent.add(rail);
+    }
+    // Glowing drive window band across each side bay, reading as a scan fork
+    // running along the open machine.
+    for (const s of [1, -1]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(MACHINE.len - 1.8, 1.2, 0.1), makeGlowMat(NEON.cyan));
+      win.position.set(MACHINE.x, MACHINE.legs + MACHINE.bodyH * 0.62, MACHINE.z + s * MACHINE.halfD + 0.05);
+      parent.add(win);
+    }
+    // Warning beacon + exhaust chimney poking above the housing top on the
+    // centre line (≈6.95/7.3, just above the roof the car drives at 6.4).
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 1.0, 10), makeGlowMat(NEON.red));
+    beacon.position.set(MACHINE.x - MACHINE.len / 2 + 2, MACHINE.legs + MACHINE.bodyH + 0.55, MACHINE.z);
+    parent.add(beacon);
+    const ex = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.5, 10), machineSteel);
+    ex.position.set(MACHINE.x + MACHINE.len / 2 - 2, MACHINE.legs + MACHINE.bodyH + 0.9, MACHINE.z);
+    parent.add(ex);
+    // BEDS — heavy plates along the top row that rise and fall ABOVE the roof,
+    // churning around the car as it crosses the bridge (top ≈8.7).
+    const SLAT_BEDS = 5;
+    const bedW = MACHINE.halfD * 2 - 0.6;
+    const bedGeo = new THREE.BoxGeometry(6.6, 0.5, bedW);
+    for (let i = 0; i < SLAT_BEDS; i++) {
+      const bx = MACHINE.x - MACHINE.len / 2 + 4.5 + i * (MACHINE.len - 8) / (SLAT_BEDS - 1);
+      const bed = new THREE.Mesh(bedGeo, machineSteel);
+      bed.castShadow = true;
+      bed.position.set(bx, MACHINE.legs + MACHINE.bodyH + 0.5, MACHINE.z);
+      parent.add(bed);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.16, bedW), makeGlowMat(NEON.amber));
+      edge.position.set(0, -0.32, 0);   // CHILD of the bed — centered on it, not absolute world coords
+      bed.add(edge);
+      bedsAndSlats.push({
+        mesh: bed,
+        baseY: MACHINE.legs + MACHINE.bodyH + 0.5,
+        amp: 1.7,
+        speed: 0.9 + (i % 3) * 0.18,
+        phase: i * 1.25,
+      });
+    }
+    // SLATS — upright fins between the beds, sliding the opposite phase so the
+    // row works like interleaving teeth (beds up while neighbouring slats down).
+    // They stand the tallest, sweeping up to ≈11.7 as they pump.
+    const slatGeo = new THREE.BoxGeometry(0.6, 3.6, MACHINE.halfD * 2 - 0.8);
+    for (let i = 0; i < SLAT_BEDS - 1; i++) {
+      const sx = MACHINE.x - MACHINE.len / 2 + 4.5 + (i + 0.5) * (MACHINE.len - 8) / (SLAT_BEDS - 1);
+      const slat = new THREE.Mesh(slatGeo, machineSteel);
+      slat.castShadow = true;
+      slat.position.set(sx, MACHINE.legs + MACHINE.bodyH + 1.8, MACHINE.z);
+      parent.add(slat);
+      bedsAndSlats.push({
+        mesh: slat,
+        baseY: MACHINE.legs + MACHINE.bodyH + 1.8,
+        amp: 1.9,
+        speed: 1.1 + (i % 2) * 0.22,
+        phase: i * 1.25 + Math.PI,   // counter-phase to the neighbouring beds
+      });
+    }
+  }
+  makeSlatMachine();
+  mountGearDrive(MACHINE.x - MACHINE.len / 5, MACHINE.z + MACHINE.halfD + 1.2, 1.0);
+  mountGearDrive(MACHINE.x + MACHINE.len / 5, MACHINE.z + MACHINE.halfD + 1.2, 1.0);
+  // The machine IS a bridge: a single soft "bridge" collider floats the roof at
+  // the top of the housing (legs + body, y 6.4). main.js treats bridge
+  // colliders specially — the elevator helper always reports their top (no
+  // height-of-car filter) and the airborne landing math uses them as a catch
+  // surface — so a car snaps onto the roof from the course ramps (east climb
+  // top x=94, west drop top x=47.5) or falls onto it from a flyer, and never
+  // sinks into the housing. The belly is OPEN: the plinth/slab are gone, so a
+  // floor-level car just drives through underneath between the legs.
+  const machineColliders = [
+    {
+      x: MACHINE.x, z: MACHINE.z,
+      halfW: MACHINE.len / 2 + 2.5,
+      halfD: MACHINE.halfD,
+      h: MACHINE.legs + MACHINE.bodyH,
+      soft: true,
+      bridge: true,
+    },
+  ];
+
+  // ---- Giant steam press straddling the eastbound z=0 lane (belt middle) ----
+  // Industrial gantry: two columns at z=±5.5 (just outside the belt rails), a
+  // crossbeam on top, a neon anvil on the floor, and a massive steel head that
+  // rides the columns up and down. The press sits in the MIDDLE of the
+  // conveyor belt (x=74, the belt runs x∈[41,107]) — if you do nothing, the
+  // belt carries you under the head into the slam zone (|x−74| < 6.7) right as
+  // it drops, and carries you OUT flat on the other side. The head cycles
+  // raised (rest) → quick slam → hold flat on the anvil → rise, flashing its
+  // warning light before each drop. If the car is under the head while it's
+  // down it gets pressed flat (steam carrier reads steamPress.slamActive and
+  // runs the normal flatten/bounce). The press is NEVER a collider — with the
+  // head up you just drive through.
+  const PRESS = { x: CONVEYOR.cx, z: 0, halfW: 5.5, halfD: 5.5, baseY: 8.2 };
+  const PRESS_UP_Y = 4.5, PRESS_DOWN_Y = 1.15;   // head bottom (y-0.95) meets the anvil
+  const pressSteel = new THREE.MeshStandardMaterial({ color: 0x3a3238, roughness: 0.5, metalness: 0.7 });
+  const pressHeadMat = new THREE.MeshStandardMaterial({ color: 0x2c252d, roughness: 0.4, metalness: 0.8, emissive: 0x8a1f5c, emissiveIntensity: 0.35 });
+  const pressGroup = new THREE.Group();
+  pressGroup.position.set(PRESS.x, 0, PRESS.z);
+  for (const s of [-1, 1]) {
+    const col = new THREE.Mesh(new THREE.BoxGeometry(1.1, PRESS.baseY, 1.1), pressSteel);
+    col.position.set(0, PRESS.baseY / 2, s * PRESS.halfD);
+    col.castShadow = true;
+    pressGroup.add(col);
+    const gl = new THREE.Mesh(new THREE.BoxGeometry(0.18, PRESS.baseY, 0.18), makeGlowMat(NEON.amber));
+    gl.position.set(-0.55, PRESS.baseY / 2, s * PRESS.halfD);
+    pressGroup.add(gl);
+  }
+  const cross = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, PRESS.halfD * 2 + 1.4), pressSteel);
+  cross.position.set(0, PRESS.baseY + 0.7, 0);
+  pressGroup.add(cross);
+  const warnLight = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 10), makeGlowMat(NEON.red).clone());
+  warnLight.position.set(0, PRESS.baseY + 1.5, 0);
+  pressGroup.add(warnLight);
+  const anvil = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.2, PRESS.halfD * 2), pressSteel);
+  anvil.position.set(0, 0.1, 0);
+  pressGroup.add(anvil);
+  const anvilGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.06, PRESS.halfD * 2), makeGlowMat(NEON.magenta));
+  anvilGlow.position.set(0, 0.2, 0);
+  pressGroup.add(anvilGlow);
+  const pressHead = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2, 1.9, PRESS.halfD * 2), pressHeadMat);
+  pressHead.position.set(0, PRESS_UP_Y, 0);
+  pressGroup.add(pressHead);
+  const headGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 - 0.4, 0.12, PRESS.halfD * 2 - 0.4), makeGlowMat(NEON.magenta));
+  headGlow.position.y = -0.95;
+  pressHead.add(headGlow);
+  const pressed = { t: 0, phase: 'up', head: pressHead, warnLight, slamActive: false, hiss: false };
+  parent.add(pressGroup);
+  const steamPuffs = [];   // soft grey steam when the head is down
+  let steamPuffTimer = 0;
+
+  // ---- Car wash bay on the westbound z=-30 lane, right up against the finish ----
+  // Drive through it and out the exit portal, then 2 car lengths on to the
+  // finish ribbon (COURSE_FINISH_X = -5.6, moved west so you clear the wash
+  // before the line). Glowing frame, spinning side scrubber drums, BIG brushes
+  // hanging from the roof rails that sweep back and forth across the car while
+  // water sprays at you, and air-dryer fan boxes right at the exit. After you
+  // exit the car sparkles for a few seconds. The bay's EXIT (west) portal sits
+  // at world x=3; the finish ribbon now sits 2 car lengths beyond it.
+  // Two main shops form this course-wide feature: a sweeping conveyor-style
+  // car wash run (the westbound lane) with a stack of chemist-grade brushes.
+  // cx = 3 + len/2 = 21 (len=36) puts the exit portal at x=3: world x 3..39.
+  const CARWASH = { cx: 21, cz: -30, len: 36, wid: 8 };   // the car drives WEST (−X) through it; z half-span 4
+  const washMat = new THREE.MeshStandardMaterial({ color: 0x26333a, roughness: 0.6, metalness: 0.55 });
+  const washGlow = makeGlowMat(NEON.cyan);
+  const carWash = {
+    t: 0, inside: false, sparkleT: 0, droplets: [], sparkles: [],
+    // Bay geometry (world coords) for the soapy glide in main.js — the car is
+    // smoothly guided to the lane centre instead of knocking the lattice.
+    bay: { cx: CARWASH.cx, cz: CARWASH.cz, len: CARWASH.len, wid: CARWASH.wid },
+    // colourful spinning brush rigs, all animated in the update loop below
+    drums: [],            // vertical side scrubber drums
+    washers: [],          // full-height side washers (tall rollers, spin about Y)
+    rocks: [],            // rocker-panel scrubbers (stubby low cylinders)
+    tires: [],            // pena-wheel tire scrubbers (horizontal floor rollers)
+    blasters: [],         // high-pressure wheel blasters (rotating nozzle rings)
+    wraps: [],            // wrap-around "gyro wrap" swing arms (step in + scrub + release)
+    mitterCurtains: [],   // cloth-strip frames agitating in a circular pattern
+    mitter: null,         // overhead contour mitter (big soft roller, bobs in height)
+    sweeps: [],           // existing big overhead brushes (swish across the car)
+    fans: [], tubeMen: [],
+    spawnAcc: 0, spawnAcc2: 0,
+  };
+  const washColliders = [];   // solid lattice side-walls (player + little car stay enclosed)
+  const washGroup = new THREE.Group();
+  washGroup.position.set(CARWASH.cx - CARWASH.len / 2, 0, CARWASH.cz);   // origin at the EXIT (west) portal x=3 — the car enters at the east end (x=39)
+  const WZ = CARWASH.wid / 2;   // 4
+  (function buildWash() {
+    // Entry + exit portal arches (gantry frames across the lane).
+    for (const ex of [0, CARWASH.len]) {
+      for (const s of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3.6, 0.5), washMat);
+        post.position.set(ex, 1.8, s * WZ);
+        washGroup.add(post);
+        const postGlow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 3.6, 0.12), washGlow);
+        postGlow.position.set(ex, 1.8, s * (WZ - 0.18));
+        washGroup.add(postGlow);
+      }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, WZ * 2 + 1), washMat);
+      bar.position.set(ex, 3.35, 0);
+      washGroup.add(bar);
+      const barGlow = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, WZ * 2 + 0.6), washGlow);
+      barGlow.position.set(ex, 3.2, 0);
+      washGroup.add(barGlow);
+    }
+    // Lattice gate side-walls: you can SEE the brushes through the slats from
+    // outside, but once a car is inside the bay it's ENCLOSED — the only
+    // openings are the entry (east) and exit (west) ports above. Each wall is
+    // a rail-bound X lattice (posts + crossing diagonals) at the bay's edges.
+    const LATT_H = 3.6;                 // matches the portal post height
+    const LATT_BAYS = 12;
+    const lattBay = CARWASH.len / LATT_BAYS;
+    const diagLen = Math.hypot(lattBay, LATT_H - 0.18);
+    const diagAng = Math.atan2(LATT_H - 0.18, lattBay);
+    for (const s of [-1, 1]) {
+      const wz = s * WZ;                // wash-local z of the wall line
+      for (const ry of [0.09, LATT_H - 0.09]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(CARWASH.len, 0.18, 0.22), washMat);
+        rail.position.set(CARWASH.len / 2, ry, wz);
+        washGroup.add(rail);
+      }
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(CARWASH.len - 0.4, 0.1, 0.08), washGlow);
+      strip.position.set(CARWASH.len / 2, LATT_H - 0.18, wz);
+      washGroup.add(strip);
+      for (let i = 0; i <= LATT_BAYS; i++) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, LATT_H, 0.3), washMat);
+        post.position.set(i * lattBay, LATT_H / 2, wz);
+        washGroup.add(post);
+      }
+      for (let i = 0; i < LATT_BAYS; i++) {
+        for (const dir of [1, -1]) {
+          const dg = new THREE.Mesh(new THREE.BoxGeometry(diagLen, 0.1, 0.12), washMat);
+          dg.rotation.z = dir * diagAng;
+          dg.position.set((i + 0.5) * lattBay, LATT_H / 2, wz);
+          washGroup.add(dg);
+        }
+      }
+    }
+    // Solid fences down each side (barriers, never roof surfaces) so the car
+    // can't drive out through the lattice. `soapy` tells main.js NOT to use
+    // the normal knock + wall-bounce: inside the bay the car glides along the
+    // wall and eases back toward the lane centre instead of being yanked off.
+    // h = wall height keeps the little car blocked only at this driving level,
+    // not way up on the ceiling.
+    washColliders.push(
+      { x: CARWASH.cx, z: CARWASH.cz - WZ, halfW: CARWASH.len / 2, halfD: 0.3, h: LATT_H, noRoof: true, soapy: true },
+      { x: CARWASH.cx, z: CARWASH.cz + WZ, halfW: CARWASH.len / 2, halfD: 0.3, h: LATT_H, noRoof: true, soapy: true },
+    );
+    // ===== Brush station row (built EAST → WEST, entry at high x) =====
+    // The whole bay is one long brush marathon. Every rig is BIG, BOLD and
+    // COLORFUL, spins/sweeps actively, and sits well out of the car lane so
+    // driving through stays free. Local x descends as the westbound car
+    // travels: entry portal at x≈36, exit at x≈0.
+    const bristleM = (c) => new THREE.MeshStandardMaterial({
+      color: c, roughness: 0.92, metalness: 0.02, emissive: c, emissiveIntensity: 0.5,
+    });
+    const brushM = (c) => new THREE.MeshStandardMaterial({
+      color: c, roughness: 0.5, metalness: 0.22, emissive: c, emissiveIntensity: 0.35,
+    });
+    const pistonMat = new THREE.MeshStandardMaterial({ color: 0x3b4a52, roughness: 0.4, metalness: 0.75 });
+    // One spinning brush: dark spine + colored bristle shroud + neon end rings.
+    function makeBrushSpin(r, len, color, glow) {
+      const spin = new THREE.Group();
+      const spine = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.3, r * 0.3, len + 0.12, 12), washMat);
+      spin.add(spine);
+      const bris = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 20, 1, true), bristleM(color));
+      spin.add(bris);
+      const top = new THREE.Mesh(new THREE.TorusGeometry(r * 0.9, 0.09, 8, 20), makeGlowMat(glow));
+      top.rotation.x = Math.PI / 2;
+      top.position.y = len / 2;
+      spin.add(top);
+      const bot = top.clone();
+      bot.position.y = -len / 2;
+      spin.add(bot);
+      return spin;
+    }
+    // 1. VERTICAL SIDE BRUSHES — tall amber drums spinning about Y.
+    for (const s of [-1, 1]) {
+      const spin = makeBrushSpin(0.45, 2.5, NEON.amber, NEON.amber);
+      spin.position.set(18, 1.65, s * (WZ - 0.45));
+      washGroup.add(spin);
+      carWash.drums.push(spin);
+    }
+    // 2. FULL-HEIGHT SIDE WASHERS — cyan rollers from floor to roofline.
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        const spin = makeBrushSpin(0.42, 3.1, NEON.cyan, NEON.cyan);
+        spin.position.set(21 + i * 3.2, 1.75, s * (WZ - 0.4));
+        washGroup.add(spin);
+        carWash.washers.push(spin);
+      }
+    }
+    // 3. ROCKER PANEL BRUSHES — stubby lime cylinders low to the ground.
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        const spin = makeBrushSpin(0.28, 0.75, NEON.lime, NEON.lime);
+        spin.position.set(12.5 + i * 0.95, 0.45, s * (WZ - 0.5));
+        washGroup.add(spin);
+        carWash.rocks.push(spin);
+      }
+    }
+    // 4. PENA-WHEEL / TIRE SCRUBBERS — red horizontal rollers at wheel level,
+    //    spinning about their long axis to scrub rims + sidewalls. The brush
+    //    lives in an orientation holder so the inner spin stays clean (rotate
+    //    the inner group's Y = the roller's own symmetry axis).
+    for (const s of [-1, 1]) {
+      const holder = new THREE.Group();
+      holder.rotation.x = Math.PI / 2;       // lay the roller flat across the lane
+      holder.position.set(9.5, 0.35, s * (WZ - 0.7));
+      const spin = makeBrushSpin(0.3, 1.7, NEON.red, NEON.red);
+      holder.add(spin);
+      washGroup.add(holder);
+      carWash.tires.push(spin);
+    }
+    // 5. HIGH-PRESSURE WHEEL BLASTERS — spinning nozzle stands that flush the
+    //    wheel wells (glowing cone tips whipping a circle at the wheels).
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        const stand = new THREE.Group();
+        stand.position.set(7 + i * 2.1, 0, s * (WZ - 0.75));
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.16, 1.0, 10), pistonMat);
+        post.position.y = 0.5;
+        stand.add(post);
+        const head = new THREE.Group();
+        head.position.y = 1.05;
+        stand.add(head);
+        for (let k = 0; k < 3; k++) {
+          const a = (k / 3) * Math.PI * 2 + s * 0.3;
+          const arm = new THREE.Group();
+          arm.rotation.y = a;
+          const nozzle = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 10), pistonMat);
+          nozzle.rotation.z = -Math.PI / 2;   // aim the cone out sideways
+          nozzle.position.x = 0.15;
+          arm.add(nozzle);
+          const jet = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), makeGlowMat(NEON.cyan));
+          jet.position.x = 0.3;
+          arm.add(jet);
+          head.add(arm);
+        }
+        washGroup.add(stand);
+        carWash.blasters.push(head);
+      }
+    }
+    // 6. WRAP-AROUND BRUSHES (Z-wraps / gyro wraps) — hanging vertical
+    //    cylinders on jointed pneumatic swing arms that step INTO the car's
+    //    path (front bumper), swing out along the sides, then reach back
+    //    around to scrub the rear tailgate/trunk before releasing. The arm
+    //    sweeps about its shoulder pivot while the brush spins fast.
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 2; i++) {
+        const arm = new THREE.Group();
+        arm.position.set(33.5 - i * 2.4, 3.35, s * (WZ - 1.15));
+        arm.rotation.y = s === 1 ? Math.PI : 0;   // arm reaches toward the lane
+        arm.userData.base = arm.rotation.y;
+        // pneumatic shoulder + first joint
+        const seg1 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 1.3, 10), pistonMat);
+        seg1.rotation.x = Math.PI / 2;
+        seg1.position.set(0, 0, 0.55);
+        arm.add(seg1);
+        const joint = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), brushM(NEON.magenta));
+        joint.position.set(0, -0.1, 1.15);
+        arm.add(joint);
+        // fore-arm segment angled down toward the car roof
+        const seg2 = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 1.1, 10), pistonMat);
+        seg2.rotation.x = Math.PI / 2 + 0.55;
+        seg2.position.set(0, -0.45, 1.6);
+        arm.add(seg2);
+        // hanging rotating vertical brush (magenta) at the end
+        const spin = makeBrushSpin(0.5, 1.7, NEON.magenta, NEON.magenta);
+        spin.position.set(0, -1.1, 1.85);
+        arm.add(spin);
+        washGroup.add(arm);
+        carWash.wraps.push({ arm, spin, phase: i * 0.9 + (s > 0 ? 0.4 : 0), reach: 0.55 + i * 0.22 });
+      }
+    }
+    // 7. MITTER CURTAINS — overhead frames with soft cloth flaps agitated in
+    //    a circular pattern (simulating a hand-wash of the roof).
+    for (let c = 0; c < 2; c++) {
+      const frame = new THREE.Group();
+      frame.position.set(15.4 - c * 10.2, 3.25, 0);
+      const header = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.32, WZ * 2 - 0.6), washMat);
+      frame.add(header);
+      const stripMatC = new THREE.MeshStandardMaterial({
+        color: c === 0 ? 0x0f8f7a : 0x7a3fd8, roughness: 0.6, metalness: 0.05,
+        emissive: c === 0 ? 0x0a5e50 : 0x4a1f86, emissiveIntensity: 0.45,
+      });
+      for (let zi = 0; zi < 9; zi++) {
+        const zz = -(WZ - 0.5) + zi * ((WZ * 2 - 1.0) / 8);
+        for (const s of [-1, 1]) {
+          const flap = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.95, 0.2), stripMatC);
+          flap.position.set(s * 0.12, -0.62, zz);
+          flap.rotation.z = s * (Math.random() - 0.5) * 0.15;
+          frame.add(flap);
+        }
+      }
+      washGroup.add(frame);
+      carWash.mitterCurtains.push({ g: frame, phase: c * 1.9 });
+    }
+    // 8. TOP MITERS / CONTOUR WASHERS — a big horizontal roller suspended
+    //    overhead that adjusts its height dynamically and rolls over the
+    //    hood, windshield, roof and trunk. Like the tire scrubbers the brush
+    //    sits in an orientation holder; the inner spin turns about its own
+    //    symmetry axis.
+    const mitterSpin = makeBrushSpin(0.62, WZ * 2 - 0.6, NEON.magenta, NEON.magenta);
+    const mitterOrient = new THREE.Group();
+    mitterOrient.rotation.x = Math.PI / 2;    // axis across the lane (over the car)
+    mitterOrient.add(mitterSpin);
+    const mitterG = new THREE.Group();
+    mitterG.position.set(27.5, 2.4, 0);     // slowly bobs between ~2.0 and ~2.8
+    mitterG.add(mitterOrient);
+    // keep the roller only just off the car: hanger chains from the gantry
+    for (const s of [-1, 1]) {
+      const chain = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.3, 8), washMat);
+      chain.position.set(0, 0.95, s * (WZ - 0.4));
+      mitterG.add(chain);
+    }
+    washGroup.add(mitterG);
+    carWash.mitter = { g: mitterG, spin: mitterSpin, phase: 0 };
+    // 9. BIG overhead swish brushes — hang from the roof rail and sweep back
+    //    and forth ACROSS the roof while rolling their own bristles.
+    for (let i = 0; i < 3; i++) {
+      const g = new THREE.Group();
+      g.position.set(24.5 - i * 2.6, 3.3, 0);
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 1.0, 8), washMat);
+      rod.position.y = -0.5;
+      g.add(rod);
+      const head = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.35, 12), washMat);
+      head.position.y = -1.02;
+      g.add(head);
+      const spin = makeBrushSpin(0.62, 1.2, NEON.cyan, NEON.cyan);
+      spin.position.y = -1.35;
+      g.add(spin);
+      washGroup.add(g);
+      carWash.sweeps.push({ g, spin, phase: i * 0.7, amp: 0.6 + (i % 2 ? 0.18 : 0.08) });
+    }
+    // Hanging strip curtain just before the air-dryer fans at the exit.
+    const stripMat = new THREE.MeshStandardMaterial({
+      color: 0x35525e, roughness: 0.4, metalness: 0.3, transparent: true, opacity: 0.75,
+      emissive: 0x0e4a5c, emissiveIntensity: 0.5,
+    });
+    for (let k = 0; k < 3; k++) {
+      for (const s of [-1, 1]) {
+        const strip = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.1, 0.16), stripMat);
+        strip.position.set(2.0 + k * 1.0, 2.45, s * (WZ - 0.55));
+        washGroup.add(strip);
+      }
+    }
+    // Air-dryer fan boxes aimed back down the lane at the exit: each fan now
+    // lives inside a steel box duct with a wire grille across its face, and is
+    // a big 5-blade curved propeller spinning behind the mesh.  Fans spin via
+    // their spin-group's Z rotation (parent orient +Y rotation maps that to the
+    // world +X face normal).
+    const ductMat = new THREE.MeshStandardMaterial({ color: 0x2a3036, roughness: 0.5, metalness: 0.65 });
+    const grilleMat = new THREE.MeshStandardMaterial({
+      color: 0x1c2a30, roughness: 0.6, metalness: 0.6, emissive: 0x0d4a52, emissiveIntensity: 0.4,
+    });
+    const bladeMat = new THREE.MeshStandardMaterial({
+      color: 0xa7bcc9, roughness: 0.35, metalness: 0.8, emissive: 0x123e4a, emissiveIntensity: 0.3,
+    });
+    // One curved paddle silhouette, extruded so it has real thickness.
+    const bladeGeo = (() => {
+      const shape = new THREE.Shape();
+      shape.moveTo(-0.3, 0.08);
+      shape.lineTo(0.3, 0.18);
+      shape.quadraticCurveTo(0.36, 0.0, 0.28, -0.14);
+      shape.quadraticCurveTo(0.0, -0.22, -0.3, -0.08);
+      shape.closePath();
+      return new THREE.ExtrudeGeometry(shape, {
+        depth: 0.05, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2,
+      });
+    })();
+    for (const s of [-1, 1]) {
+      const duct = new THREE.Group();
+      const dw = 1.5, dh = 1.5, dd = 1.3;   // duct box dims (x depth, y, z)
+      duct.position.set(0.55, 2.0, s * (WZ - 1.1));   // right AT the exit
+      // box shell — five faces wrapped around the fan, open on the +X (lane) side
+      const wall = (w, h, d, x, y, z) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), ductMat);
+        m.position.set(x, y, z);
+        duct.add(m);
+      };
+      wall(dd, 0.1, dw, 0, dh / 2 - 0.05, 0);      // top
+      wall(dd, 0.1, dw, 0, -dh / 2 + 0.05, 0);     // bottom
+      wall(dd, dh, 0.1, 0, 0, -dw / 2 + 0.05);     // left side
+      wall(dd, dh, 0.1, 0, 0, dw / 2 - 0.05);      // right side
+      wall(0.1, dh, dw, -dd / 2 + 0.05, 0, 0);     // back plate
+      // glowing rim frame around the open face
+      const lath = (w, h, d, x, y, z) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), washGlow);
+        m.position.set(x, y, z);
+        duct.add(m);
+      };
+      lath(0.1, 0.1, dw, dd / 2, dh / 2 - 0.05, 0);
+      lath(0.1, 0.1, dw, dd / 2, -dh / 2 + 0.05, 0);
+      lath(0.1, dh, 0.1, dd / 2, 0, -dw / 2 + 0.05);
+      lath(0.1, dh, 0.1, dd / 2, 0, dw / 2 - 0.05);
+      // wire-mesh grille strung across the opening
+      for (let i = 0; i <= 8; i++) {
+        const t = -0.75 + i * (1.5 / 8);
+        const vb = new THREE.Mesh(new THREE.BoxGeometry(0.035, dh - 0.25, 0.035), grilleMat);
+        vb.position.set(dd / 2 - 0.03, 0, t);
+        duct.add(vb);
+        const hb = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, dw - 0.25), grilleMat);
+        hb.position.set(dd / 2 - 0.03, t, 0);
+        duct.add(hb);
+      }
+      // fan assembly — orient maps the local spin axis (+Z) to world +X (the
+      // lane / duct axis), so spin.rotation.z is what rotates the propeller.
+      const orient = new THREE.Group();
+      orient.rotation.y = Math.PI / 2;
+      const spin = new THREE.Group();
+      orient.add(spin);
+      duct.add(orient);
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.5, 18), ductMat);
+      hub.rotation.x = Math.PI / 2;
+      spin.add(hub);
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.16, 18), washGlow);
+      collar.rotation.x = Math.PI / 2;
+      spin.add(collar);
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        const B = new THREE.Group();
+        B.rotation.z = a;
+        const tilt = new THREE.Group();
+        tilt.position.x = 0.45;          // blade root at radius ~0.15, tip at ~0.75
+        tilt.rotation.x = 0.55;          // pitch the blade out of the disc plane
+        const blade = new THREE.Mesh(bladeGeo, bladeMat);
+        blade.castShadow = true;
+        tilt.add(blade);
+        B.add(tilt);
+        spin.add(B);
+      }
+      washGroup.add(duct);
+      carWash.fans.push(spin);
+    }
+  })();
+  parent.add(washGroup);
+  // Inflatable tube men flailing at the wash's ENTRY — two crazy gesticulating
+  // skimmers straddling the approach, welcoming cars into the bay. Purely
+  // decorative (no colliders); each has pivoting arms + a swaying body that
+  // the update loop sets to wild windmilling, and they're parked OUTSIDE the
+  // wash-detection box so they never count as "inside" the wash.
+  const tubeManMat = (c, glow) => new THREE.MeshStandardMaterial({
+    color: c, roughness: 0.35, metalness: 0.15, emissive: glow, emissiveIntensity: 0.45,
+  });
+  for (const s of [-1, 1]) {
+    const tube = new THREE.Group();
+    const pink = s > 0;
+    const mat = pink ? tubeManMat(0xff5ab2, 0x8a1048) : tubeManMat(0x2fe8ff, 0x0b6a8a);
+    const glow = makeGlowMat(pink ? NEON.magenta : NEON.cyan);
+    // Blower drum at the base (the inflatable's air column).
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.7, 12), mat);
+    drum.position.y = 0.35;
+    tube.add(drum);
+    // The long body tube, slightly tapered, with a couple of stripe rings.
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.27, 3.0, 14), mat);
+    body.position.y = 2.5;
+    tube.add(body);
+    for (const ry of [1.6, 2.4, 3.2]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.325, 0.05, 8, 14), glow);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = ry;
+      tube.add(ring);
+    }
+    // Pin-headed balloon top.
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 14, 12), mat);
+    head.position.y = 4.2;
+    tube.add(head);
+    // Shoulder pivots + long flailing arms (little fists at the ends).
+    const armGeo = new THREE.CylinderGeometry(0.09, 0.11, 1.7, 8);
+    const fistGeo = new THREE.SphereGeometry(0.16, 10, 8);
+    function makeTubeArm(sx) {
+      const a = new THREE.Group();
+      a.position.set(sx * 0.3, 3.9, 0);
+      const seg = new THREE.Mesh(armGeo, mat);
+      seg.position.y = -0.85;
+      a.add(seg);
+      const fist = new THREE.Mesh(fistGeo, mat);
+      fist.position.y = -1.7;
+      a.add(fist);
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.035, 8, 12), glow);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.y = -0.2;
+      a.add(cuff);
+      return a;
+    }
+    const armL = makeTubeArm(-1);
+    const armR = makeTubeArm(1);
+    tube.add(armL, armR);
+    tube.position.set(CARWASH.cx + CARWASH.len / 2 + 2, 0, -30 + s * (WZ + 1.6));   // flanking the ENTRY (east) portal x=39 — the first thing the oncoming car meets
+    tube.rotation.y = Math.PI / 2;                        // face the oncoming westbound car
+    parent.add(tube);
+    carWash.tubeMen.push({ g: tube, body, armL, armR, phase: s > 0 ? 0 : 2.1, time: Math.random() * 2 });
+  }
+  const washWaterTex = makeStarTexture();   // soft glow reused for droplets + sparkles
 
   // ---- Big staircase up to the second roof (the cavern ceiling) ----
   // A proper stepped staircase (no moving parts, no smooth ramp) standing
@@ -1350,9 +2113,10 @@ export function addUnderground(parent, opts = {}) {
   // north of the ceiling up to the ceiling's north edge (z=48, y=31), facing
   // the Glass City skyline. It's HALF the staircase's footprint length, so
   // it's twice as steep — the candy waterfall pours down a much more
-  // dramatic slope. Side walls just tall enough to keep the car from falling
-  // off run the full length of the ramp. The ramp also doubles as a candy
-  // waterfall: glowing gemstones spawn at the top, tumble down the slope in
+  // dramatic slope. (Its side rails were REMOVED 2026-09-21 — they carried an
+  // invisible-wall collider — but were restored 2026-09-22 as visible glowing
+  // guardrails along BOTH edges so you can no longer drive off the sides.) The ramp
+  // doubles as a candy waterfall: glowing gemstones spawn at the top, tumble down the slope in
   // a jumble, and vanish the moment they hit the cavern floor. They're
   // knockable — lighter than traffic cars — so driving up the ramp means
   // plowing through a torrent of bouncing candy (except the big heavy ones,
@@ -1376,9 +2140,8 @@ export function addUnderground(parent, opts = {}) {
     boost: 0,          // no launch off the top — drive up and roll onto the roof
   };
   const grandRampMat = new THREE.MeshStandardMaterial({ color: 0x453f52, roughness: 0.85 });
-  const grandColliders = [];
-  // The wedge + walls share one group so the tilted walls follow the slope
-  // exactly. Local frame: base→top along +X, up along +Y, across along +Z.
+  // The wedge (only the ramp surface; the guardrails are separate, below).
+  // Local frame: base→top along +X, up along +Y, across along +Z.
   {
     const rampGroup = new THREE.Group();
     rampGroup.rotation.y = Math.atan2(-GRAND.runZ, GRAND.runX);
@@ -1394,71 +2157,129 @@ export function addUnderground(parent, opts = {}) {
     wedge.castShadow = true;
     wedge.receiveShadow = true;
     rampGroup.add(wedge);
-    // Side walls: tilted boxes running the full length of the ramp, just tall
-    // enough to keep the car from falling off. Rotated by the slope angle so
-    // each wall's bottom follows the ramp surface and its top stays a fixed
-    // height above it.
-    const theta = Math.atan2(GRAND.height, GRAND.len);
-    const normal = new THREE.Vector3(-Math.sin(theta), Math.cos(theta), 0);
-    const WALL_H = 1.8;   // wall height above the ramp surface
-    const WALL_T = 0.6;   // wall thickness
-    const RAIL_H = 0.35;  // top-rail cap height
-    // The wall/rail run the FULL length of the ramp's sloped surface, not
-    // its horizontal footprint — so they must be as long as the hypotenuse
-    // and centred on the surface's midpoint (local x=0), otherwise they'd
-    // only cover the top of the ramp and stick out past its high edge.
-    const wallLen = Math.hypot(GRAND.len, GRAND.height);
-    // Guardrail look: a solid dark wall body, a light top rail running the
-    // full length, and vertical support posts on the outside — so the walls
-    // read as barriers that keep the car from falling off the waterfall.
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x3a3434, roughness: 1 });
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xb0a48c, roughness: 0.7, emissive: 0x6a5f4a, emissiveIntensity: 0.35 });
-    for (const side of [-1, 1]) {
-      // Solid wall body (tilted to follow the slope).
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(wallLen, WALL_H, WALL_T), wallMat);
-      wall.rotation.z = theta;
-      wall.position.set(
-        normal.x * (WALL_H / 2),
-        GRAND.height / 2 + normal.y * (WALL_H / 2),
-        side * (GRAND.width / 2 + WALL_T / 2)
-      );
-      wall.castShadow = true;
-      rampGroup.add(wall);
-      // Top rail: a light cap running the wall's full length.
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(wallLen, RAIL_H, WALL_T + 0.3), railMat);
-      rail.rotation.z = theta;
-      rail.position.set(
-        normal.x * (WALL_H + RAIL_H / 2),
-        GRAND.height / 2 + normal.y * (WALL_H + RAIL_H / 2),
-        side * (GRAND.width / 2 + WALL_T / 2)
-      );
-      rail.castShadow = true;
-      rampGroup.add(rail);
-      // Vertical support posts on the outside face, from the ramp surface up
-      // to the rail. The vertical gap between the surface and the rail is
-      // constant, so every post is the same height. px runs 0..len along the
-      // ramp's horizontal footprint, so the post's local x is px - len/2
-      // (base at -len/2, top at +len/2) to sit on the actual ramp surface.
-      const POST_COUNT = 6;
-      const postH = (WALL_H + RAIL_H / 2) * Math.cos(theta);
-      for (let i = 0; i <= POST_COUNT; i++) {
-        const px = (GRAND.len / POST_COUNT) * i;
-        const surfY = GRAND.height * (px / GRAND.len);
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.5, postH, 0.5), railMat);
-        post.position.set(px - GRAND.len / 2, surfY + postH / 2, side * (GRAND.width / 2 + WALL_T + 0.25));
-        post.castShadow = true;
-        rampGroup.add(post);
-      }
-      // Axis-aligned barrier collider along the wall's footprint. Marked
-      // `noRoof` so buildingTopAt never reports it as a surface (which would
-      // make the elevated check let the car drive straight through it).
-      grandColliders.push({
-        x: GRAND.x + side * (GRAND.width / 2 + WALL_T / 2), z: GRAND.z,
-        halfW: WALL_T / 2, halfD: GRAND.len / 2, h: WALL_H, noRoof: true,
-      });
-    }
     parent.add(rampGroup);
     ugRamps.push(GRAND);
+  }
+  // ---- Guardrails on the candy waterfall's sides (restored 2026-09-22) ----
+  // The grand ramp used to carry side rails with an invisible-wall collider so
+  // you couldn't drive off the edges; they were removed so you COULD. These
+  // bring back BOTH a visible rail AND the barrier. A dark-steel guardrail
+  // runs up each side of the waterfall, tilted to sit flush on the ramp's
+  // slope (45°-ish), topped with a glowing magenta cap and anchored by vertical
+  // posts. A chain of axis-aligned solid colliders along each rail keeps the
+  // car on the ramp while it climbs — each segment's `h` follows the ramp
+  // surface so the little car (which height-filters colliders) is blocked at
+  // every height, not just mid-slope. (The west-flank black techno fence at
+  // x=15 stays; THIS is the rail on the ramp's own edges, x=18 & x=30.)
+  const RAIL_H = 2.3;                 // rail height above the ramp surface
+  const RAIL_THICK = 0.3;             // rail body thickness across the edge
+  const GRAND_THETA = Math.atan2(GRAND.height, GRAND.len);
+  const railSteel = new THREE.MeshStandardMaterial({ color: 0x3a3440, metalness: 0.55, roughness: 0.45 });
+  const railMagenta = makeGlowMat(NEON.magenta);
+  const grandRailColliders = [];
+  // Length along the slope EXACTLY matching the ramp edge (no overhang, so the
+  // ends line up with the ramp's floor and roof lips, not dangle past them).
+  const railLen = GRAND.len / Math.cos(GRAND_THETA);
+  for (const edgeX of [GRAND.x - GRAND.width / 2, GRAND.x + GRAND.width / 2]) {
+    // Sloped rail body hugging the ramp surface along the edge. The box's long
+    // axis must lie ALONG the slope (high at the ceiling / z=48 end, low at
+    // the floor / z=82 end) — rotation.x = +THETA, which maps local +Z tip to
+    // (down + toward +Z) and the -Z tip up toward the ceiling. The center hangs
+    // on the surface's up-normal ((0, cos T, +sin T)) so the rail sits a true
+    // RAIL_H above the ramp all the way up instead of being canted the wrong
+    // way (high end sunk in the floor, low end poking through the roof).
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK, RAIL_H, railLen), railSteel);
+    rail.rotation.x = GRAND_THETA;
+    rail.position.set(
+      edgeX,
+      grandRampSurfaceY(GRAND.z) + (RAIL_H / 2) * Math.cos(GRAND_THETA),
+      GRAND.z
+    );
+    rail.castShadow = true;
+    parent.add(rail);
+    // Glowing magenta cap riding the rail's top edge (same tilt as the rail).
+    const capH = (RAIL_H / 2 + 0.02) * Math.cos(GRAND_THETA);
+    const capZ = (RAIL_H / 2 + 0.02) * Math.sin(GRAND_THETA);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK + 0.06, 0.08, railLen), railMagenta);
+    cap.rotation.x = GRAND_THETA;
+    cap.position.set(edgeX, rail.position.y + capH, rail.position.z + capZ);
+    parent.add(cap);
+    // Vertical posts standing on the surface, echoing the sloped rail.
+    for (let z = 50; z <= 80; z += 5) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, RAIL_H, 0.18), railSteel);
+      post.position.set(edgeX, grandRampSurfaceY(z) + RAIL_H / 2, z);
+      parent.add(post);
+    }
+    // Solid colliders: axis-aligned segments tracking the slope. Each segment's
+    // h = the ramp surface at its SOUTH (top) edge, so it always catches the
+    // little car riding that stretch (never floats below it).
+    const RAIL_SEGS = 10;
+    const segLen = GRAND.len / RAIL_SEGS;
+    for (let k = 0; k < RAIL_SEGS; k++) {
+      const zc = (GRAND.z - GRAND.len / 2) + (k + 0.5) * segLen;
+      grandRailColliders.push({
+        x: edgeX, z: zc,
+        halfW: 0.6, halfD: segLen / 2 + 0.2,
+        h: grandRampSurfaceY(zc - segLen / 2),
+      });
+    }
+  }
+  // ---- Black techno fence on the waterfall's west flank ----
+  // The invisible wall beside the ramp never went away, so here's a black
+  // techno fence standing right on it (reported world (15, 51)) — run into
+  // it and there's finally something to see. Black steel with a magenta
+  // glow rail and cyan LED slats between the posts; jutting wing fins at
+  // each end angle out past the ramp so it reads as a guard fin off the
+  // waterfall, not a stray prop. Purely visual (no collider).
+  const FZ = GRAND.z - GRAND.len / 2;                 // 48 — ramp's top end
+  const FLEN = GRAND.len;                             // 34 — spans the footprint
+  const FX = GRAND.x - GRAND.width / 2 - 3;           // 15 — the invisible wall's x
+  {
+    const FH = 2.4;        // fence height
+    const STEP = 5;        // post spacing
+    const blackTech = new THREE.MeshStandardMaterial({ color: 0x0a0a0e, roughness: 0.5, metalness: 0.45 });
+    const glowRail = makeGlowMat(NEON.magenta);
+    const ledMat = makeGlowMat(NEON.cyan);
+    const finMat = new THREE.MeshStandardMaterial({ color: 0x14141c, roughness: 0.6, metalness: 0.4 });
+    // Black top rail with a glowing magenta cap riding on top of it.
+    const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, FLEN), blackTech);
+    topRail.position.set(FX, FH, FZ + FLEN / 2);
+    parent.add(topRail);
+    const glowCap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, FLEN), glowRail);
+    glowCap.position.set(FX, FH + 0.09, FZ + FLEN / 2);
+    parent.add(glowCap);
+    // Black mid rail, about halfway up.
+    const midRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, FLEN), blackTech);
+    midRail.position.set(FX, FH * 0.55, FZ + FLEN / 2);
+    parent.add(midRail);
+    // Posts + cyan LED slats in the gaps between them.
+    let prevPost = null;
+    for (let z = FZ; z <= FZ + FLEN + 0.01; z += STEP) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, FH, 0.14), blackTech);
+      post.position.set(FX, FH / 2, z);
+      parent.add(post);
+      if (prevPost != null && z - prevPost > 0.5) {
+        const mid = (z + prevPost) / 2;
+        const span = z - prevPost - 0.4;
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.06, FH * 0.42, span), ledMat);
+        slat.position.set(FX, FH * 0.55, mid);
+        parent.add(slat);
+      }
+      prevPost = z;
+    }
+    // Jutting wing fins at each end, angling out away from the ramp so the
+    // fence visibly pokes off the side of the waterfall.
+    for (const end of [{ z: FZ, dir: 1 }, { z: FZ + FLEN, dir: -1 }]) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(3.4, FH * 0.55, 0.12), finMat);
+      const finY = FH * 0.35;
+      fin.position.set(FX - 1.6, finY, end.z + 0.4 * end.dir);
+      fin.rotation.z = 0.35 * end.dir;   // slight rake up/out
+      parent.add(fin);
+      const finCap = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.06, 0.18), glowRail);
+      finCap.position.set(fin.position.x, finY, fin.position.z);
+      finCap.rotation.z = 0.35 * end.dir;
+      parent.add(finCap);
+    }
   }
   // Ramp surface height at world z (the ramp is axis-aligned along Z).
   function grandRampSurfaceY(pz) {
@@ -1473,6 +2294,8 @@ export function addUnderground(parent, opts = {}) {
   const grandBaseLight = new THREE.PointLight(NEON.cyan, 1.2, 60, 2);
   grandBaseLight.position.set(GRAND.x, 6, GRAND.z + GRAND.len / 2 - 4);
   parent.add(grandBaseLight);
+
+  await ugPhase(0.52, 'the big staircase');
 
   // ---- Candy waterfall (glowing gemstones) ----
   // A pool of glowing gemstones of all shapes and sizes. They spawn at the
@@ -1583,71 +2406,21 @@ export function addUnderground(parent, opts = {}) {
     b.mesh.visible = true;
   }
 
-  // ---- Padded vertical pole (tasks #31–#34) ----
-  // Tall cushioned column standing on the open floor as a standalone landmark
-  // (the launch ramp that used to feed it was removed). A solid small collider
-  // makes ground bonks physical, while a larger pass-through TRIGGER volume
-  // catches flights: slam it above POLE_BIG_SPEED and you get the reward
-  // sequence (light burst here + boom/bounce via onPoleHit); below that it
-  // just soft-bounces you off (main.js damps the knock).
-  const POLE = { x: 92, z: -66, r: 1.6, h: 16, trigR: 5.5, bigSpeed: 8 };
-  const poleBodyMat = new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.9 });
-  const poleBody = new THREE.Mesh(
-    new THREE.CylinderGeometry(POLE.r, POLE.r + 0.35, POLE.h, 14),
-    poleBodyMat
-  );
-  poleBody.position.set(POLE.x, POLE.h / 2, POLE.z);
-  poleBody.castShadow = true;
-  parent.add(poleBody);
-  // Cushion rings up the column — reads as padding, glows in the dark.
-  [3.5, 7, 10.5, 14].forEach((ry, i) => {
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(POLE.r + 0.18, 0.24, 10, 26),
-      makeGlowMat(i % 2 ? NEON.magenta : NEON.cyan)
-    );
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(POLE.x, ry, POLE.z);
-    parent.add(ring);
-  });
-  // Solid core collider (h < visual height so big flights clear the tip;
-  // buildingTopAt's min() cap stops it snapping cars UP from below anyway).
-  stairColliders.push({ x: POLE.x, z: POLE.z, halfW: POLE.r, halfD: POLE.r, h: 14 });
-  const poleState = { hits: 0, last: null };
-  let poleCd = 0;
+  // ---- Padded vertical pole — REMOVED (2026-09-21): the coarse course
+  // obstacles are gone; the padded pole, its light-burst fxBursts and its
+  // solid collider were deleted with the rest of the course. ----
 
-  // Task #33: explosive light show — a ring of colored PointLights flashing
-  // out plus two expanding shockwave rings, all fading over ~1 second.
-  const fxBursts = [];
-  function spawnPoleBurst(x, y, z) {
-    const cols = [NEON.cyan, NEON.magenta, NEON.amber, NEON.lime, NEON.cyan, NEON.magenta];
-    const lights = [];
-    for (let i = 0; i < 6; i++) {
-      const L = new THREE.PointLight(cols[i], 5.5, 30, 2);
-      const a = (i / 6) * Math.PI * 2;
-      L.position.set(x + Math.cos(a) * 2.2, y + 1.2, z + Math.sin(a) * 2.2);
-      parent.add(L);
-      lights.push({ light: L, delay: i * 0.06 });
-    }
-    const mkRing = (rx, rz) => {
-      const m = new THREE.Mesh(
-        new THREE.RingGeometry(0.85, 1.15, 42),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false })
-      );
-      m.rotation.set(rx, 0, rz);
-      m.position.set(x, y + 0.3, z);
-      parent.add(m);
-      return m;
-    };
-    fxBursts.push({ age: 0, life: 1.0, lights, rings: [mkRing(-Math.PI / 2, 0), mkRing(0, Math.PI / 2)] });
-  }
-
-  // ---- Giant rotating disco ball (idea #14) ----
-  // A big faceted mirror sphere hung from the ceiling just off the padded pole.
-  // It spins and carries a ring of colored point lights, throwing moving neon
-  // pools across the cavern floor and walls. Bonus: fly into it and the
-  // pendulum swings, then settles with a damped wobble.
-  const DISCO = { x: 124, z: -40, topY: CEIL_Y, len: 12, r: 4, spin: 1.4, hitR: 6.5 };
-  const disco = { ax: 0, vx: 0, az: 0, vz: 0, spin: 0, hits: 0, cd: 0 };
+  // ---- Giant rotating disco ball you can hit ----
+  // A big faceted mirror sphere hangs from the cavern ceiling OVER THE MIDDLE
+  // of the first long straight — the eastbound z=37 lane (151 units long, from
+  // the start bend to the x=134 column). A kicker ramp on the lane ahead
+  // launches the car into it and you keep flying along the SAME straight, so
+  // you land back on the path. It spins and carries a ring of colored point
+  // lights that throw moving neon pools across the cavern floor: fly into it
+  // and the ball swings on its cable like a pendulum, then settles with a
+  // damped wobble (and spins a touch faster with every hit).
+  const DISCO = { x: 58, z: 37, topY: CEIL_Y, len: 21, r: 4, spin: 1.2, hitR: 6.5 };   // ball centre at y = topY - len = 9
+  const disco = { ax: 0, vx: 0, az: 0, vz: 0, hits: 0, cd: 0 };
   const discoPivot = new THREE.Group();
   discoPivot.position.set(DISCO.x, DISCO.topY, DISCO.z);
   parent.add(discoPivot);
@@ -1697,25 +2470,40 @@ export function addUnderground(parent, opts = {}) {
   }
   // Ring of colored lights orbiting with the ball — the moving neon dots.
   [NEON.magenta, NEON.cyan, NEON.amber, NEON.lime].forEach((c, i) => {
-    const L = new THREE.PointLight(c, 6.5, 46, 2);
+    const L = new THREE.PointLight(c, 4.5, 40, 2);
     const a = (i / 4) * Math.PI * 2;
     L.position.set(Math.cos(a) * (DISCO.r + 0.6), 0, Math.sin(a) * (DISCO.r + 0.6));
     discoSpin.add(L);
   });
 
-  // ---- Rotating platter (the spinning turntable) ----
-  // A big bright neon turntable standing on the OPEN CAVERN FLOOR west of the
-  // checkerboard ceiling (no roof overhead). While the car sits (or drives)
-  // on its disk the level rotates its XZ position around the hub every frame
-  // — the car is genuinely carried in a circle, fighting the spin with its
-  // own steering. main.js also rotates the car's HEADING with the disk, so
-  // it reads like the car is actually sitting on the turntable, not skating
-  // on it. An unsteered car slowly creeps outward toward the rim; the moment
-  // it crosses the edge the grip ends and the car is thrown off along the
-  // tangent (onPlatterEject), so the ride always finishes with a real fling
-  // instead of just stopping dead.
-  const PLATTER = { cx: 124, cz: -40, r: 18, h: 0.32, spin: 2.0, slip: 1.8 };
+  // ---- Ramps: a disco kicker and factory machine ramps ----
+  // The disk kicker on the eastbound z=37 straight sits right under the disco
+  // ball (launching you into it, landing back on the same straight), and the
+  // factory machine ramps on the westbound z=17 straight turn the machine into
+  // a BRIDGE: the east ramp climbs UP onto the machine's drivable roof (top
+  // 6.4, matching the roof's surface) and the west ramp drops you back off
+  // onto the lane, so you drive clean OVER the factory instead of through it
+  // (the open belly below just lets a floor-level car pass through underneath).
+  addUgRamp({ x: 36, z: 37, len: 9, height: 4, width: 8, runX: 1, runZ: 0, boost: 1.9 });     // disco kicker (eastbound z=37 straight)
+  addUgRamp({ x: 99, z: 17, len: 10, height: MACHINE.legs + MACHINE.bodyH, width: 10, runX: -1, runZ: 0, boost: 0.6 }); // climb onto the factory machine (westbound z=17 straight)
+  addUgRamp({ x: 41, z: 17, len: 13, height: MACHINE.legs + MACHINE.bodyH, width: 10, runX: 1, runZ: 0, boost: 0 }); // drive OFF the machine's west edge (top x=47.5) back onto the lane
+
+  // ---- Giant rotating platter (the spinning turntable) ----
+  // Restored 2026-09-22 — a big bright neon turntable standing on the cavern
+  // floor in the open space just north of the Holy Mountain, well OFF the
+  // course. It SPINS (the wedge pattern + rim ring + hub sell the rotation)
+  // and the collider carries `spin` so main.js adds the disk's rotation to a
+  // car riding it — the car actually turns with the turntable and drives off
+  // in the new heading instead of cutting a straight line across it. A soft
+  // collider seats the car on the disk surface (0.32-high pad, no clip).
+  const PLATTER = { cx: -85, cz: 62, r: 16, h: 0.32, spin: 2.0 };   // beside the mountain, off-course
   const platterSpin = { t: 0, disk: null };
+  const platterColliders = [{
+    x: PLATTER.cx, z: PLATTER.cz,
+    halfW: PLATTER.r, halfD: PLATTER.r,
+    h: PLATTER.h, soft: true,
+    spin: PLATTER.spin,
+  }];
   {
     const S = 512;
     const canvas = document.createElement('canvas');
@@ -1768,7 +2556,8 @@ export function addUnderground(parent, opts = {}) {
     platGlow.position.set(PLATTER.cx, 1.4, PLATTER.cz);
     parent.add(platGlow);
   }
-  let platterGripped = false;
+
+  await ugPhase(0.58, 'the trampoline pads');
 
   // ---- Trampoline launch pads (idea #13) ----
   // Glowing bounce patches set into the cavern floor. Drive over one on the
@@ -1778,8 +2567,8 @@ export function addUnderground(parent, opts = {}) {
   // the staircase and the grand ramp. A translucent light column marks the
   // launch line all the way up to the roof.
   const TRAMPOLINES = [
-    { x: 104, z: 8, r: 3.4 },
-    { x: 18, z: -86, r: 3.4 },
+    { x: 128, z: -90, r: 3.4 },  // far SE corner, off every lane (clear of the x=134 column and the z=-30 run) — under the roof
+    { x: 18, z: 46, r: 3.4 },    // far NW, north of the z=37 lane and beneath the ceiling's north edge — off-course
   ];
   const trampolines = [];
   const trampPadMat = new THREE.MeshStandardMaterial({ color: 0x203a2f, roughness: 0.6, metalness: 0.2 });
@@ -1825,6 +2614,8 @@ export function addUnderground(parent, opts = {}) {
     }
     return false;
   }
+
+  await ugPhase(0.66, 'the candy waterfall');
 
   // ---- Art Deco German Expressionist statues (colorful-tile guardians) ----
   // Abstract geometric sculptures standing on the checkerboard ceiling tiles
@@ -2312,20 +3103,31 @@ export function addUnderground(parent, opts = {}) {
     return createArtDecoStatue(ringColor);
   }
 
-  // Tip a statue over in the given compass direction and drop its solid
-  // collider (shared by the tile-crumble path and the new car-tag path).
+  // Tip a statue over in the given compass direction and drop its collider
+  // (shared by the tile-crumble path and the new car-tag path). Since 2026-09-22
+  // statues have NO collider while standing: the ceiling is a soft surface the
+  // raised car rides over (never blocked by these), but the floor car is
+  // blocked height-blind — so colliders up on the ceiling made the floor course
+  // hit invisible walls. They stay collider-free.
   function startStatueFall(s, angle) {
     s.state = 'falling';
     s.fallT = 0;
     s.tipAngle = angle;
     s.tipAxis.set(Math.sin(angle), 0, -Math.cos(angle));
-    const ci = colliders.indexOf(s.collider);
-    if (ci >= 0) colliders.splice(ci, 1);
+    if (s.collider) {
+      const ci = colliders.indexOf(s.collider);
+      if (ci >= 0) colliders.splice(ci, 1);
+    }
   }
 
   // Place a statue on a specific checkerboard tile (by grid index) so the
   // level can watch exactly which tile supports it. Returns the live statue
-  // record (state machine + collider) for update().
+  // record (state machine) for update(). The statue is PURELY decorative and
+  // carries NO collider: the floor-driving collision check is height-blind, so
+  // a collider standing 31 units up on the ceiling tile would wall off the
+  // floor course below it (invisible obstacles) — the car never needs to bump
+  // a standing statue, it only topples them by driving across the roof over
+  // them (see the tag block in update()).
   function placeStatue(tileIx, tileIz, ringColor, type = 'artdeco') {
     const idx = tileIz * tilesX + tileIx;
     const x = ceilMinX + tileIx * TILE_SZ + TILE_SZ / 2;
@@ -2334,15 +3136,10 @@ export function addUnderground(parent, opts = {}) {
     const half = STATUE_HALF[type] || 1.5;
     group.position.set(x, TILE_TOP, z);
     parent.add(group);
-    // Solid collider so the car bumps into the standing statue; removed the
-    // moment the statue starts falling. `noRoof` keeps buildingTopAt from
-    // reporting the statue's top as a drivable surface (the car should bump
-    // into it, not stand on its head).
-    const collider = { x, z, halfW: half, halfD: half, h: TILE_TOP + 9, noRoof: true };
-    statueColliders.push(collider);
     const tipAngle = Math.random() * Math.PI * 2;   // random topple direction
     const statue = {
-      group, ringGroup, idx, x, z, collider, type, half,
+      group, ringGroup, idx, x, z, type, half,
+      collider: null,   // decorative — never blocks the floor course
       state: 'standing',   // 'standing' | 'falling' | 'landed'
       fallT: 0,
       tipAngle,
@@ -2354,100 +3151,166 @@ export function addUnderground(parent, opts = {}) {
     return statue;
   }
 
-  // Paint a readable word banner on a canvas (no image assets): a dark cloth
-  // with a neon checkerboard border and big bold text. Used for the START and
-  // FINISH gates.
-  function makeBannerTexture(text, accent) {
-    const W = 1024, H = 256;
+  await ugPhase(0.74, 'the start and finish gates');
+
+  // Classic racing check: a full black-and-white checkerboard cloth, no text
+  // or lettering. Drawn on a canvas (no image assets) with near-square cells
+  // to match the START banner's 13.2 × 2.8 world-size (14 × 3 grid).
+  function makeCheckeredTexture() {
+    const W = 1024, H = 384;
     const canvas = document.createElement('canvas');
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext('2d');
-    const c1 = new THREE.Color(accent);
-    ctx.fillStyle = '#14101c';
-    ctx.fillRect(0, 0, W, H);
-    // Checkerboard border: one cell thick around the whole cloth.
-    const rows = 4, cols = 16, cellW = W / cols, cellH = H / rows;
+    const rows = 3, cols = 14, cellW = W / cols, cellH = H / rows;
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (r >= 1 && r < rows - 1 && c >= 1 && c < cols - 1) continue;
-        ctx.fillStyle = (r + c) % 2 === 0
-          ? `rgb(${(c1.r * 255) | 0},${(c1.g * 255) | 0},${(c1.b * 255) | 0})`
-          : 'rgb(238,238,238)';
+        ctx.fillStyle = (r + c) % 2 === 0 ? '#f4f1ee' : '#141414';
         ctx.fillRect(c * cellW, r * cellH, cellW, cellH);
       }
     }
-    // Dim inner panel so the text pops.
-    ctx.fillStyle = 'rgba(10,8,16,0.6)';
-    ctx.fillRect(cellW, cellH, W - cellW * 2, H - cellH * 2);
-    ctx.font = 'bold 96px Arial, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = `rgb(${(c1.r * 255) | 0},${(c1.g * 255) | 0},${(c1.b * 255) | 0})`;
-    ctx.shadowBlur = 30;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, W / 2, H / 2 + 4);
+    // Thin hem so the cloth reads as fabric, not a raw sticker.
+    ctx.strokeStyle = 'rgba(18,18,18,0.85)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(1.5, 1.5, W - 3, H - 3);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
     return tex;
   }
 
-  // A waving route flag: slim dark pole with a small glowing triangular
-  // pennant at the top. The pennant's long axis points +Z by default; rotate
-  // the returned group's Y to aim it along the road. Each pennant is enrolled
-  // in `routePennantWaves` so update() can flutter it.
-  const routePennantWaves = [];   // pennants to wiggle every frame (course flags)
-  const flagPoleMat = new THREE.MeshStandardMaterial({ color: 0x232030, roughness: 0.7, metalness: 0.5 });
-  function makeRouteFlag(pennantColor, poleH = 4.4, pennantLen = 2.2) {
-    const group = new THREE.Group();
-    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.16, poleH, 0.16), flagPoleMat);
-    pole.position.y = poleH / 2;
-    pole.castShadow = true;
-    group.add(pole);
-    const pennant = new THREE.Mesh(new THREE.ConeGeometry(0.8, pennantLen, 3), makeGlowMat(pennantColor));
-    pennant.rotation.x = -Math.PI / 2;   // cone axis lands on +Z — points "forward"
-    pennant.rotation.y = 0;              // wiggle pivot (animated per frame)
-    pennant.position.set(0, poleH + pennantLen * 0.32, 0);
-    group.add(pennant);
-    const rec = { pennant, phase: Math.random() * Math.PI * 2 };
-    routePennantWaves.push(rec);
-    return { group, pennant };
+  // Bright red satin ribbon: baked sheen streaks running along the length,
+  // faint vertical folds and a light-catching top edge, so the fabric and its
+  // subtle reflections read even at this low-poly scale.
+  function makeSatinTexture() {
+    const W = 1024, H = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#c8102e';
+    ctx.fillRect(0, 0, W, H);
+    // Wide horizontal sheen bands along the ribbon's length.
+    for (const f of [0.12, 0.38, 0.62, 0.86]) {
+      const x = f * W;
+      const g = ctx.createLinearGradient(x - 110, 0, x + 130, 0);
+      g.addColorStop(0, 'rgba(255,212,204,0)');
+      g.addColorStop(0.5, 'rgba(255,216,208,0.5)');
+      g.addColorStop(1, 'rgba(255,212,204,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 110, 0, 240, H);
+    }
+    // Subtle vertical satin folds: darker creases between lighter ridgelines.
+    for (let i = 0; i <= 24; i++) {
+      const x = (i / 24) * W;
+      ctx.fillStyle = i % 2 === 0 ? 'rgba(120,6,18,0.12)' : 'rgba(255,228,220,0.06)';
+      ctx.fillRect(x, 0, Math.ceil(W / 24), H);
+    }
+    // Soft shadowing so the strip reads as rounded satin, brightest on top.
+    const gv = ctx.createLinearGradient(0, 0, 0, H);
+    gv.addColorStop(0, 'rgba(255,230,220,0.4)');
+    gv.addColorStop(0.35, 'rgba(255,255,255,0)');
+    gv.addColorStop(0.85, 'rgba(90,4,12,0.35)');
+    gv.addColorStop(1, 'rgba(55,2,8,0.55)');
+    ctx.fillStyle = gv;
+    ctx.fillRect(0, 0, W, H);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    return tex;
   }
 
-  // A banner gate (START / FINISH): two tall poles with a hanging word banner
-  // between them and a waving pennant atop each pole. Cosmetic — the car
-  // passes right through (no colliders).
-  const bannerMats = new Map();
-  const bannerMatFor = (tex) => {
-    let m = bannerMats.get(tex);
-    if (!m) {
-      m = new THREE.MeshStandardMaterial({ map: tex, side: THREE.DoubleSide, roughness: 0.7, emissive: 0xffffff, emissiveIntensity: 0.55 });
-      bannerMats.set(tex, m);
-    }
-    return m;
-  };
-  const POLE_H = 5.6;
-  function makeBannerGate(xA, zA, xB, zB, text, accent, baseY = TILE_TOP) {
+  // ---- START / FINISH gates (2026-09-20) ----
+  // Two sturdy metal support posts with a signature banner between them:
+  //   START  — the classic black-and-white checkered cloth, hung above head
+  //            height off a bridging crossbar so vehicles roll clean under.
+  //   FINISH — a bright red satin ribbon stretched taut at chest height, the
+  //            finish marker you drive through and break.
+  // Both are purely cosmetic — the car passes right through (no colliders).
+  const gatePoleMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.42, metalness: 0.75 });
+  const gateBaseMat = new THREE.MeshStandardMaterial({ color: 0x2a2626, roughness: 1 });
+
+  // One gate post: a tapered metal cylinder, a foot collar where it anchors
+  // into the ground and a rounded cap on top.
+  function makeGatePost(px, pz, h, baseY) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.21, h, 10), gatePoleMat);
+    post.position.set(px, baseY + h / 2, pz);
+    post.castShadow = true;
+    const foot = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.3, 0.22, 10), gateBaseMat);
+    foot.position.set(px, baseY + 0.11, pz);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.15, 0.16, 10), gatePoleMat);
+    cap.position.set(px, baseY + h + 0.08, pz);
+    return [post, foot, cap];
+  }
+
+  // START gate: two posts bridged by a top crossbar, flying the checkered
+  // banner. The cloth's bottom edge sits well above bumper height, so a car
+  // drives underneath without touching. `scale` raises the whole arch (posts
+  // and crossbar) — the cloth itself keeps its fixed height, it just hangs
+  // higher — in case a taller start gate is ever wanted.
+  const START_POLE_H = 6.4;
+  function makeStartGate(xA, zA, xB, zB, baseY = 0, face = Math.PI, scale = 1) {
     const group = new THREE.Group();
+    const midX = (xA + xB) / 2, midZ = (zA + zB) / 2;
+    const alongX = zA === zB;
     for (const [px, pz] of [[xA, zA], [xB, zB]]) {
-      const pole = new THREE.Mesh(new THREE.BoxGeometry(0.24, POLE_H, 0.24), pillarMat); 
-      pole.position.set(px, baseY + POLE_H / 2, pz);
-      pole.castShadow = true;
-      group.add(pole);
-      const top = makeRouteFlag(accent, 0.9, 1.3);
-      top.group.position.set(px, baseY + POLE_H, pz);
-      top.group.rotation.y = text === 'START' ? Math.PI : Math.PI / 2;
-      group.add(top.group);
+      group.add(...makeGatePost(px, pz, START_POLE_H * scale, baseY));
     }
-    const tex = makeBannerTexture(text, accent);
-    const mat = bannerMatFor(tex);
-    const banner = new THREE.Mesh(new THREE.BoxGeometry(Math.abs(xB - xA) + 1.2, 2.4, 0.16), mat);
-    banner.position.set((xA + xB) / 2, baseY + 3.6, (zA + zB) / 2);
+    // Bridging crossbar above the cloth.
+    const bar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.11, Math.abs(xB - xA) + Math.abs(zB - zA) + 0.6, 10),
+      gatePoleMat
+    );
+    if (alongX) bar.rotation.z = Math.PI / 2;
+    else bar.rotation.x = Math.PI / 2;
+    bar.position.set(midX, baseY + 5.6 * scale, midZ);
+    bar.castShadow = true;
+    group.add(bar);
+    // The checkered cloth hanging from the crossbar.
+    const checkerMat = new THREE.MeshStandardMaterial({
+      map: makeCheckeredTexture(),
+      side: THREE.DoubleSide,
+      roughness: 0.85,
+    });
+    const width = Math.abs(xB - xA) + Math.abs(zB - zA) + 1.2;
+    const banner = new THREE.Mesh(new THREE.BoxGeometry(width, 2.8, 0.16), checkerMat);
+    banner.rotation.y = alongX ? 0 : Math.PI / 2;
+    banner.position.set(midX, baseY + 3.9 * scale, midZ);
     banner.castShadow = true;
     group.add(banner);
-    return { group, mat };
+    return { group };
   }
+
+  // FINISH gate: two shorter posts holding a thick red satin ribbon pulled
+  // taut between them at chest height. The material carries a faint red
+  // emissive so a crossing can blaze it via `mat.emissiveIntensity`.
+  const FINISH_POLE_H = 2.6;
+  function makeFinishGate(xA, zA, xB, zB, baseY = 0) {
+    const group = new THREE.Group();
+    const midX = (xA + xB) / 2, midZ = (zA + zB) / 2;
+    const alongX = zA === zB;
+    for (const [px, pz] of [[xA, zA], [xB, zB]]) {
+      group.add(...makeGatePost(px, pz, FINISH_POLE_H, baseY));
+    }
+    const satinMat = new THREE.MeshStandardMaterial({
+      map: makeSatinTexture(),
+      side: THREE.DoubleSide,
+      roughness: 0.32,
+      metalness: 0.05,
+      emissive: 0xff2233,
+      emissiveIntensity: 0.35,
+    });
+    const ribbon = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.abs(xB - xA) + Math.abs(zB - zA) + 0.6, 0.55, 0.12),
+      satinMat
+    );
+    ribbon.rotation.y = alongX ? 0 : Math.PI / 2;
+    ribbon.position.set(midX, baseY + 1.25, midZ);
+    ribbon.castShadow = true;
+    group.add(ribbon);
+    return { group, mat: satinMat, ribbon };
+  }
+
   // A flat glowing "painted line" lying on the tiles — the gate stripe you
   // drive through. Never a collider; purely the dashed road marking.
   function addTileBar(x, z, len, orient, color, baseY = TILE_TOP) {
@@ -2474,10 +3337,17 @@ export function addUnderground(parent, opts = {}) {
   // broken columns greet you right there as the first statues you see, while
   // the giant hand and the Vorticist trees keep to the center and the back of
   // the roof.
-  const COURSE_START = { x: 24, z: 40 };       // START banner centre
-  const COURSE_FINISH_X = 134;                 // crossing this plane (heading +X) finishes
-  const COURSE_FINISH_Z = 10;                  // finish gate centre z
-  const COURSE_FINISH_HALF = 5.5;              // z half-span of the finish gate
+  // Course marker positions use MINIMAP coordinates (mapX = 90 - worldX,
+  // mapZ = 123 - worldZ — see main.js drawMinimap) so they match what the
+  // on-screen axis numbers read. Converted to world here:
+  //   START  map (107, 57) -> world (-17, 66)
+  //   FINISH map (87, 153) -> world (3, -30)
+  const COURSE_START = { x: -17, z: 66 };        // START banner centre (map 107, 57) — big checkered arch
+  const COURSE_FINISH_X = -5.6;                  // finish gate centre x (map ~95.6) — 2 car lengths (2×4.3) west of the carwash exit portal x=3, crossed WESTBOUND
+  const COURSE_FINISH_Z = -30;                   // finish gate centre z (map 153) — ribbon spans the Z band around it
+  const COURSE_FINISH_HALF = 10;                 // z half-span of the finish ribbon (doubled so you can't miss it)
+  const COURSE_FINISH_DIR = '-x';                // ribbon is crossed WESTBOUND (-X), the Holy Mountain framed dead ahead
+  await ugPhase(0.78, 'the bronze and stone statues');
   placeStatue(0, 35, NEON.cyan, 'column');        // (14, 46)   first column, west of the waterfall mouth
   placeStatue(9, 35, NEON.magenta, 'column');     // (50, 46)   second column, east of it
   placeStatue(13, 32, NEON.amber, 'artdeco');     // (66, 34)   north obelisk
@@ -2491,60 +3361,205 @@ export function addUnderground(parent, opts = {}) {
   placeStatue(18, 2, NEON.lime, 'cubist');        // (86, -86)  cubist figure (back)
   placeStatue(29, 24, NEON.magenta, 'artdeco');   // (130, 2)   south-east obelisk
 
-  // START gate on the ground floor south of the grand ramp: banner + poles.
-  const startGate = makeBannerGate(18, 40, 30, 40, 'START', NEON.lime, 0);
+// START banner at map (107, 57) = world (-17, 66): a big glowing checkered
+  // arch at NORMAL height (posts as they were originally — the earlier 2× lift
+  // was too high) so the car drives clean under it. The arch now spans EAST-
+  // WEST at z=66 (rotated 90° from its old N-S line at x=-17, which sat
+  // PARALLEL to the course's straight-down leg). Now the arch sits ACROSS the
+  // southbound course, so as you come off the spiral tunnel (mouth ~(-61, 83),
+  // car exits heading east) and swing left into the course you drive straight
+  // INTO and under the checkered arch heading south.
+  const startGate = makeStartGate(-26, 66, -8, 66, 0, Math.PI / 2);
   parent.add(startGate.group);
-  // Painted start line straight across the ramp mouth.
-  addTileBar(24, 41.6, 10.4, 'x', NEON.lime, 0);
+  // (The painted start line that used to sit right AT the spiral-tunnel exit
+  // — crossed the moment the tube spits you out — was removed 2026-09-21.)
 
-  // FINISH gate on the ground floor in the east wing: banner + poles spanning
-  // the corridor.
-  const finishGate = makeBannerGate(134, 6, 134, 14, 'FINISH', NEON.amber, 0);
+  // FINISH gate at map (87, 153) = world (3, -30), on the open south tundra.
+  // Crossing it WESTBOUND (-X): the ribbon plane sits at x=3 and spans a Z
+  // band, and the crossing heads straight at the Holy Mountain (-100, 8) —
+  // the neon staircase is now behind your left shoulder instead of dead
+  // ahead. Driving through bursts the ribbon apart into tumbling satin
+  // shards (burstRibbon), which reassemble on the next run.
+const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   parent.add(finishGate.group);
-  addTileBar(132.6, 10, 8.2, 'z', NEON.amber, 0);
+  addTileBar(-4.2, -30, 20.2, 'z', NEON.amber, 0);
 
-  // ---- Serpentine course guides ----
-  // FOLLOW THE DASHES: a glowing painted centreline runs along each straight
-  // of the course; route flags stand at every bend and every ~13 units along
-  // the road, pennants aimed along the travel direction and coloured by lane
-  // so the whole snake reads instantly from the start line to the finish gate.
-  const COURSE_COLORS = [NEON.lime, NEON.cyan, NEON.amber, NEON.magenta];
-  for (let i = 0; i < COURSE.length - 1; i++) {
-    const a = COURSE[i], b = COURSE[i + 1];
-    const dx = b.x - a.x, dz = b.z - a.z;
-    const segLen = Math.hypot(dx, dz);
-    const ux = dx / segLen, uz = dz / segLen;
-    const heading = Math.atan2(dx, dz);            // pennant along the road
-    const dashLen = Math.abs(dx) >= Math.abs(dz) ? 'x' : 'z';
-    const color = COURSE_COLORS[i % COURSE_COLORS.length];
-    let side = i % 2 === 0 ? 1 : -1;
-    for (let d = 5; d < segLen - 3; d += 6) {
-      addTileBar(a.x + ux * d, a.z + uz * d, 2.6, dashLen, color, 0);
-    }
-    for (let d = 8; d < segLen - 4; d += 13) {
-      const cx = a.x + ux * d, cz = a.z + uz * d;
-      const flag = makeRouteFlag(color);
-      flag.group.position.set(cx + uz * 2.6 * side, 0, cz - ux * 2.6 * side);
-      flag.group.rotation.y = heading;
-      parent.add(flag.group);
-      side *= -1;
-    }
+  // The bubble wrap strip zone (z=-30 westbound straight) — the guide dots are
+  // skipped over it below, just like they're skipped over the conveyor belt.
+  const BUBBLE_ZONE = { minX: 46, maxX: 80, minZ: -33, maxZ: -27 };
+
+  // ---- Serpentine dotted guide line (the bold green racing path) ----
+  // A bold dotted LIME line painted flat on the cavern floor — the route a
+  // lap follows. It starts right AT the START banner, runs STRAIGHT south
+  // down the waterfall's open west flank (never near its front), then turns
+  // LEFT — map-left = world EAST — and runs BEHIND the candy waterfall,
+  // passing right through world (20, 37) = minimap (70, 86). The waterfall's
+  // FRONT is its north foot (where you drive up the ramp); the track stays
+  // under the ceiling on the falls' SOUTH side, so the "green spheres" course
+  // reads as a separate option from "run the candy waterfall". From behind
+  // the falls it snakes back and forth underneath the ceiling (shorter than
+  // before) and finally runs west through the finish ribbon. The dots are
+  // pure floor paint — NEVER a collider. The factory machinery added 2026-09-22
+  // (spinning gear clusters, the steam press gantry over the z=0 lane, the car
+  // wash over the z=-30 approach) sits on this line so the green dots thread
+  // through it.
+  // World waypoint lanes (minimap mapZ = 123 - z): start z=66 (map 57) →
+  // behind-run z=37 (map 86, at x≈20 = map 70) → lanes z = 17, 0, -30 (map
+  // 106, 123, 153) → finish (3, -30) (map 87, 153). The lanes span x from 14
+  // (map 76) to 134 (off-map). Two InstancedMeshes = one draw call per color:
+  // the lime dots ARE the line; driving THROUGH a dot moves it into the blue
+  // InstancedMesh (a darker glowing blue) — permanent, per-dot, so as you
+  // work your way along the course the whole snake gradually turns blue
+  // behind you. (Per-instance colors via setColorAt would NOT work here: the
+  // neon look is EMISSIVE, and instanceColor only tints the diffuse channel.)
+  const GUIDE_DOT_R = 0.5;    // dot radius — bold
+  const GUIDE_STEP = 5.4;     // centre-to-centre spacing along the path (~⅓ the dots)
+  const GUIDE_HIT = 6.0;      // horizontal "turned" radius around a dot centre — very generous,
+                              // so dots light blue when you drive NEAR them, not only on top
+                              // (doubled to 6.0 on 2026-09-22 per feedback)
+  const GUIDE_HOT = 0x2f5bff; // the darker glowing blue a driven dot turns into
+  const guidePts = [
+    [-17, 66], [-17, 37], [134, 37], [134, 17],
+    [14, 17], [14, 0], [134, 0], [134, -30], [14, -30], [3, -30],
+  ];
+  let guideDist = 0;
+  for (let i = 1; i < guidePts.length; i++) {
+    guideDist += Math.hypot(guidePts[i][0] - guidePts[i - 1][0], guidePts[i][1] - guidePts[i - 1][1]);
   }
-  // A flag planted on the OUTSIDE of each corner, aimed down the next straight.
-  for (let i = 1; i < COURSE.length - 1; i++) {
-    const inD = { x: COURSE[i].x - COURSE[i - 1].x, z: COURSE[i].z - COURSE[i - 1].z };
-    const outN = { x: COURSE[i + 1].x - COURSE[i].x, z: COURSE[i + 1].z - COURSE[i].z };
-    const il = Math.hypot(inD.x, inD.z), ol = Math.hypot(outN.x, outN.z);
-    const outSideX = inD.x / il - outN.x / ol, outSideZ = inD.z / il - outN.z / ol;
-    const oL = Math.hypot(outSideX, outSideZ) || 1;
-    const flag = makeRouteFlag(COURSE_COLORS[(i - 1) % COURSE_COLORS.length]);
-    flag.group.position.set(COURSE[i].x + (outSideX / oL) * 3, 0, COURSE[i].z + (outSideZ / oL) * 3);
-    flag.group.rotation.y = Math.atan2(outN.x, outN.z);
-    parent.add(flag.group);
+  const guideN = Math.ceil(guideDist / GUIDE_STEP) + 1;
+  const guideDotsLime = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(GUIDE_DOT_R, 12, 8),
+    makeGlowMat(NEON.lime),
+    guideN
+  );
+  const guideDotsBlue = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(GUIDE_DOT_R, 12, 8),
+    makeGlowMat(GUIDE_HOT),
+    guideN
+  );
+  // Both meshes: instances sit far from the geometry's local bounding sphere.
+  guideDotsLime.frustumCulled = false;
+  guideDotsBlue.frustumCulled = false;
+  const guideDot = new THREE.Object3D();               // dot placement temp
+  const _guideHide = new THREE.Vector3(0, -200, 0);    // "gone" hiding temp
+  const _guideOne = new THREE.Vector3(0.001, 0.001, 0.001);  // vanish scale temp
+  const _guideQuat = new THREE.Quaternion();           // identity temp
+  const _guideZero = new THREE.Matrix4();              // zero matrix for vanished dots
+  const guideX = new Float32Array(guideN);             // dot centres (world x/z at floor height)
+  const guideZ = new Float32Array(guideN);
+  const guideLit = new Uint8Array(guideN);             // 1 once the player has driven through
+  let guideAcc = 0;
+  let guideCount = 0;
+  outer: for (let i = 1; i < guidePts.length; i++) {
+    const ax = guidePts[i - 1][0], az = guidePts[i - 1][1];
+    const bx = guidePts[i][0], bz = guidePts[i][1];
+    const len = Math.hypot(bx - ax, bz - az);
+    while (guideAcc <= len) {
+      const t = guideAcc / len;
+      const gx = ax + (bx - ax) * t;
+      const gz = az + (bz - az) * t;
+      // Skip any dot that would sit ON the conveyor belt — the belt is a
+      // solid machine and the green path spheres shouldn't mark it.
+      if (gx >= CONVEYOR.cx - CONVEYOR.len / 2 - 0.4 && gx <= CONVEYOR.cx + CONVEYOR.len / 2 + 0.4
+        && gz >= CONVEYOR.cz - CONVEYOR.wid / 2 - 0.4 && gz <= CONVEYOR.cz + CONVEYOR.wid / 2 + 0.4) {
+        guideAcc += GUIDE_STEP;
+        if (guideAcc > len) break;
+        continue;
+      }
+      // Skip any dot that would sit ON the bubble wrap strip — the bubbles are
+      // their own path marker, so the green spheres shouldn't mark that zone
+      // either (they stop before it and pick up again at the car wash).
+      if (gx >= BUBBLE_ZONE.minX && gx <= BUBBLE_ZONE.maxX
+        && gz >= BUBBLE_ZONE.minZ && gz <= BUBBLE_ZONE.maxZ) {
+        guideAcc += GUIDE_STEP;
+        if (guideAcc > len) break;
+        continue;
+      }
+      // Skip dots buried inside the factory machine (and its flyover ramp) on
+      // the z=17 lane — the path leaps the building and picks up past it.
+      if (gx >= 46 && gx <= 106 && gz >= 10 && gz <= 24) {
+        guideAcc += GUIDE_STEP;
+        if (guideAcc > len) break;
+        continue;
+      }
+      guideX[guideCount] = gx;
+      guideZ[guideCount] = gz;
+      guideDot.position.set(gx, GUIDE_DOT_R, gz);
+      guideDot.updateMatrix();
+      guideDotsLime.setMatrixAt(guideCount, guideDot.matrix);
+      guideCount++;
+      if (guideCount >= guideN) break outer;
+      guideAcc += GUIDE_STEP;
+    }
+    guideAcc -= len;
+  }
+  guideDotsLime.count = guideCount;
+  guideDotsBlue.count = 0;
+  guideDotsLime.instanceMatrix.needsUpdate = true;
+  parent.add(guideDotsLime);
+  parent.add(guideDotsBlue);
+  let guideBlueCount = 0;   // how many dots have been driven blue so far
+
+  // Finish-ribbon burst (the "break apart like floating ribbons" moment):
+  // when the car crosses the gate the ribbon disappears and a dozen thin red
+  // satin strips spin apart off the crossing line — half peel left, half
+  // right, fanning through the car. They lift, then fall under the same
+  // gravity as the car and tumble away; once the last shard despawns the
+  // whole ribbon respawns so the next run can burst it once more.
+  const ribbonShards = [];
+  let ribbonShardMat = null;
+  function burstRibbon(hitX, hitZ) {
+    if (finishGate.ribbon) finishGate.ribbon.visible = false;
+    if (!ribbonShardMat) {
+      ribbonShardMat = new THREE.MeshStandardMaterial({
+        map: makeSatinTexture(),
+        side: THREE.DoubleSide,
+        roughness: 0.32,
+        metalness: 0.05,
+        emissive: 0xff2233,
+        emissiveIntensity: 0.9,
+      });
+    }
+    const n = 12;
+    // The shards fan out along the ribbon's span: the -x gate spreads along
+    // Z, the +z gate (the northbound finish) along X.
+    const isZGate = COURSE_FINISH_DIR === '+z';
+    const A = isZGate ? COURSE_FINISH_X - COURSE_FINISH_HALF : COURSE_FINISH_Z - COURSE_FINISH_HALF;
+    const B = isZGate ? COURSE_FINISH_X + COURSE_FINISH_HALF : COURSE_FINISH_Z + COURSE_FINISH_HALF;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const side = i < n / 2 ? -1 : 1;   // split into a left and a right burst
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(isZGate ? 0.7 + Math.random() * 0.4 : 0.55, 0.14, isZGate ? 0.55 : 0.7 + Math.random() * 0.6),
+        ribbonShardMat
+      );
+      mesh.position.set(
+        isZGate ? A + (B - A) * t : hitX,
+        1.25 + Math.random() * 0.5,
+        isZGate ? hitZ : A + (B - A) * t
+      );
+      mesh.rotation.x = (Math.random() - 0.5) * 0.4;
+      mesh.rotation.z = (side === -1 ? -1 : 1) * (0.5 + Math.random() * 0.8);
+      mesh.castShadow = true;
+      parent.add(mesh);
+      ribbonShards.push({
+        mesh,
+        vx: side * (6 + Math.random() * 7),
+        vy: 4 + Math.random() * 5,
+        vz: (Math.random() - 0.5) * 4,
+        rvx: (Math.random() - 0.5) * 10,
+        rvy: (Math.random() - 0.5) * 10,
+        rvz: (Math.random() - 0.5) * 10,
+        age: 0,
+        life: 3.0,
+      });
+    }
   }
 
   // ---- The Holy Mountain (hollow snow-capped peak, west cavern) ----
   // A full cone rising off the open western floor: drive the pilgrim's road
+
+  await ugPhase(0.81, 'the holy mountain');
   // (a spiral of wedge ramps) up to its snowy summit skylight rim — the
   // highest point in the cavern. The mountain is HOLLOW but has NO cave mouth:
   // its base is solid rock all the way round. The only way in is the summit's
@@ -2751,13 +3766,21 @@ export function addUnderground(parent, opts = {}) {
   // A little goat: legs, body, alert head, curled horns, tiny tail.
   function makeGoat() {
     const g = new THREE.Group();
-    for (const lx of [-0.55, 0.55]) {
-      for (const lz of [-0.42, 0.42]) {
-        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.5, 8), goatMat);
-        leg.position.set(lx, 0.25, lz);
-        g.add(leg);
-      }
+    // Four pivot-point legs (front-left, front-right, back-left, back-right)
+    // so the herd can walk, trot and leap — each leg hangs from a hip pivot
+    // that the update section swings with a gait cycle.
+    const legPivots = [];
+    const legHome = [[-0.55, 0.42], [0.55, 0.42], [-0.55, -0.42], [0.55, -0.42]];
+    for (const [lx, lz] of legHome) {
+      const pivot = new THREE.Group();
+      pivot.position.set(lx, 0.5, lz);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.5, 8), goatMat);
+      leg.position.y = -0.25;
+      pivot.add(leg);
+      g.add(pivot);
+      legPivots.push(pivot);
     }
+    g.goatLegs = legPivots;
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.72, 1.5), goatMat);
     body.position.y = 0.86;
     body.castShadow = true;
@@ -2832,6 +3855,10 @@ export function addUnderground(parent, opts = {}) {
     coneRadiusAt: (y) => coneRadiusAt(y, MOUNT),
     t: 0,
     entered: false,   // set once the car gets within 12 units of the shrine
+    // One-shot flag set by main.js right when the chamber cinematic ends (the
+    // car is kicked back out over the cone) — the update loop reads it to arm
+    // the 30 s goat-pilgrimage countdown.
+    ejectFlag: false,
     light: mysteryLight,
     orb,
     beam,
@@ -2850,6 +3877,63 @@ export function addUnderground(parent, opts = {}) {
     honk() { this.reactT = Math.max(this.reactT, 2.2); this.honkPulse = 1; },
   };
 
+  // ---- The goat pilgrimage (2026-09-22) ----
+  // 30 s after the car is mysteriously kicked out of the mountain, the whole
+  // herd of a dozen goats LAUNCHES out of the summit — each on its own azimuth,
+  // flying a ballistic arc out of the mountaintop exactly like the car was
+  // flung (same launch point, same gravity, tumbling mid-air) — then they
+  // scramble off their knees and chase the little car around the cavern. Purely
+  // decorative — no colliders, so they never block anything; if the little car
+  // is tucked away they follow the player's car instead.
+  const GOAT_HERD = 12;
+  const GOAT_GRAVITY = 18;                 // match the car's ejection arc (main.js `gravity`)
+  // How close the player car has to get before a goat bolts, how fast it runs
+  // while fleeing (deliberately faster than the player car's top speed so it
+  // genuinely gets away — same arcade logic as the city pedestrians), and how
+  // long the panic lasts once the coast is clear.
+  const GOAT_FLEE_TRIGGER = 7;
+  const GOAT_FLEE_SPEED = 30;
+  const GOAT_FLEE_HOLD = 1.2;
+  // The goat herd never hangs together as one unit: each goat keeps its own
+  // wide orbit around the follower (7..13 units out), its own gate, its own
+  // wandering drift, and its own walk cadence.
+  const goatEvent = { timer: -1 };
+  const goatCrew = [];
+  const goatColliders = [];
+  for (let k = 0; k < GOAT_HERD; k++) {
+    const mesh = makeGoat();
+    mesh.scale.setScalar(1.15);
+    mesh.visible = false;
+    const phi = (k / GOAT_HERD) * Math.PI * 2 + Math.PI / 12;
+    // Each goat carries a small SOLID collider so neither the player car nor the
+    // little car can drive through it — but it's parked far off-map until the
+    // goat actually lands and starts following (during wait/fly the collider
+    // stays inert so it can't block the course from the spawn area). noRoof
+    // keeps it a pure wall (never a surface the car could be elevated by).
+    const col = { x: 9999, z: 9999, halfW: 0.8, halfD: 1.1, h: 1.5, noRoof: true };
+    goatColliders.push(col);
+    goatCrew.push({
+      mesh, phi,
+      state: 'wait',            // wait → fly → follow
+      delay: k * 0.18,          // staggered blast-off
+      vx: 0, vy: 0, vz: 0,      // ballistic velocity (set at launch)
+      tumble: Math.random() * 12 + 4,
+      bob: Math.random() * Math.PI * 2,
+      orbitR: 7 + Math.random() * 6,        // own distance ring (big spacing)
+      orbitA: Math.random() * Math.PI * 2,  // own angle around the follower
+      driftT: Math.random() * Math.PI * 2,  // wander phase (drifts the orbit slowly)
+      speed: 2 + Math.random() * 1.8,       // own pace (gait varies per goat)
+      gate: Math.random() > 0.5 ? 1 : -1,   // wander/heading flips
+      gaitPh: Math.random() * Math.PI * 2,  // own walk-cycle phase (never in lockstep)
+      leap: 0,                              // leap-bounce arc progress (0 = grounded)
+      flee: null,               // { dx, dz, t } while bolting from the player car
+      col,
+    });
+    parent.add(mesh);
+  }
+
+  await ugPhase(0.82, 'the glass city skyline');
+
   const glassCity = addGlassCity(parent, {
     // Idea #25: a crystal cluster popping when the car runs into it.
     onCrystalPop: typeof opts.onGlassPop === 'function' ? opts.onGlassPop : null,
@@ -2861,15 +3945,770 @@ export function addUnderground(parent, opts = {}) {
   // Foreboding sky above the cavern ceiling (dark dome, drifting dark
   // clouds, a scatter of stars, colorful constellations) — visible from the
   // second roof and through crumbled holes. Purely decorative.
+  await ugPhase(0.9, 'the underground sky');
   const sky = addUndergroundSky(parent, mergeGeoms);
 
-  const colliders = [...pipePostColliders, ...ceilingColliders, ...stairColliders, ...grandColliders, ...mountColliders, ...statueColliders, ...glassCity.colliders];
+  await ugPhase(0.94, 'the finish line');
 
-  let bumpCount = 0;
-  let lastBump = null;
+  // ==========================================================================
+  // Factory-floor attractions (2026-09-23): five large novelties that chase the
+  // serpentine course. All placements were checked against the existing lane
+  // geometry — the z=17 lane passes OVER the machine bridge (x 50..92), so the
+  // bubble wrap strip moved to the clear z=-30 westbound straight, and the
+  // express tube's exit re-routed to x≈99..100 (EAST of the machine bridge, and
+  // east of the steam press at x=74) so the drop lands on open belt.
+  // ==========================================================================
+
+  // ---- 1. Car-sized bubble wrap strip (on-course, z=-30 westbound) --------
+  // A long sheet of plain translucent floor bubbles across the westbound
+  // straight (x∈[46,80], z∈[-33,-27]) that approaches the car wash. Driving
+  // over it pops bubbles (THWACK + haptic + steering-wobble in main.js reads
+  // `bubbleStrip.zone` + `bubbleStrip.pops`). Bubbles are instanced domes on
+  // the floor; each pop flattens one and it slowly re-inflates. They read as
+  // glossy translucent BLUE air bubbles (kept blue — the green course spheres
+  // are skipped off this strip, see the guide-dot loop above).
+  const BUBBLE_R = 0.85;
+  const bubbleGeom = new THREE.SphereGeometry(BUBBLE_R, 14, 9);
+  bubbleGeom.scale(1, 0.5, 1);   // squashed dome, base wide + low profile
+  const bubbleMat = new THREE.MeshStandardMaterial({
+    color: 0x7ec8ff, emissive: 0x2f6fb8, emissiveIntensity: 0.35,
+    transparent: true, opacity: 0.55, roughness: 0.25,
+  });
+  const _bm = new THREE.Matrix4();
+  const bubbles = [];
+  {
+    const bsx = BUBBLE_ZONE.maxX - BUBBLE_ZONE.minX;   // 34
+    const bs = BUBBLE_ZONE.maxZ - BUBBLE_ZONE.minZ;     // 6
+    const nx = Math.round(bsx / 1.7) + 1;               // ~21
+    const nz = Math.round(bs / 1.7) + 1;                // ~4
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < nz; j++) {
+        const jx = (Math.random() - 0.5) * 0.5;
+        const jz = (Math.random() - 0.5) * 0.5;
+        bubbles.push({
+          x: BUBBLE_ZONE.minX + 0.85 + (i / (nx - 1)) * (bsx - 1.7) + jx,
+          z: BUBBLE_ZONE.minZ + 0.85 + (j / (nz - 1)) * (bs - 1.7) + jz,
+          scale: 1,
+          regrow: 0,       // seconds before re-inflating starts
+          popFlash: 0,     // 1 right when this bubble pops (visual spike)
+          lastPop: 0,      // last `elapsed` this bubble was popped (pop pacing)
+        });
+      }
+    }
+  }
+  const bubbleMesh = new THREE.InstancedMesh(bubbleGeom, bubbleMat, bubbles.length);
+  bubbles.forEach((b, i) => {
+    _v3a.set(b.x, 0.3 * b.scale, b.z);
+    _v3b.set(1, b.scale, 1);
+    _bm.compose(_v3a, _quat.identity(), _v3b);
+    bubbleMesh.setMatrixAt(i, _bm);
+  });
+  bubbleMesh.instanceMatrix.needsUpdate = true;
+  parent.add(bubbleMesh);
+  const bubbleStrip = {
+    zone: BUBBLE_ZONE,
+    pops: 0,      // monotonic pop counter — main.js diffs it to trigger sfx/shake
+    lastPopTime: 0,
+  };
+
+  // ---- 2. Taffy-puller machine (open-frame drive-through on the z=-30 lane) -
+  // An OPEN-FRAME industrial taffy machine straddling the westbound z=-30 lane
+  // at x=128 — you drive the car straight through it like a car wash. The old
+  // glass box is gone: a gantry of steel uprights, top beams, cross ties and
+  // mid rails frames the machine wide open on the east/west faces so every part
+  // is visible from the lane and the car can rumble right through the middle.
+  // Inside, two counter-rotating chrome hooks sweep across the lane (posts at
+  // (128,-26) and (128,-34), one each side of the car's path), a train of
+  // gears, pulleys and pistons churn, and an endless chain racetracks around
+  // the whole unit right over/under the car as it passes through. A car under
+  // a sweep gets hooked (main.js calls `taffy.hookedAt(x,z)` → trip the
+  // carTaffyMode noodle-stretch). The arms NEVER become colliders — the hook
+  // _grabs and stretches_ the car, it doesn't smash it.
+  const TAFFY = [
+    { x: 128, z: -26, armLen: 6, phase: 0,    tipAngle: 0.9,  angle: 0, cd: 0, snap: 0 },
+    { x: 128, z: -34, armLen: 6, phase: Math.PI, tipAngle: -0.9, angle: 0, cd: 0, snap: 0 },
+  ];
+  const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8e2ea, metalness: 0.95, roughness: 0.18 });
+  const taffySteel = new THREE.MeshStandardMaterial({ color: 0x8a93a8, metalness: 0.85, roughness: 0.3 });
+  const taffyArms = [];
+  const taffyMotion = [];   // {kind, ref, speed, phase} spun in update()
+  // ---- Open-frame gantry: a steel cage over the two hook posts, wide open on
+  // ---- the east/west faces so the car drives straight through the machine.
+  // ---- Four corner uprights (straddling the westbound z=-30 lane around the
+  // ---- posts at z=-26/-34), top beams + cross ties, neon mid rails and a
+  // ---- glowing portal bar on each open end. Pure decor — no colliders, the
+  // ---- car plows through the frame like the car-wash whites.
+  {
+    const spanX = 8.6;       // east-west opening (x 123.7 … 132.3)
+    const spanZ = 8.2;       // north-south opening (z -34.1 … -25.9)
+    const upY = 6.6;         // upright + top-beam height
+    const posts = [[128 - spanX / 2, -25.9], [128 + spanX / 2, -25.9], [128 - spanX / 2, -34.1], [128 + spanX / 2, -34.1]];
+    for (const [px, pz] of posts) {
+      const upright = new THREE.Mesh(new THREE.BoxGeometry(0.5, upY, 0.5), taffySteel);
+      upright.position.set(px, upY / 2, pz);
+      upright.castShadow = true;
+      parent.add(upright);
+    }
+    // Two long top beams running east-west over each side of the lane.
+    for (const pz of [-25.9, -34.1]) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(spanX + 0.6, 0.5, 0.5), taffySteel);
+      beam.position.set(128, upY, pz);
+      beam.castShadow = true;
+      parent.add(beam);
+    }
+    // Two shorter cross ties connecting the top beams across the lane.
+    for (const px of [128 - spanX / 2, 128 + spanX / 2]) {
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, spanZ + 0.6), taffySteel);
+      tie.position.set(px, upY, -30);
+      tie.castShadow = true;
+      parent.add(tie);
+    }
+    // Neon mid rails on the two open faces (car drives between them) + a
+    // glowing portal bar overhead on each end, like a wash-bay arch.
+    for (const pz of [-25.9, -34.1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(spanX - 0.4, 0.28, 0.28), makeGlowMat(NEON.cyan));
+      rail.position.set(128, 4.6, pz);
+      parent.add(rail);
+    }
+    for (let k = 0; k < 2; k++) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, spanZ - 1.6), makeGlowMat(k ? NEON.magenta : NEON.amber));
+      bar.position.set(k ? 128 - spanX / 2 : 128 + spanX / 2, 5.4, -30);
+      parent.add(bar);
+    }
+  }
+  // ---- Endless chain loop: links run around a vertical ring centred between
+  // ---- the two posts (the racetrack ellipse of the stretched-open machine),
+  // ---- at y≈3.1, so the belt visibly churns right over the passing car.
+  {
+    const CHAIN_N = 18;
+    const chainGeom = new THREE.BoxGeometry(0.22, 0.5, 0.34);
+    const chainMat = taffySteel;
+    for (let k = 0; k < CHAIN_N; k++) {
+      const link = new THREE.Mesh(chainGeom, chainMat);
+      link.castShadow = true;
+      parent.add(link);
+      taffyMotion.push({ kind: 'chain', ref: link, speed: 1.6, phase: k / CHAIN_N });
+    }
+  }
+  for (const h of TAFFY) {
+    // Chrome post (floor → hip height) with a glowing base ring.
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 3.4, 14), chromeMat);
+    post.position.set(h.x, 1.7, h.z);
+    post.castShadow = true;
+    parent.add(post);
+    const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.1, 8, 18),
+      makeGlowMat(NEON.amber));
+    baseRing.rotation.x = Math.PI / 2;
+    baseRing.position.set(h.x, 0.42, h.z);
+    parent.add(baseRing);
+    // Big drive gear under the post — a heavy disc with 12 teeth, spinning.
+    {
+      const gear = new THREE.Group();
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.4, 18), taffySteel);
+      disc.castShadow = true;
+      gear.add(disc);
+      for (let k = 0; k < 12; k++) {
+        const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.42), taffySteel);
+        tooth.position.x = 1.22;
+        tooth.rotation.y = (k / 12) * Math.PI * 2;
+        const holder = new THREE.Group();
+        holder.add(tooth);
+        holder.rotation.y = (k / 12) * Math.PI * 2;
+        gear.add(holder);
+      }
+      gear.position.set(h.x, 0.95, h.z);
+      parent.add(gear);
+      taffyMotion.push({ kind: 'spin', ref: gear, speed: 2.4, dir: h.z === -22 ? -1 : 1 });
+      // A small meshing pinion beside the gear, counter-rotating against it.
+      const pinion = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.42, 8), chromeMat);
+      pinion.position.set(h.x + 1.55, 0.95, h.z);
+      parent.add(pinion);
+      taffyMotion.push({ kind: 'spin', ref: pinion, speed: -6.5, dir: h.z === -22 ? -1 : 1 });
+    }
+    // Overhead pulley: a grooved steel wheel on each post top, spinning fast.
+    {
+      const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.3, 14), chromeMat);
+      pulley.position.set(h.x, 3.9, h.z);
+      pulley.castShadow = true;
+      parent.add(pulley);
+      const groove = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.08, 8, 18), makeGlowMat(NEON.cyan));
+      groove.rotation.x = Math.PI / 2;
+      groove.position.set(h.x, 3.9, h.z);
+      parent.add(groove);
+      taffyMotion.push({ kind: 'pulley', ref: pulley, speed: 3.2, dir: h.z === -22 ? -1 : 1 });
+    }
+    // Sweeping arm: horizontal chrome rod pivoting about Y at the post top.
+    const armPivot = new THREE.Group();
+    armPivot.position.set(h.x, 3.0, h.z);
+    parent.add(armPivot);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(h.armLen, 0.18, 0.18), chromeMat);
+    arm.position.set(h.armLen / 2, 0, 0);
+    arm.castShadow = true;
+    armPivot.add(arm);
+    // Hook claw at the far tip (an L-bend that reads as "pulls you out").
+    // Cloned from the glow cache because the sweep pulses its emissive per arm.
+    const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.8, 8),
+      makeGlowMat(NEON.magenta).clone());
+    claw.rotation.z = Math.PI / 2;
+    claw.position.set(h.armLen - 0.2, 0, 0);
+    armPivot.add(claw);
+    // A piston riding the arm's axle — bobs up/down as the arm sweeps, another
+    // visible moving part for people watching from the course.
+    const piston = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.6, 0.24), chromeMat);
+    piston.position.set(h.armLen * 0.35, 0.7, 0);
+    armPivot.add(piston);
+    taffyArms.push({ hook: h, armPivot, claw });
+  }
+  const taffy = {
+    hits: 0,   // monotonic hook counter, main.js edges on it for the THWACK
+    // A car point (x,z) is hooked when it sits within the sweep radius of a
+    // hook that's on-cooldown. On a hit mark the hook's snap animation + cd.
+    hookedAt(x, z) {
+      for (const a of taffyArms) {
+        const h = a.hook;
+        if (h.cd > 0) continue;
+        const tipX = h.x + Math.cos(h.angle) * h.armLen;
+        const tipZ = h.z - Math.sin(h.angle) * h.armLen;
+        const dx = x - tipX, dz = z - tipZ;
+        if (dx * dx + dz * dz < 2.4 * 2.4) {
+          h.cd = 2.2;          // cooldown keeps a lingering car from re-tripping
+          h.snap = 0.5;        // arm lunges at the car for a beat
+          taffy.hits++;
+          return true;
+        }
+      }
+      return false;
+    },
+    get hooks() { return TAFFY; },
+    reset() {
+      for (const a of taffyArms) {
+        a.hook.cd = 0;
+        a.hook.snap = 0;
+        a.claw.material.emissiveIntensity = 1;
+      }
+    },
+  };
+
+  // ---- 3. Industrial magnet pit-stop (on the eastbound belt lane) -----------
+  // A huge electromagnet hangs from the ceiling at (55,0), radius 9, right over
+  // the eastbound conveyor belt lane (z=0, x 41..107) — clear of the machine
+  // bridge at x=92 and the steam press beyond it. A timer runs ON 3.2s / OFF
+  // 4.8s; while active (`magnet.active`) main.js yanks a near grounded car up
+  // off the belt to `magnet.holdY`, spins its wheels and hangs it until the
+  // field drops. A red coil + translucent beam read the state from across the
+  // cavern.
+  const MAGNET = { x: 55, z: 0, r: 9, holdY: 27, on: 3.2, off: 4.8 };
+  const magnetSteel = new THREE.MeshStandardMaterial({ color: 0x4a4a55, roughness: 0.4, metalness: 0.9 });
+  const magGroup = new THREE.Group();
+  magGroup.position.set(MAGNET.x, 0, MAGNET.z);
+  {
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 1.2, 22), magnetSteel);
+    core.position.y = MAGNET.holdY;
+    core.castShadow = true;
+    magGroup.add(core);
+    // Coil clone — the update loop pulses emissiveIntensity on it each frame.
+    const coil = new THREE.Mesh(new THREE.TorusGeometry(2.9, 0.28, 12, 26), makeGlowMat(NEON.red).clone());
+    coil.rotation.x = Math.PI / 2;
+    coil.position.y = MAGNET.holdY - 0.15;
+    magGroup.add(coil);
+    // Translucent pull beam (faint when off, bright while active).
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(2.2, 6.5, MAGNET.holdY, 20, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xff5560, transparent: true, opacity: 0.06,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false,
+      })
+    );
+    beam.position.y = MAGNET.holdY / 2;
+    magGroup.add(beam);
+    const magLight = new THREE.PointLight(0xff4455, 0, 60, 2);
+    magLight.position.y = MAGNET.holdY - 3;
+    magGroup.add(magLight);
+    magGroup.userData = { beam, light: magLight, coil };
+  }
+  parent.add(magGroup);
+  const magnet = { x: MAGNET.x, z: MAGNET.z, r: MAGNET.r, holdY: MAGNET.holdY, active: false, t: 0, hits: 0 };
+
+  // ---- 4. (removed — the pinball plunger shortcut is deleted; it didn't work)
+
+  // ---- 5. Pneumatic express tube (under the course tiles, SW-corner exit) ---
+  // A clear glass tube rising off the open floor south of the Glass City
+  // (intake at (12,113)), climbing to hug the underside of the checkerboard
+  // ceiling tiles over the obstacle course (y≈28), threading a wide arc around
+  // the ceiling magnet at (55,0), then descending to drop the car at world
+  // (-53,-28) on the empty floor of the far south-west corner. The tube is
+  // built from the pure path math in src/modules/expressTube.js; air-jet rings
+  // ride the centre line so the forced ride reads as pneumatic suction.
+  const tubePts = expressTubeSamples().map((p) => new THREE.Vector3(p.x, p.y, p.z));
+  const tubeCurve = new THREE.CatmullRomCurve3(tubePts);
+  const tubeGeo = new THREE.TubeGeometry(tubeCurve, tubePts.length, EXPRESS_TUBE.R, 14, false);
+  const tubeGlass = new THREE.MeshPhysicalMaterial({
+    color: 0xbfe9ff, roughness: 0.05, metalness: 0.1,
+    transparent: true, opacity: 0.13, side: THREE.DoubleSide,
+    emissive: 0x2fd0ff, emissiveIntensity: 0.5, envMapIntensity: 1,
+  });
+  const tubeMesh = new THREE.Mesh(tubeGeo, tubeGlass);
+  tubeMesh.castShadow = true;
+  parent.add(tubeMesh);
+  // Glory rings + air-jet torus rings along the tube (animated in update()).
+  const tubeRings = [];
+  for (let k = 0; k < EXPRESS_TUBE.RING_COUNT; k++) {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(EXPRESS_TUBE.R + 0.35, 0.12, 8, 22),
+      makeGlowMat(k % 2 ? NEON.cyan : NEON.lime)
+    );
+    parent.add(ring);
+    tubeRings.push(ring);
+  }
+  // Boarding pads at BOTH mouths — the tube is a two-way ride. Each mouth gets
+  // the same glowing amber ring (and cyan halo) as a "board here" affordance:
+  // the glass-city pad (s≈0) and the skate-park pad (s≈1). Main.js grabs at
+  // either mouth and carries the car to the far end.
+  for (const sEnd of [0, 1]) {
+    const mouth = expressTubePoint(sEnd);
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(EXPRESS_TUBE.GRAB_R, 28),
+      makeGlowMat(NEON.amber));
+    pad.rotation.x = -Math.PI / 2;
+    pad.position.set(mouth.x, 0.05, mouth.z);
+    parent.add(pad);
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(EXPRESS_TUBE.GRAB_R, 0.22, 10, 24),
+      makeGlowMat(NEON.cyan));
+    halo.rotation.x = Math.PI / 2;
+    halo.position.set(mouth.x, 0.35, mouth.z);
+    parent.add(halo);
+  }
+  // `dir` mirrors the player's current express ride direction so the level can
+  // flip the air-jet ring flow: +1 glass-city → skate-park, -1 the return ride.
+  // main.js writes +1 on a forward grab, -1 on a reverse grab, and back to +1
+  // when a ride ends.
+  const expressTube = { entrance: { x: 12, z: 113 }, exit: { x: -53, z: -28 }, rings: tubeRings, dir: 1 };
+
+// ---- Sunken blue-wave halfpipe (south-west free-skate fun zone) ----
+  // The pipe no longer sits ON the floor — it's a trough carved BELOW it, with
+  // its lips flush at y=0. The U runs north-south with open mouths at both
+  // ends: drive in straight over a mouth apron or drop in over a lip, bank up
+  // the curved wave walls and pump the vert. Everything from the old pipe's
+  // playbook still applies: physics walls are wedge-tiled ride surfaces, the
+  // lips carry pipeTop (the vert-pop rocket), steep faces carry pipeSlide, and
+  // main.js's keep-in (ugPipe) reins an airborne car back inside so it never
+  // lands out over the lip. It now sits in the corridor between the neon
+  // staircase and the cave wall, clear floor on both sides.
+  const HALFPIPE = SS.pipe;   // keep-in logic in main.js reads cx/cz/len/bottomHalf/wallRun
+  await ugPhase(0.92, 'the sunken blue-wave halfpipe');
+  const pipeDepth = (p) => p.wallRise + p.bottomHalf;
+
+  // Physics wedges for one vertical wall of a sunken pipe + a visual shell.
+  // The ride profile rises monotonically from the trough centre out to the lip,
+  // all at negative y (trough bottom = -(wallRise + bottomHalf), lip = 0). The
+  // shell is drawn a hair OUTSIDE the ride face so nothing z-fights the wave
+  // texture. Mouth aprons at each open end make straight entry rideable.
+  function addSunkPipe(p, mat) {
+    const R = p.bottomHalf, WR = p.wallRun, Wr = p.wallRise;
+    const depth = pipeDepth(p);
+    const segB = p.bowlSegs || 12, segW = p.wallSegs || 3;
+    const prof = [];
+    for (let k = 0; k <= segB; k++) {
+      const px = R * (k / segB);
+      prof.push([px, R - Math.sqrt(R * R - px * px) - depth]);
+    }
+    for (let k = 1; k <= segW; k++) {
+      const t = k / segW;
+      prof.push([R + WR * t, Wr * t - Wr]);
+    }
+    const left = prof.map(([px, yy]) => [-px, yy]);
+    for (const [sgn, wall] of [[1, prof], [-1, left]]) {
+      for (let k = 0; k < wall.length - 1; k++) {
+        const [xa, ya] = wall[k];
+        const [xb, yb] = wall[k + 1];
+        const sx = Math.sign(xb - xa);
+        ugRamps.push({
+          x: p.cx + (xa + xb) / 2, z: p.cz,
+          runX: sx, runZ: 0,
+          len: Math.abs(xb - xa),
+          width: p.len,
+          baseY: ya,
+          height: yb - ya,
+          boost: 0,                              // bowls never launch — vert handles it
+          pipeTop: k === wall.length - 2,        // the lip wedge = the vertical pop edge
+          pipeLaunch: p.launch || 0,             // per-pipe vert-pop power (giant pipe rockets)
+          pipeSlide: (yb - ya) > Math.abs(xb - xa) * 0.47,
+        });
+      }
+      const lip = wall[wall.length - 1];
+      const outerX = lip[0] + sgn * (p.wallThick || 0.9);
+      const yMin = Math.min.apply(null, wall.map((q) => q[1])) - 1.4;
+      const shape = new THREE.Shape();
+      shape.moveTo(wall[0][0], wall[0][1]);
+      for (const q of wall) shape.lineTo(q[0] * 1.015, q[1] - 0.04);
+      shape.lineTo(outerX, lip[1] - 0.04);
+      shape.lineTo(outerX, yMin);
+      shape.lineTo(wall[0][0], yMin);
+      shape.closePath();
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: p.len, bevelEnabled: false });
+      geo.translate(0, 0, -p.len / 2);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(p.cx, 0, p.cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      parent.add(mesh);
+    }
+    // Mouth aprons: drive in straight over either open end instead of hovering
+    // at floor level. Surf is 0 at the mouth line, sloping down to the trough
+    // floor over 2.2 units into the pipe.
+    const mouthW = 2 * (R + WR) - 0.4;
+    addUgRamp({ x: p.cx, z: p.cz - p.len / 2 + 1.1, runX: 0, runZ: -1, len: 2.2, width: mouthW, baseY: -depth, height: depth, boost: 0 }, mat);
+    addUgRamp({ x: p.cx, z: p.cz + p.len / 2 - 1.1, runX: 0, runZ: 1, len: 2.2, width: mouthW, baseY: -depth, height: depth, boost: 0 }, mat);
+  }
+  // Glossy tile stretched over a pipe's walls (no asset files):
+// ONE ceramic slab per texture (the same 2-world-unit pitch as the kitchen
+// floor tile — repeat 0.5 turns each canvas into a ~2-unit tile), with grout
+// seams on the tile border, a painted top-left sheen, and a diagonal glint so
+// the surface reads shiny in the dark cavern. Tiles seamlessly on both axes.
+  const makeWaveTile = (palette) => {
+    const S = 256, GRID = 1;
+    const c = document.createElement('canvas');
+    c.width = S; c.height = S;
+    const g = c.getContext('2d');
+    const cell = S / GRID;
+    for (let ty = 0; ty < GRID; ty++) {
+      for (let tx = 0; tx < GRID; tx++) {
+        const x0 = tx * cell, y0 = ty * cell;
+        const grad = g.createLinearGradient(x0, y0, x0 + cell, y0 + cell);
+        grad.addColorStop(0.0, palette.base[0]);
+        grad.addColorStop(0.35, palette.base[1]);
+        grad.addColorStop(0.65, palette.base[2]);
+        grad.addColorStop(1.0, palette.base[3]);
+        g.fillStyle = grad;
+        g.fillRect(x0, y0, cell, cell);
+        // Painted gloss so each slab reads glossy even without an env map.
+        const sheen = g.createRadialGradient(x0 + cell * 0.28, y0 + cell * 0.28, 1, x0 + cell * 0.28, y0 + cell * 0.28, cell * 0.95);
+        sheen.addColorStop(0, palette.sheen);
+        sheen.addColorStop(0.35, palette.sheen2);
+        sheen.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = sheen;
+        g.fillRect(x0, y0, cell, cell);
+        g.strokeStyle = palette.grout;
+        g.lineWidth = 2;
+        g.strokeRect(x0 + 1, y0 + 1, cell - 2, cell - 2);
+      }
+    }
+    // Whole-sheet diagonal glint so the grid never reads flat.
+    const glint = g.createLinearGradient(0, 0, S, S);
+    glint.addColorStop(0, palette.glint);
+    glint.addColorStop(0.42, 'rgba(0,0,0,0)');
+    glint.addColorStop(0.58, 'rgba(0,0,0,0)');
+    glint.addColorStop(1, palette.glint2);
+    g.fillStyle = glint;
+    g.fillRect(0, 0, S, S);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(0.5, 0.5);   // every canvas = one ~2-unit tile (kitchen-tile pitch)
+    return t;
+  };
+  // Blue slabs for the mini vert pipe; dark green for the giant far-corner pipe.
+  const waveTex = makeWaveTile({
+    base: ['#24456b', '#12263f', '#0d1e33', '#0a1829'],
+    sheen: 'rgba(130,180,230,0.55)', sheen2: 'rgba(70,120,180,0.16)',
+    grout: '#27415e', glint: 'rgba(160,210,255,0.20)', glint2: 'rgba(160,210,255,0.12)',
+  });
+  const pipeTex = makeWaveTile({
+    base: ['#275c35', '#14381f', '#0d2b16', '#082013'],
+    sheen: 'rgba(120,220,155,0.50)', sheen2: 'rgba(60,150,95,0.15)',
+    grout: '#1f4028', glint: 'rgba(160,255,200,0.18)', glint2: 'rgba(160,255,200,0.10)',
+  });
+  const waveMat = new THREE.MeshStandardMaterial({
+    map: waveTex, roughness: 0.3, metalness: 0.15,
+    emissive: 0x0b213f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+  });
+  const pipeMat = new THREE.MeshStandardMaterial({
+    map: pipeTex, roughness: 0.3, metalness: 0.15,
+    emissive: 0x0b2a18, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+  });
+  // Generic sunken trench (spine/eurobox/escalator/rail): a profile strip
+  // swept across its width. A lone slab leaves an "invisible glass" strip
+  // over the pit's long sides (no surface within ride range of the floor), so
+  // each ~0.35-unit column of the profile is built as a full cross-section: a
+  // centre slab plus two angled side banks that rise from the column floor up
+  // to the rim (surf 0) — every edge is drive-in from the floor.
+  function addTrench(cfg, axisZ) {
+    const prof = cfg.prof;
+    const W = cfg.width;
+    const bank = Math.min(cfg.bank || 1.6, (W - 0.6) / 2);   // side slant width
+    const inner = Math.max(0.6, W - 2 * bank);
+    const col = 0.35;                 // max column length along the profile axis
+    for (let k = 0; k < prof.length - 1; k++) {
+      const a0 = prof[k][0], y0 = prof[k][1];
+      const a1 = prof[k + 1][0], y1 = prof[k + 1][1];
+      const dA = a1 - a0;
+      if (dA <= 0) continue;
+      const n = Math.max(1, Math.ceil(Math.abs(dA) / col));
+      const lastSeg = k === prof.length - 2;
+      for (let i = 0; i < n; i++) {
+        const ta = i / n, tb = (i + 1) / n;
+        const ca = a0 + (a1 - a0) * ta, cb = a0 + (a1 - a0) * tb;
+        const ya = y0 + (y1 - y0) * ta, yb = y0 + (y1 - y0) * tb;
+        const dC = cb - ca;
+        const dy = yb - ya;
+        const rising = dy >= 0;
+        const hmi = (ya + yb) / 2;
+        const def = {
+          len: dC,
+          width: inner,
+          baseY: Math.min(ya, yb),
+          height: Math.max(Math.abs(dy), 0.02),
+          boost: 0,
+          pipeSlide: Math.abs(dy) > Math.abs(dC) * 0.47,
+        };
+        if (axisZ) { def.x = cfg.cx; def.z = (ca + cb) / 2; def.runX = 0; def.runZ = rising ? 1 : -1; }
+        else       { def.x = (ca + cb) / 2; def.z = cfg.cz; def.runX = rising ? 1 : -1; def.runZ = 0; }
+        if (lastSeg && i === n - 1 && cfg.tipBoost) def.boost = cfg.tipBoost;
+        addUgRamp(def);
+        // Side banks (perpendicular slant): surf 0 at the hole's long edge,
+        // dropping to this column's height where it meets the centre slab.
+        if (Math.abs(hmi) < 0.08) continue;
+        const bDef = { len: bank, width: dC, baseY: hmi, height: -hmi, pipeSlide: (-hmi) > bank * 0.47 };
+        if (axisZ) {
+          addUgRamp(Object.assign({ x: cfg.cx - W / 2 + bank / 2, z: (ca + cb) / 2, runX: -1, runZ: 0 }, bDef));
+          addUgRamp(Object.assign({ x: cfg.cx + W / 2 - bank / 2, z: (ca + cb) / 2, runX: 1, runZ: 0 }, bDef));
+        } else {
+          addUgRamp(Object.assign({ x: (ca + cb) / 2, z: cfg.cz - W / 2 + bank / 2, runX: 0, runZ: -1 }, bDef));
+          addUgRamp(Object.assign({ x: (ca + cb) / 2, z: cfg.cz + W / 2 - bank / 2, runX: 0, runZ: 1 }, bDef));
+        }
+      }
+    }
+  }
+
+  // A flat pad — a wedge with negligible height sitting at `y`.
+  function thinPad(x, z, halfX, halfZ, y) {
+    addUgRamp({ x, z, runX: 1, runZ: 0, len: halfX * 2, width: halfZ * 2, baseY: y, height: 0.02, boost: 0 });
+  }
+
+  // Radial sunken bowl on a superellipse footprint. t is normalized radius
+  // (0 = centre, 1 = rim); h(t) is the surface height at that radius. Bands ×
+  // sectors tile the wall with outward-run wedges so every point under the
+  // opening is within ride range — nothing hovers.
+  function superRingPit(cfg) {
+    const { cx, cz, rx, rz, p, tIn, bands, sectors, h, rimBoost } = cfg;
+    for (let j = 0; j < bands; j++) {
+      const t0 = tIn + (1 - tIn) * (j / bands);
+      const t1 = tIn + (1 - tIn) * ((j + 1) / bands);
+      const y0 = h(t0), y1 = h(t1);
+      if (Math.abs(y1 - y0) < 0.0005) continue;
+      for (let k = 0; k < sectors; k++) {
+        const th = (k + 0.5) / sectors * Math.PI * 2;
+        const ca = Math.cos(th), sa = Math.sin(th);
+        const sc = Math.pow(Math.abs(ca / rx), p) + Math.pow(Math.abs(sa / rz), p);
+        const ray = 1 / Math.pow(sc, 1 / p);
+        const tm = (t0 + t1) / 2;
+        const pos = ray * tm;
+        const run = ray * (t1 - t0);
+        addUgRamp({
+          x: cx + ca * pos, z: cz + sa * pos,
+          runX: ca, runZ: sa,
+          len: run,
+          width: Math.max(0.4, pos * Math.PI * 2 / sectors),
+          baseY: y0, height: y1 - y0,
+          boost: (j === bands - 1) ? rimBoost : 0,
+          pipeSlide: (y1 - y0) > run * 0.47,
+        });
+      }
+    }
+  }
+
+  // Neon rim loops just above the floor line around an opening polygon.
+  function rimLoop(pts, color) {
+    const mat = makeGlowMat(color);
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const dx = b[0] - a[0], dz = b[1] - a[1];
+      const L = Math.hypot(dx, dz);
+      if (L < 0.01) continue;
+      const m = new THREE.Mesh(new THREE.BoxGeometry(L, 0.12, 0.16), mat);
+      m.position.set((a[0] + b[0]) / 2, 0.045, (a[1] + b[1]) / 2);
+      m.rotation.y = Math.atan2(dz, dx);
+      parent.add(m);
+    }
+  }
+  function rimRing(cx, cz, r, color) {
+    const m = new THREE.Mesh(new THREE.TorusGeometry(r, 0.13, 8, 44), makeGlowMat(color));
+    m.rotation.x = Math.PI / 2;
+    m.position.set(cx, 0.05, cz);
+    parent.add(m);
+  }
+
+  // --- The relocated halfpipe (fully sunken) — dark green tiles ---
+  addSunkPipe(SS.pipe, pipeMat);
+  // Carve-line strips low in the bowl + cyan lagoon lights at the mouths.
+  {
+    const stripY = -pipeDepth(SS.pipe) + 0.9;
+    for (const side of [-1, 1]) {
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.12, SS.pipe.len - 2),
+        makeGlowMat(NEON.cyan)
+      );
+      strip.position.set(SS.pipe.cx + side * (SS.pipe.bottomHalf - 2), stripY, SS.pipe.cz);
+      parent.add(strip);
+    }
+    for (const side of [-1, 1]) {
+      const pt = new THREE.PointLight(NEON.cyan, 1.2, 55, 2);
+      pt.position.set(SS.pipe.cx, 8, SS.pipe.cz + side * SS.pipe.len / 2);
+      parent.add(pt);
+    }
+  }
+  rimLoop(SS.pipe.hole, NEON.cyan);
+
+  // --- Vert pit: a tighter second fullpipe north of the spine ---
+  addSunkPipe(SS.vert, waveMat);
+  rimLoop(SS.vert.hole, NEON.cyan);
+
+  // --- Spine: V-trench, crease 6 below the floor ---
+  addTrench(SS.spine, false);
+  rimLoop(SS.spine.hole, NEON.lime);
+
+  // --- Hip: well at −5 with two climbing walls (NE) + descending cheeks
+  //     from every rim so nothing in the opening hovers over the cut edge.
+  thinPad(-78, -52, 4.5, 4.5, -5);     // well floor: tiles the whole hole
+  // Climbing walls out of the well: east face up off the well's west edge,
+  // north face up off the well's south edge — drop in anywhere and carve.
+  addUgRamp({ x: -76, z: -52, runX: 1, runZ: 0, len: 5, width: 9, baseY: -5, height: 5, boost: 0.8, pipeSlide: true });
+  addUgRamp({ x: -78, z: -50, runX: 0, runZ: 1, len: 5, width: 9, baseY: -5, height: 5, boost: 0.8, pipeSlide: true });
+  // Cheeks: surf 0 at the rim, ~45° down into the well (surf reachable from
+  // the floor so the rims never read as an invisible glass bridge).
+  addUgRamp({ x: -81.5, z: -46.5, runX: 0, runZ: -1, len: 2, width: 2, baseY: -5, height: 5 });
+  addUgRamp({ x: -81.25, z: -52, runX: -1, runZ: 0, len: 2.5, width: 9, baseY: -5, height: 5 });
+  addUgRamp({ x: -78, z: -55.25, runX: 0, runZ: -1, len: 2.5, width: 10.5, baseY: -5, height: 5 });
+  rimLoop(SS.hip.hole, NEON.amber);
+
+  // --- Eurobox: drop arc → flat run → shelf step-up → exit lip ---
+  addTrench(SS.euro, false);
+  rimLoop(SS.euro.hole, NEON.amber);
+
+  // --- Pyramid: near-square funnel crater ---
+  {
+    const P = SS.pyramid;
+    superRingPit({
+      cx: P.cx, cz: P.cz, rx: P.rx, rz: P.rz, p: P.p, tIn: P.tIn,
+      bands: P.bands, sectors: P.sectors,
+      h: (t) => P.depth * (t - 1), rimBoost: P.rimBoost,
+    });
+    thinPad(P.cx, P.cz, P.padHalf, P.padHalf, P.padY);
+    rimLoop(P.hole, NEON.magenta);
+  }
+
+  // --- Foam pit: banks up the rim, soft vinyl bottom, inner kicker ---
+  {
+    const F = SS.foam;
+    // Kicker FIRST so the ride-match finds its ramp before the bottom pad.
+    addUgRamp({ x: -126, z: -84, runX: 1, runZ: 0, len: 2, width: 10, baseY: -3.5, height: 2, boost: 1.4, pipeSlide: true });
+    superRingPit({
+      cx: F.cx, cz: F.cz, rx: F.rx, rz: F.rz, p: F.p, tIn: F.tIn,
+      bands: F.bands, sectors: F.sectors,
+      h: (t) => -F.depth * ((1 - t) / (1 - F.tIn)), rimBoost: F.rimBoost,
+    });
+    thinPad(F.cx, F.cz, F.padHalf, F.padHalf, F.padY);
+    rimRing(F.cx, F.cz, 7.88, NEON.red);
+  }
+
+  // --- Escalator: stepped flights running north-south ---
+  addTrench(SS.escalator, true);
+  rimLoop(SS.escalator.hole, NEON.cyan);
+
+  // --- Cradle: a spherical bowl ---
+  {
+    const C = SS.cradle;
+    superRingPit({
+      cx: C.cx, cz: C.cz, rx: C.rx, rz: C.rz, p: C.p, tIn: C.tIn,
+      bands: C.bands, sectors: C.sectors,
+      h: (t) => -Math.sqrt(C.rx * C.rx - (C.rx * t) * (C.rx * t)), rimBoost: C.rimBoost,
+    });
+    thinPad(C.cx, C.cz, C.padHalf, C.padHalf, C.padY);
+    rimRing(C.cx, C.cz, 5.9, NEON.magenta);
+  }
+
+  // --- Kidney: mellow shallow superellipse bowl ---
+  {
+    const K = SS.kidney;
+    superRingPit({
+      cx: K.cx, cz: K.cz, rx: K.rx, rz: K.rz, p: K.p, tIn: K.tIn,
+      bands: K.bands, sectors: K.sectors,
+      h: (t) => K.depth * (t - 1), rimBoost: K.rimBoost,
+    });
+    thinPad(K.cx, K.cz, K.padHalfX, K.padHalfZ, K.padY);
+    rimLoop(K.hole, NEON.lime);
+  }
+
+  // --- Kinked rail slot (north-south, south-east of the eurobox) ---
+  addTrench(SS.rail, true);
+  rimLoop(SS.rail.hole, NEON.amber);
+
+  await ugPhase(0.97, 'the sunken skate park');
+
+  // ---- World edge: dark boundary wall with 5 neon bands ----
+  // Rings the whole cavern slab so the car can't drive off the world. One
+  // tall dark pillar per side, each wearing five horizontal neon glow bands
+  // (one per NEON colour); hard colliders span the full wall height so neither
+  // a ground car nor serious airtime clears them (covers the roof top too).
+  const worldWallMat = new THREE.MeshStandardMaterial({ color: 0x14161d, roughness: 0.92 });
+  const worldWallColliders = [];
+  // Visible trim is only one car length tall (~4.3) so the whole map reads
+  // open over the rim — the five neon bands hug the INNER face, lit toward the
+  // cavern. The real containment is an invisible full-height collider (h=44,
+  // no mesh) that no grounded car can roll over, so the low trim never has to
+  // double as a barrier. Colliders are unrotated axis-aligned boxes, so the
+  // x/z radius must be split by WHICH axis the wall's length runs along —
+  // swapping them puts a phantom "wall" across the middle of the map.
+  const WALL_H = 4.3;                  // one car length
+  const WALL_THICK = 1.0;
+  const WALL_BLOCK_H = 44;             // invisible containment height (grounded cars)
+  const wallBandY = [0.6, 1.4, 2.2, 3.0, 3.8];
+  const wallBandColors = [NEON.cyan, NEON.amber, NEON.lime, NEON.magenta, NEON.red];
+  const buildWallSide = (x0, z0, x1, z1, nx, nz) => {
+    const dx = x1 - x0, dz = z1 - z0;
+    const len = Math.hypot(dx, dz);
+    // The wall's centreline sits one thickness outside the slab edge (nx/nz
+    // point outward); the bands sit on the inner (cavern) face.
+    const cx = (x0 + x1) / 2 + nx * (WALL_THICK / 2);
+    const cz = (z0 + z1) / 2 + nz * (WALL_THICK / 2);
+    const rot = Math.atan2(dz, dx);   // align the wall's length along the edge
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_THICK), worldWallMat);
+    wall.position.set(cx, WALL_H / 2, cz);
+    wall.rotation.y = rot;
+    wall.castShadow = true;
+    wall.receiveShadow = true;
+    parent.add(wall);
+    for (let k = 0; k < wallBandColors.length; k++) {
+      const band = new THREE.Mesh(
+        new THREE.BoxGeometry(len + 0.1, 0.12, 0.16),
+        makeGlowMat(wallBandColors[k])
+      );
+      band.position.set(cx - nx * (WALL_THICK / 2 + 0.1), wallBandY[k], cz - nz * (WALL_THICK / 2 + 0.1));
+      band.rotation.y = rot;
+      parent.add(band);
+    }
+    const runsAlongX = Math.abs(dx) >= Math.abs(dz);
+    worldWallColliders.push({
+      x: cx, z: cz,
+      halfW: runsAlongX ? len / 2 : WALL_THICK / 2 + 0.15,
+      halfD: runsAlongX ? WALL_THICK / 2 + 0.15 : len / 2,
+      h: WALL_BLOCK_H,
+    });
+  };
+  buildWallSide(SLAB.minX, SLAB.minZ, SLAB.maxX, SLAB.minZ, 0, -1);   // south face
+  buildWallSide(SLAB.maxX, SLAB.minZ, SLAB.maxX, SLAB.maxZ, 1, 0);    // east face
+  buildWallSide(SLAB.maxX, SLAB.maxZ, SLAB.minX, SLAB.maxZ, 0, 1);    // north face
+  buildWallSide(SLAB.minX, SLAB.maxZ, SLAB.minX, SLAB.minZ, -1, 0);   // west face
+
+  const colliders = [...ceilingColliders, ...stairColliders, ...mountColliders, ...statueColliders, ...glassCity.colliders, ...grandRailColliders, ...machineColliders, ...pickerPadColliders, ...platterColliders, ...washColliders, ...goatColliders, ...worldWallColliders];
+
   let elapsed = 0;   // course clock for sine-animated props (conduits, …)
   let prevX = 0, prevY = 0, prevZ = 0, havePrev = false;
-  let lastTileIdx = -1;   // checkerboard tile under the car last frame (edge-trigger)
+  // Checkerboard tile under a car last frame — one edge-trigger state PER car
+  // (carLastTile for the player's car, followerLastTile for the little car
+  // follower, trainLastTiles for the trailing train cars) so one car crossing a
+  // tile boundary can't eat the other's trigger.
+  const carLastTile = { value: -1 };
+  const followerLastTile = { value: -1 };
+  const trainLastTiles = [];
 
   // Roofline obstacle course finish tracking: `finishCount` counts completed
   // runs, `finishCooldown` stops the fanfare from retriggering every frame
@@ -2907,46 +4746,108 @@ export function addUnderground(parent, opts = {}) {
     get holeCount() { return holeFrameCount; },
   };
 
+  // Free one whole underground build's GPU resources. main.js calls this when
+  // hot-swapping a stale world for a freshly rebuilt one (the underground
+  // resets every time you leave via the tunnel and come back). Glow materials
+  // come from a module-level cache shared across rebuilds, so those are kept.
+  const dispose = (root) => {
+    const cached = new Set(glowMatCache.values());
+    const doneMats = new Set();
+    const doneTex = new Set();
+    root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.isInstancedMesh) {
+        if (o.instanceMatrix) o.instanceMatrix.dispose();
+        if (o.instanceColor) o.instanceColor.dispose();
+      }
+      const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      for (const m of mats) {
+        if (!m || cached.has(m) || doneMats.has(m)) continue;
+        doneMats.add(m);
+        m.dispose();
+        if (m.map && !doneTex.has(m.map)) { doneTex.add(m.map); m.map.dispose(); }
+      }
+    });
+  };
+
+  // True if (x, z) falls inside one of the sunken park's carved-out holes (a
+  // pit opening in the floor slab). main.js uses this so a car that outruns
+  // the ride gate coming off a pit lip falls INTO the hole instead of snapping
+  // back up to the y=0 floor plane (which would read as invisible glass over
+  // the whole pit).
+  function sunkHoleAt(x, z) {
+    for (const poly of SS.holes) {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, zi] = poly[i];
+        const [xj, zj] = poly[j];
+        if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+      }
+      if (inside) return true;
+    }
+    return false;
+  }
+
   return {
     colliders,
     sky,           // foreboding sky all around the cavern (dark clouds, stars, constellations)
     ramps: ugRamps,
+    halfpipe: HALFPIPE,   // blue-wave halfpipe footprint constants (:debug)
+    sunkHoleAt,   // pit-opening test — main.js drops a car past the lip into a pit instead of floating it at y=0
+    park: SS,             // sunken skate park — all 11 feature footprints (:debug)
     floor: plain,   // cavern floor mesh (1970s vinyl kitchen floor) — for the ?debug hook
-    promptBlocks,
-    foamPieces,
-    spawnFoam,   // exposed for the ?debug test hook (foam-cap recycling)
-    conduitPipes,
     STAIRS,      // footprint constants (solid ramp + big flat roof)
     GRAND,       // grand-ramp footprint constants (steeper east twin of the staircase)
     gemstones,   // candy-waterfall gemstone pool (for the ?debug hook)
     beltGems,    // conveyor-candy gem pool (idea #33 follow-up) — ?debug hook
-    poleState,   // padded-pole hit counter + last hit info (tasks #31–#32)
-    platter: { PLATTER, spin: platterSpin, get gripped() { return platterGripped; } },
     trampolines,   // launch pads (idea #13) — state for the ?debug hook
     conveyor: CONVEYOR,   // giant conveyor lane footprint (idea #33) — ?debug hook
-    disco,         // rotating disco ball pendulum state (idea #14)
-    glassCrystals: glassCity.crystals,   // Glass City crystal clusters (idea #25)
+    glassCrystals: glassCity.balloons,   // Glass City plaza balloons (pop when driven over)
     glassSpire: glassCity.spire,         // central citadel crystal (idea #25)
     // Idea #29 — landmarks for the minimap so the big dark cavern is navigable.
     mapFeatures: [
       { kind: 'stairs', x: STAIRS.cx, z: STAIRS.cz, r: 12, color: '#8fd0ff', label: 'Stairs' },
       { kind: 'waterfall', x: GRAND.x, z: GRAND.z, r: 10, color: '#ff9a3c', label: 'Waterfall' },
-      { kind: 'pole', x: POLE.x, z: POLE.z, r: 5, color: '#ffb84d', label: 'Pole' },
       { kind: 'mountain', x: MOUNT.cx, z: MOUNT.cz, r: 34, color: '#f2f6ff', label: 'Mountain' },
-      { kind: 'pit', x: PIT.cx, z: PIT.cz, r: 13, color: '#ffd1dc' },
-      { kind: 'platter', x: PLATTER.cx, z: PLATTER.cz, r: PLATTER.r, color: '#ff3fd8' },
-      { kind: 'disco', x: DISCO.x, z: DISCO.z, r: 4, color: '#35f0ff' },
       { kind: 'tramp', x: TRAMPOLINES[0].x, z: TRAMPOLINES[0].z, r: 4, color: '#9dff3f' },
       { kind: 'tramp', x: TRAMPOLINES[1].x, z: TRAMPOLINES[1].z, r: 4, color: '#9dff3f' },
-      // The serpentine ground-floor obstacle course (2026-09-19): minimap
-      // markers for the START banner and the checkered FINISH gate so the
-      // winding route is navigable from across the dark cavern.
+      // Factory floor: the steam press on the eastbound lane and the car wash
+      // on the westbound approach, so both read on the minimap.
+      { kind: 'course', x: PRESS.x, z: PRESS.z, r: 6, color: '#ffb84d', label: 'Press' },
+      { kind: 'course', x: CARWASH.cx, z: CARWASH.cz, r: 6, color: '#35f0ff', label: 'Car wash' },
+      // The factory machine on the westbound z=17 lane and the disco ball over
+      // the eastbound z=37 straight — the two ramps-and-air course moments.
+      { kind: 'course', x: MACHINE.x, z: MACHINE.z, r: 14, color: '#f2f6ff', label: 'Factory' },
+      { kind: 'course', x: DISCO.x, z: DISCO.z, r: 5, color: '#b9a8ff', label: 'Disco' },
+      // The finish gate markers so the drive north toward the mountain reads
+      // on the minimap from across the dark cavern.
       { kind: 'course', x: COURSE_START.x, z: COURSE_START.z, r: 9, color: '#9dff3f', label: 'Course start' },
       { kind: 'course', x: COURSE_FINISH_X, z: COURSE_FINISH_Z, r: 9, color: '#ff3fd8', label: 'Course finish' },
+      // 2026-09-23 factory-floor attractions (the five new novelties).
+      { kind: 'course', x: BUBBLE_ZONE.minX + (BUBBLE_ZONE.maxX - BUBBLE_ZONE.minX) / 2, z: BUBBLE_ZONE.minZ + (BUBBLE_ZONE.maxZ - BUBBLE_ZONE.minZ) / 2, r: 18, color: '#b8ffd0', label: 'Bubble wrap' },
+      { kind: 'course', x: TAFFY[0].x, z: -30, r: 9, color: '#ff9be0', label: 'Taffy pullers' },
+      { kind: 'course', x: MAGNET.x, z: MAGNET.z, r: 10, color: '#ff5560', label: 'Magnet' },
+      { kind: 'course', x: expressTube.entrance.x, z: expressTube.entrance.z, r: 16, color: '#3fd8ff', label: 'Express tube' },
+      // The sunken skate park (2026-09-25): the giant halfpipe plus the eleven
+      // bowls/rails read as ONE square so the minimap stays clean. The park
+      // sits west of the minimap's edge, so the square edges into the canvas's
+      // right side after the 180° flip and the label clamps onto the visible
+      // part (drawMinimap handles the 'park' kind).
+      { kind: 'park', x: -96, z: -70, r: 40, color: '#35d0ff', label: 'Skate park' },
+      // The spinner — a giant rotating turntable beside the Holy Mountain —
+      // shows as a circle so the spinning platter reads apart from the bowls.
+      { kind: 'circle', x: PLATTER.cx, z: PLATTER.cz, r: PLATTER.r, color: '#ff9a3c', label: 'Spinner' },
     ],
-    course: { start: COURSE_START, finishX: COURSE_FINISH_X, finishZ: COURSE_FINISH_Z, finishHalf: COURSE_FINISH_HALF, gates: [], pennants: routePennantWaves.length },
-    coursePennants: routePennantWaves.map((w) => w.pennant),   // live pennant meshes (debug hook)
     get finishCount() { return finishCount; },
+    // Factory floor (2026-09-22): the steam press's slamActive flag flattens
+    // the car when it's under the head; carWash is the wash-bay live state.
+    steamPress: pressed,
+    carWash,
+    // 2026-09-23 factory-floor attractions (the five novelties).
+    bubbleStrip,      // pops counter + zone — main.js drives the THWACK/wobble
+    taffy,            // hookedAt(x,z) poll + hooks list + hits counter
+    magnet,           // live active flag + holdY/radius main.js reads
+    expressTube,      // entrance/exit coords + ring meshes (for the minimap/lights)
     stairGhostAt, // task #35: floor-level ghost detection inside the staircase
     stairHeightAt, // bumpy stair pitch — height of the step surface at (x, z)
     holy,        // Holy Mountain live state (mystery-light pulse, entered flag)
@@ -2985,45 +4886,57 @@ export function addUnderground(parent, opts = {}) {
       return true;
     },
     spiralTubeMat: tubeMat, // arrival cinematic fades the tube translucent so the orbiting camera can see the car inside
-    get bumpCount() { return bumpCount; },
-    get lastBump() { return lastBump; },
-    update(delta, player) {
+    // Free a stale build's GPU resources before main.js swaps in a rebuilt world.
+    dispose,
+    update(delta, player, follower, consist) {
       glassCity.update(delta, player);
       elapsed += delta;
       sky.update(delta, elapsed, player);
-      // Checkerboard ceiling: when the car drives over a tile, advance it one
+      // Checkerboard ceiling: when a car drives over a tile, advance it one
       // step through the neon sequence (dark → cyan → lime → amber → magenta
       // → red). Red is terminal — once a tile is red it stays lit forever.
       // Edge-triggered on the tile under the car so a tile advances once per
       // visit, not every frame while the car sits on it. A per-tile cooldown
       // stops the same pass (front wheels then back wheels, or a boundary
       // jitter) from advancing a tile twice — the car must drive away and
-      // come back before the tile can change color again.
-      if (player) {
-        checker.tick++;
-        // Tick down tile advance cooldowns so a tile can be re-triggered
-        // once the car has driven away and come back.
-        for (let i = 0; i < tileCount; i++) {
-          if (checkerCooldown[i] > 0) checkerCooldown[i] -= delta;
-        }
+      // come back before the tile can change color again. EVERY drivable body
+      // shares the mechanic: the player's car, the little car follower, and
+      // every trailing freight car when the player drives the train each
+      // advance tiles as they drive over them (each with its own last-tile
+      // edge state).
+      const advanceTilesFor = (v, lastTileState, mode) => {
         // Only advance tiles when the car is actually driving ON the ceiling
         // (the "second roof", top face at CEIL_Y + 1.3) — not when it's on
         // the cavern floor underneath, even though the same x/z maps to a
         // ceiling tile.
-        const onCeiling = player.y > CEIL_Y + 0.5;
-        const tx = onCeiling ? Math.floor((player.x - ceilMinX) / TILE_SZ) : -1;
-        const tz = onCeiling ? Math.floor((player.z - gridZ0) / TILE_SZ) : -1;
+        const onCeiling = v.y > CEIL_Y + 0.5;
+        const tx = onCeiling ? Math.floor((v.x - ceilMinX) / TILE_SZ) : -1;
+        const tz = onCeiling ? Math.floor((v.z - gridZ0) / TILE_SZ) : -1;
         if (tx >= 0 && tx < tilesX && tz >= 0 && tz < tilesZ) {
           const idx = tz * tilesX + tx;
-          if (idx !== lastTileIdx) {
-            lastTileIdx = idx;
+          if (idx !== lastTileState.value) {
+            lastTileState.value = idx;
             const st = checkerState[idx];
-            if (st < 2 + CHECKER_NEON.length - 1 && checkerCooldown[idx] <= 0) {   // not yet red, cooldown expired
+            // Player + little car keep the global per-tile cooldown: a tile
+            // advances once per drive-over visit. The train cars pace PER CAR
+            // instead — with a 15-car consist the loco's tile lock would
+            // starve every car behind it (they arrive within a second of the
+            // loco, cooldown still ticking), so the whole consist sweeps the
+            // colors one step per car instead.
+            const allowed = mode === 'train'
+              ? (st < 2 + CHECKER_NEON.length - 1 && elapsed - lastTileState.guardT > TRAIN_TILE_GUARD)
+              : (st < 2 + CHECKER_NEON.length - 1 && checkerCooldown[idx] <= 0);
+            if (allowed) {
+              if (mode === 'train') {
+                lastTileState.guardT = elapsed;
+                checkerCooldown[idx] = 0;   // don't lock the tile for the next car
+              }
               // Advance one step: dark (0/1) → cyan (2), then cyan → lime →
               // amber → magenta → red. The two dark shades share a single
               // first step, so the SECOND drive-over is the green (lime)
               // that spreads blue to its neighbors.
               const newSt = setOrBump(idx, 2);
+              if (mode === 'train') checkerCooldown[idx] = 0;   // setOrBump re-armed it — clear again
               // The color the tile just turned into radiates a wave outward
               // in concentric rings — each ring bumps its tiles toward a
               // target color (or up one step if already at/past it), so the
@@ -3045,7 +4958,56 @@ export function addUnderground(parent, opts = {}) {
             }
           }
         } else {
-          lastTileIdx = -1;
+          lastTileState.value = -1;
+        }
+      };
+      // Per-car edge state for the trailing train cars (each car tracks its
+      // own last tile so transitions are independent of its neighbours). The
+      // array is rebuilt whenever the consist list is empty/absent.
+      if (!Array.isArray(consist)) {
+        trainLastTiles.length = 0;
+        consist = null;
+      }
+      if (player || follower || (consist && consist.length)) {
+        checker.tick++;
+        // Tick down tile advance cooldowns so a tile can be re-triggered
+        // once a car has driven away and come back.
+        for (let i = 0; i < tileCount; i++) {
+          if (checkerCooldown[i] > 0) checkerCooldown[i] -= delta;
+        }
+      }
+      if (player) advanceTilesFor(player, carLastTile, 'standard');
+      if (follower) advanceTilesFor(follower, followerLastTile, 'standard');
+      if (consist) {
+        while (trainLastTiles.length < consist.length) trainLastTiles.push({ value: -1, guardT: 0 });
+        for (let i = 0; i < consist.length; i++) {
+          advanceTilesFor(consist[i], trainLastTiles[i], 'train');
+        }
+      }
+      // Serpentine guide dots: driving through a dot (car on the floor, inside
+      // GUIDE_HIT horizontally) flips that dot from lime to the darker glowing
+      // blue permanently — so dragging the whole course turns the snake blue
+      // behind you. Only floor-height driving counts (the ceiling run at y≈31
+      // passes over the same x/z and must not trigger the floor dots). The dot
+      // is MOVED between two InstancedMeshes because the neon look is
+      // emissive, which per-instance colors can't touch.
+      if (player && player.y < 8) {
+        const guideHitR2 = GUIDE_HIT * GUIDE_HIT;
+        for (let i = 0; i < guideCount; i++) {
+          if (guideLit[i]) continue;
+          const gdx = player.x - guideX[i];
+          const gdz = player.z - guideZ[i];
+          if (gdx * gdx + gdz * gdz < guideHitR2) {
+            guideLit[i] = 1;
+            _guideZero.compose(_guideHide, _guideQuat, _guideOne);
+            guideDotsLime.setMatrixAt(i, _guideZero);
+            guideDotsLime.instanceMatrix.needsUpdate = true;
+            guideDot.position.set(guideX[i], GUIDE_DOT_R, guideZ[i]);
+            guideDot.updateMatrix();
+            guideDotsBlue.setMatrixAt(guideBlueCount++, guideDot.matrix);
+            guideDotsBlue.count = guideBlueCount;
+            guideDotsBlue.instanceMatrix.needsUpdate = true;
+          }
         }
       }
       // Crumble animation: tiles that reached red flash red/white for a few
@@ -3161,27 +5123,63 @@ export function addUnderground(parent, opts = {}) {
           if (t >= 1) s.state = 'landed';
         }
       }
-      // Ground-floor FINISH: crossing the FINISH banner's plane on the cavern
-      // floor, over its z-span, completes a run — fanfare from the caller plus
-      // a quick blaze on the FINISH banner so the moment reads as a
-      // celebration. A short cooldown stops the same crossing retriggering.
+      // Ground-floor FINISH: crossing the red satin ribbon's plane on the cavern
+      // floor, over the ribbon's span, completes a run — fanfare from the
+      // caller plus a quick blaze on the ribbon (its faint emissive surges) so
+      // the moment reads as a celebration. The gate is direction-aware: the
+      // finish ribbon sits on the open south tundra and is crossed WESTBOUND
+      // (COURSE_FINISH_DIR '-x'), the Holy Mountain framed dead ahead and the
+      // neon staircase behind you. A short cooldown stops the same crossing
+      // retriggering.
       if (finishCooldown > 0) finishCooldown -= delta;
       if (finishFlash > 0) finishFlash = Math.max(0, finishFlash - delta);
       if (finishGate.mat) {
-        finishGate.mat.emissiveIntensity = 0.55 + finishFlash * 3.4;
+        finishGate.mat.emissiveIntensity = 0.35 + finishFlash * 3.4;
+      }
+      // The gate is direction-aware: when the ribbon plane is vertical in X
+      // (west-east crossers) the band check runs along Z; when it's vertical
+      // in Z (north-south crossers, COURSE_FINISH_DIR '+z') the band check
+      // runs along X. Only the matching crossing direction completes a run.
+      let bandOk = false;
+      let planeOk = false;
+      if (COURSE_FINISH_DIR === '-x') {
+        bandOk = Math.abs(player.z - COURSE_FINISH_Z) <= COURSE_FINISH_HALF;
+        planeOk = prevX > COURSE_FINISH_X && player.x <= COURSE_FINISH_X;
+      } else if (COURSE_FINISH_DIR === '+z') {
+        bandOk = Math.abs(player.x - COURSE_FINISH_X) <= COURSE_FINISH_HALF;
+        planeOk = prevZ < COURSE_FINISH_Z && player.z >= COURSE_FINISH_Z;
       }
       if (player && havePrev && player.y < 3 && finishCooldown <= 0) {
-        if (Math.abs(player.z - COURSE_FINISH_Z) <= COURSE_FINISH_HALF
-          && prevX < COURSE_FINISH_X && player.x >= COURSE_FINISH_X) {
+        if (bandOk && planeOk) {
           finishCooldown = 4.0;
           finishFlash = 0.85;
           finishCount += 1;
+          burstRibbon(player.x, player.z);
           if (onFinishLine) onFinishLine(player.x, player.z);
         }
       }
-      // Course pennants flutter in the breeze.
-      for (const w of routePennantWaves) {
-        w.pennant.rotation.y = Math.sin(elapsed * 3.2 + w.phase) * 0.22;
+      // Finish ribbon burst: the shards fly apart, tumble and sink under the
+      // same gravity as the car; the moment the last one despawns the intact
+      // ribbon respawns so a fresh run can burst it again.
+      for (let i = ribbonShards.length - 1; i >= 0; i--) {
+        const s = ribbonShards[i];
+        s.age += delta;
+        if (s.age >= s.life) {
+          parent.remove(s.mesh);
+          s.mesh.geometry.dispose();
+          ribbonShards.splice(i, 1);
+          continue;
+        }
+        s.vy -= 18 * delta;
+        s.mesh.position.x += s.vx * delta;
+        s.mesh.position.y += s.vy * delta;
+        s.mesh.position.z += s.vz * delta;
+        s.mesh.rotation.x += s.rvx * delta;
+        s.mesh.rotation.y += s.rvy * delta;
+        s.mesh.rotation.z += s.rvz * delta;
+      }
+      if (ribbonShards.length === 0 && finishGate.ribbon && !finishGate.ribbon.visible) {
+        finishGate.ribbon.visible = true;
       }
       // Spiral-tunnel mouth weather: roll the cloud bank lazily and pulse the
       // fog haze so the tunnel top reads as living cloud, not a static plug.
@@ -3192,59 +5190,68 @@ export function addUnderground(parent, opts = {}) {
           h.sprite.material.opacity = 0.16 + 0.1 * (0.5 + 0.5 * Math.sin(elapsed * 0.7 + h.phase));
         }
       }
-      // Task #12: slide each conduit back and forth across its lane on a
-      // sine of elapsed time — phase/speed are stored per pipe so placed
-      // pipes run out of sync with each other.
-      // Task #13: when a conduit overlaps the car near bumper height, fire
-      // onPipeShove with the pipe's current travel direction (analytic
-      // derivative of the sine slide). A short per-pipe cooldown keeps one
-      // sweep from firing every frame while the car sits in the overlap.
-      for (const p of conduitPipes) {
-        if (p.pattern === 'guillotine') {
-          // Vertical slam: bar rides a sine between PIPE_Y and PIPE_Y + amp.
-          // Only a descending bar shoves (vel < 0), and it flings the car out
-          // of the lane along the bar's perpendicular (±Z here).
-          const gy = PIPE_Y + p.amp * (0.5 + 0.5 * Math.sin(elapsed * p.speed + p.phase));
-          p.mesh.position.set(p.cx, gy, p.cz);
-          if (p.hitCooldown > 0) p.hitCooldown -= delta;
-          const gvel = Math.cos(elapsed * p.speed + p.phase) * p.amp * p.speed * 0.5;
-          if (player && onPipeShove && p.hitCooldown <= 0 && gvel < -0.5
-            && Math.abs(player.x - p.cx) < p.len / 2 + 2.2
-            && Math.abs(player.z - p.cz) < PIPE_R + 2.2
-            && gy - PIPE_R < player.y + 2.0 && gy + PIPE_R > player.y) {
-            p.hitCooldown = 0.8;
-            p.hitCount += 1;
-            onPipeShove(0, Math.sign(player.z - p.cz) || 1);
-          }
-          continue;
-        }
-        const off = Math.sin(elapsed * p.speed + p.phase) * p.amp;
-        const vel = Math.cos(elapsed * p.speed + p.phase) * p.amp * p.speed;
-        if (p.axis === 'x') p.mesh.position.z = p.cz + off;
-        else p.mesh.position.x = p.cx + off;
-        if (p.hitCooldown > 0) p.hitCooldown -= delta;
-        if (player && onPipeShove && p.hitCooldown <= 0
-          && Math.abs(vel) > 0.5   // ignore the turn-around crawl
-          && player.y < PIPE_Y + PIPE_R) {
-          // Split the overlap test into the slide axis (thin) and the fixed
-          // axis (long side of the pipe).
-          const carS = p.axis === 'x' ? player.z : player.x;
-          const pipeS = p.axis === 'x' ? p.mesh.position.z : p.mesh.position.x;
-          const carF = p.axis === 'x' ? player.x : player.z;
-          const pipeF = p.axis === 'x' ? p.cx : p.cz;
-          if (Math.abs(carS - pipeS) < PIPE_R + 2.2 && Math.abs(carF - pipeF) < p.len / 2 + 2.2) {
-            p.hitCooldown = 0.8;
-            p.hitCount += 1;
-            if (p.axis === 'x') onPipeShove(0, Math.sign(vel));
-            else onPipeShove(Math.sign(vel), 0);
-          }
-        }
-      }
       // Giant conveyor lane (idea #33): scroll the chevrons and, while the car
       // is over the belt near floor level, add its drag on top of the car's
       // own motion.
       beltTex.offset.x -= CONVEYOR.dirX * CONVEYOR.speed * delta / 6;
       beltTex.offset.y += CONVEYOR.dirZ * CONVEYOR.speed * delta / 6;
+      // The picker robot hunkers over the belt and HAMMERS its claw down in a
+      // "grab" cycle: the shoulder sweeps the arm across the lane while the
+      // elbow pitches the long forearm over and down INTO the belt (e sweeps up
+      // to ~1.6 rad) and the two GIANT pincers stay gaped wide while the arm is
+      // up, then SNAP SHUT around the belt as it bottoms out — like it's
+      // genuinely trying to grab the car. The leveling clamp counter-rotates
+      // against the elbow fold, so the claws keep pointing STRAIGHT DOWN at the
+      // belt instead of swinging up-and-back onto the robot's own arm. If a car
+      // is under the claw when the pincers clamp shut, a real onPickerGrab()
+      // shove fires (the machine actually hits the car now); the soft pad under
+      // the claw still bumps cars out.
+      conveyorPicker.t += delta;
+      {
+        const t = conveyorPicker.t, sh = conveyorPicker.shoulder, el = conveyorPicker.elbow, wr = conveyorPicker.wrist;
+        sh.rotation.y = -0.15 + Math.sin(t * 0.55) * 0.5;
+        // The dive sweeps e up to ~1.6 rad (just past the sin-peak at π/2 so the
+        // folded forearm's horizontal reach is deepest right where the pincers
+        // snap shut over the belt's middle).
+        const e = 0.5 + Math.max(0, Math.sin(t * 0.75)) * 1.1;
+        el.rotation.x = -e;
+        wr.rotation.x = 0.2 - e * 0.15;
+        const lv = conveyorPicker.level;
+        if (lv) lv.rotation.x = Math.min(e, 1.5);
+        // Pincer jaws: gaped wide while the arm rides up, snapping SHUT only
+        // as the claw bottoms out (~70% into the dive → hard clamp at the dip).
+        const cg = Math.max(0, Math.sin(t * 0.75));
+        const clamp = Math.max(0, Math.min(1, (cg - 0.7) / 0.3));
+        const openAng = 1.4 - 1.38 * clamp;          // 1.4 rad open → ~0.02 rad clamped
+        const jawL = conveyorPicker.jawL, jawR = conveyorPicker.jawR;
+        if (jawL) {
+          jawL.rotation.z = -openAng;
+          jawR.rotation.z = openAng;
+        }
+        // Genuine grab hit: the instant the pincers finish clamping on a car
+        // that's under the claw, hurl it — the robot REALLY grabs now.
+        if (clamp > 0.85 && !conveyorPicker.grabbed) {
+          conveyorPicker.grabbed = true;
+          const pad = conveyorPicker.pad;
+          if (player
+            && Math.abs(player.x - pad.x) < 2.6
+            && Math.abs(player.z - pad.z) < 2.8
+            && player.y < 1.8) {
+            const gx = CONVEYOR.dirX * 1.0, gz = CONVEYOR.dirZ * 1.0 - 0.6; // along the belt + off it (north)
+            const gl = Math.hypot(gx, gz) || 1;
+            if (onPickerGrab) onPickerGrab(gx / gl, gz / gl);
+          }
+        }
+        if (clamp < 0.15 && conveyorPicker.grabbed) conveyorPicker.grabbed = false;
+        wr.updateWorldMatrix(true, false);
+        const wp = new THREE.Vector3();
+        wr.getWorldPosition(wp);
+        const pad = conveyorPicker.pad;
+        pad.x = wp.x;
+        pad.z = wp.z;
+        const tipY = wp.y - 1.4;
+        pad.h = tipY < 2.1 ? Math.max(0, Math.min(1.2, tipY - 0.3)) : 0;
+      }
       if (player
         && Math.abs(player.x - CONVEYOR.cx) < CONVEYOR.len / 2
         && Math.abs(player.z - CONVEYOR.cz) < CONVEYOR.wid / 2
@@ -3252,37 +5259,262 @@ export function addUnderground(parent, opts = {}) {
         player.x += CONVEYOR.dirX * CONVEYOR.speed * delta;
         player.z += CONVEYOR.dirZ * CONVEYOR.speed * delta;
       }
-      // Rotating platter: carry any car on the disk around the hub in a
-      // circle — in the SAME direction (+rotation.y) the disk texture spins,
-      // so the car reads as sitting on the turntable. A small outward creep
-      // (weak at the hub, strong at the rim) means an unsteered car always
-      // drifts to the edge; the instant the grip ends the car is flung off
-      // along the tangent of its exit point.
-      if (player) {
-        const pdx = player.x - PLATTER.cx;
-        const pdz = player.z - PLATTER.cz;
-        const pd = Math.hypot(pdx, pdz);
-        const gripped = pd < PLATTER.r - 0.5 && player.y > -0.5 && player.y < PLATTER.h + 3;
-        if (gripped) {
-          const ang = PLATTER.spin * delta;
-          const cos = Math.cos(ang), sin = Math.sin(ang);
-          const rx = pdx * cos + pdz * sin;
-          const rz = -pdx * sin + pdz * cos;
-          const slip = PLATTER.slip * (0.35 + 0.65 * (pd / PLATTER.r)) * delta;
-          const scale = pd > 1e-4 ? (pd + slip) / pd : 1;
-          player.x = PLATTER.cx + rx * scale;
-          player.z = PLATTER.cz + rz * scale;
-        } else if (platterGripped && onPlatterEject && pd < PLATTER.r + 2) {
-          // Grip just ended: throw the car along the +spin tangent, scaled by
-          // how fast the platter was carrying it (the exit footspeed).
-          const tlen = Math.hypot(pdz, -pdx) || 1;
-          const speed = Math.hypot(player.x - prevX, player.z - prevZ) / Math.max(delta, 1e-4);
-          onPlatterEject(pdz / tlen, -pdx / tlen, Math.min(1, Math.max(0.15, speed / PLATTER.r)));
-        }
-        platterGripped = gripped;
+      // Factory machinery: spin the gears, run the steam press cycle and the
+      // car wash (rollers, fans, water spray + exit sparkle).
+      for (const sp of gearSpin) sp.mesh.rotation.z += delta * sp.speed;
+      // Giant slat machine: beds and slats pump up and down in alternating
+      // waves (beds up → neighbouring slats down), like the gears drive them.
+      machineT += delta;
+      for (const bs of bedsAndSlats) {
+        const wave = Math.sin(machineT * bs.speed + bs.phase);
+        bs.mesh.position.y = bs.baseY + wave * (bs.amp * 0.75 + 0.25);
       }
-      platterSpin.t += PLATTER.spin * delta;
-      platterSpin.disk.rotation.y = platterSpin.t;
+      // Disco ball: spin forever, swing like a damped pendulum when a flying car
+      // knocks it, and settle back to hanging straight.
+      disco.cd = Math.max(0, disco.cd - delta);
+      const DAMP = 2.6, STIFF = 9.0;
+      disco.vx += (-STIFF * disco.ax - DAMP * disco.vx) * delta;
+      disco.vz += (-STIFF * disco.az - DAMP * disco.vz) * delta;
+      disco.ax += disco.vx * delta;
+      disco.az += disco.vz * delta;
+      discoPivot.rotation.z = disco.ax;
+      discoPivot.rotation.x = disco.az;
+      discoSpin.rotation.y += delta * (DISCO.spin + Math.min(disco.hits * 0.25, 2));
+      // The giant turntable beside the mountain: spins forever, purely decorative.
+      platterSpin.t += delta;
+      if (platterSpin.disk) platterSpin.disk.rotation.y += delta * PLATTER.spin;
+      if (player) {
+        const px = player.x - DISCO.x, pz = player.z - DISCO.z;
+        // Only a mid-air near the ball (from the kicker ramps) can hit it.
+        if (disco.cd <= 0 && player.y > 4.5 && player.y < 13.5
+          && px * px + pz * pz < DISCO.hitR * DISCO.hitR) {
+          disco.cd = 1.2;
+          disco.hits++;
+          const d = Math.hypot(px, pz) || 1;
+          disco.vx -= (px / d) * 3.2;
+          disco.vz -= (pz / d) * 3.2;
+          if (disco.ax + disco.az === 0) {
+            disco.vx += (Math.random() - 0.5) * 1.5;
+            disco.vz += (Math.random() - 0.5) * 1.5;
+          }
+        }
+      }
+      // Steam press state machine: 'up' (rest) → 'drop' (slam) → 'hold'
+      // (flat) → 'rise'. The warning light flashes during the drop/hold so a
+      // driver can read the timing, and steam blows when the head is low.
+      pressed.t += delta;
+      pressed.hiss = false;
+      let headTarget = PRESS_UP_Y;
+      if (pressed.phase === 'up') {
+        if (pressed.t >= 2.4) { pressed.phase = 'drop'; pressed.t = 0; }
+      } else if (pressed.phase === 'drop') {
+        headTarget = PRESS_DOWN_Y;
+        pressed.hiss = true;
+        if (pressed.t >= 0.4) { pressed.phase = 'hold'; pressed.t = 0; }
+      } else if (pressed.phase === 'hold') {
+        headTarget = PRESS_DOWN_Y;
+        pressed.hiss = true;
+        if (pressed.t >= 1.35) { pressed.phase = 'rise'; pressed.t = 0; }
+      } else if (pressed.phase === 'rise') {
+        if (pressed.t >= 0.65) { pressed.phase = 'up'; pressed.t = 0; }
+      }
+      pressed.head.position.y += (headTarget - pressed.head.position.y) * Math.min(1, delta * 6);
+      const pressing = pressed.phase === 'drop' || pressed.phase === 'hold';
+      warnLight.material.emissiveIntensity = pressing ? 1.3 + Math.sin(pressed.t * 26) * 0.9 : 0.4;
+      warnLight.scale.setScalar(pressing ? 1.35 : 1);
+      pressed.slamActive = false;
+      if (player
+        && pressing
+        && Math.abs(player.x - PRESS.x) < PRESS.halfW + 1.2
+        && Math.abs(player.z - PRESS.z) < PRESS.halfD + 0.9
+        && player.y < 2.1) {
+        pressed.slamActive = true;
+      }
+      if (pressed.hiss) {
+        steamPuffTimer -= delta;
+        if (steamPuffTimer <= 0) {
+          steamPuffTimer = 0.07;
+          const sp = steamPuffs.find((p) => !p.alive);
+          const puff = sp || {};
+          if (!sp) {
+            const mat = new THREE.SpriteMaterial({
+              map: washWaterTex, color: 0xb8c4d0, transparent: true, opacity: 0.4, depthWrite: false,
+            });
+            puff.mesh = new THREE.Sprite(mat);
+            parent.add(puff.mesh);
+            steamPuffs.push(puff);
+          }
+          puff.alive = true;
+          puff.life = 0.85;
+          puff.vx = (Math.random() - 0.5) * 2;
+          puff.vy = 1.6 + Math.random() * 1.4;
+          puff.vz = (Math.random() - 0.5) * 2;
+          const sideX = (Math.random() - 0.5) * 2 * PRESS.halfW;
+          puff.mesh.position.set(PRESS.x + sideX, PRESS_DOWN_Y + 0.2, PRESS.z + (Math.random() - 0.5) * PRESS.halfD * 2);
+          puff.mesh.scale.setScalar(1.1 + Math.random() * 1.3);
+        }
+      }
+      for (let i = steamPuffs.length - 1; i >= 0; i--) {
+        const p = steamPuffs[i];
+        if (!p.alive) continue;
+        p.life -= delta;
+        if (p.life <= 0) {
+          p.alive = false;
+          p.mesh.visible = false;
+          continue;
+        }
+        p.mesh.position.x += p.vx * delta;
+        p.mesh.position.y += p.vy * delta;
+        p.mesh.position.z += p.vz * delta;
+        p.mesh.material.opacity = 0.4 * (p.life / 0.85);
+        p.mesh.visible = true;
+      }
+      // Car wash: every brush rig spins/sweeps; water sprays at the car while
+      // it's inside; after it leaves it sparkles for a few seconds.
+      carWash.t += delta;
+      // Vertical side drums + full-height washers: fast spin about Y.
+      for (const d of carWash.drums) d.rotation.y += delta * 8;
+      for (const w of carWash.washers) w.rotation.y += delta * 9;
+      // Rocker panel scrubbers rip along (fastest spinning of the lot).
+      for (const rk of carWash.rocks) rk.rotation.y += delta * 16;
+      // Pena-wheel tire scrubbers roll about their own long axis.
+      for (const tr of carWash.tires) tr.rotation.y += delta * 14;
+      // High-pressure wheel blasters: nozzle rings whip around.
+      for (const hd of carWash.blasters) hd.rotation.y += delta * 11;
+      // Wrap-around gyro Wraps: the arm STEPS IN to the car path, sweeps out
+      // along the side, then REACHES BACK around the rear before releasing —
+      // a repeated in/out swing about the shoulder while the brush spins.
+      for (const w of carWash.wraps) {
+        w.arm.rotation.y = (w.arm.userData.base ?? 0) + Math.sin(carWash.t * 1.6 + w.phase) * w.reach;
+        w.spin.rotation.y += delta * 9;
+      }
+      // Mitter curtains: overhead frames agitate in a circular pattern.
+      for (const mc of carWash.mitterCurtains) {
+        mc.g.rotation.x = Math.sin(carWash.t * 2.0 + mc.phase) * 0.06;
+        mc.g.rotation.z = Math.cos(carWash.t * 1.7 + mc.phase * 1.3) * 0.05;
+      }
+      // Top mitter / contour washer: bobs its height with the car + rolls.
+      if (carWash.mitter) {
+        carWash.mitter.g.position.y = 2.4 + Math.sin(carWash.t * 1.9) * 0.4;
+        carWash.mitter.spin.rotation.y += delta * 10;
+      }
+      // Big overhead sweeps: sweep side to side across the roof + roll.
+      for (const b of carWash.sweeps) {
+        b.g.rotation.x = Math.sin(carWash.t * 2.1 + b.phase) * b.amp;
+        b.g.rotation.z = Math.sin(carWash.t * 1.4 + b.phase * 0.7) * 0.08;
+        b.spin.rotation.y += delta * 9;
+      }
+      for (const f of carWash.fans) { f.rotation.z += delta * 10; f.scale.setScalar(1 + Math.sin(carWash.t * 12) * 0.1); }
+      // Inflatable tube men: swaying bodies + wildly windmilling arms.
+      for (const tm of carWash.tubeMen) {
+        tm.time += delta;
+        tm.body.rotation.z = Math.sin(tm.time * 1.3 + tm.phase) * 0.3;
+        tm.body.rotation.x = Math.sin(tm.time * 2.1 + tm.phase * 0.7) * 0.18;
+        tm.armR.rotation.x = -Math.abs(Math.sin(tm.time * 3.1 + tm.phase)) * 2.7;
+        tm.armR.rotation.z = Math.sin(tm.time * 2.3 + tm.phase * 0.5) * 0.8;
+        tm.armL.rotation.x = Math.abs(Math.sin(tm.time * 2.7 + tm.phase * 1.4)) * 2.7;
+        tm.armL.rotation.z = Math.sin(tm.time * 2.6 + tm.phase) * 0.8;
+        tm.g.position.y = Math.sin(tm.time * 2.0 + tm.phase) * 0.08;
+      }
+      const inWash = player
+        && Math.abs(player.x - CARWASH.cx) < CARWASH.len / 2 + 1
+        && Math.abs(player.z - CARWASH.cz) < CARWASH.wid / 2 + 1.2
+        && player.y < 3.2;
+      if (inWash && !carWash.inside) {
+        carWash.spawnAcc = 0;   // burst of spray on entry
+      }
+      if (!inWash && carWash.inside) {
+        carWash.sparkleT = 3.5;   // just left the wash — sparkling!
+      }
+      carWash.inside = !!inWash;
+      if (carWash.inside) {
+        carWash.spawnAcc += delta;
+        // ~22 droplets/sec while inside, sprayed from the roof rails + sides.
+        while (carWash.spawnAcc > 0.045) {
+          carWash.spawnAcc -= 0.045;
+          const d = carWash.droplets.find((x) => !x.alive);
+          const dr = d || {};
+          if (!d) {
+            const mat = new THREE.SpriteMaterial({
+              map: washWaterTex, color: 0x66e7ff, transparent: true, opacity: 0.9, depthWrite: false,
+            });
+            dr.mesh = new THREE.Sprite(mat);
+            parent.add(dr.mesh);
+            carWash.droplets.push(dr);
+          }
+          dr.alive = true;
+          dr.life = 0.8 + Math.random() * 0.4;
+          const side = Math.random() < 0.5 ? -1 : 1;
+          dr.mesh.position.set(
+            CARWASH.cx + (Math.random() - 0.5) * (CARWASH.len - 4),
+            2.6 + Math.random() * 0.8,
+            CARWASH.cz + (Math.random() < 0.5 ? side * WZ : (Math.random() - 0.5) * CARWASH.wid * 0.9)
+          );
+          dr.vx = (Math.random() - 0.5) * 3;
+          dr.vy = -2.5 - Math.random() * 3;
+          dr.vz = (Math.random() - 0.5) * 3;
+          dr.mesh.scale.setScalar(0.5 + Math.random() * 0.4);
+          dr.mesh.material.opacity = 0.9;
+        }
+      }
+      for (let i = carWash.droplets.length - 1; i >= 0; i--) {
+        const d = carWash.droplets[i];
+        if (!d.alive) continue;
+        d.life -= delta;
+        d.mesh.position.x += d.vx * delta;
+        d.mesh.position.y += d.vy * delta;
+        d.mesh.position.z += d.vz * delta;
+        if (d.life <= 0 || d.mesh.position.y < 0.05) {
+          d.alive = false;
+          d.mesh.visible = false;
+          continue;
+        }
+        d.mesh.material.opacity = 0.9 * (d.life / 1.0);
+        d.mesh.visible = true;
+      }
+      if (carWash.sparkleT > 0) {
+        carWash.sparkleT -= delta;
+        carWash.spawnAcc2 += delta;
+        if (player) {
+          while (carWash.spawnAcc2 > 0.07) {
+            carWash.spawnAcc2 -= 0.07;
+            const s = carWash.sparkles.find((x) => !x.alive);
+            const st = s || {};
+            if (!s) {
+              const mat = new THREE.SpriteMaterial({
+                map: washWaterTex, color: 0xffffff, transparent: true, opacity: 1, depthWrite: false,
+              });
+              st.mesh = new THREE.Sprite(mat);
+              parent.add(st.mesh);
+              carWash.sparkles.push(st);
+            }
+            st.alive = true;
+            st.life = 0.5 + Math.random() * 0.3;
+            st.mesh.position.set(
+              player.x + (Math.random() - 0.5) * 3.2,
+              player.y + 0.3 + Math.random() * 1.6,
+              player.z + (Math.random() - 0.5) * 3.2
+            );
+            st.vy = 1.8 + Math.random() * 1.6;
+            st.mesh.scale.setScalar(0.2 + Math.random() * 0.3);
+            st.mesh.material.opacity = 1;
+          }
+        }
+      }
+      for (let i = carWash.sparkles.length - 1; i >= 0; i--) {
+        const s = carWash.sparkles[i];
+        if (!s.alive) continue;
+        s.life -= delta;
+        s.mesh.position.y += s.vy * delta;
+        s.vy *= 0.96;
+        if (s.life <= 0) {
+          s.alive = false;
+          s.mesh.visible = false;
+          continue;
+        }
+        s.mesh.material.opacity = s.life / 0.8;
+        s.mesh.visible = true;
+      }
       // Trampoline pads: a grounded car rolling over one fires the big upward
       // launch (onTrampoline). The pad visibly squashes and flashes, then
       // springs back, and a short cooldown stops a re-trigger on the rebound.
@@ -3302,56 +5534,6 @@ export function addUnderground(parent, opts = {}) {
             T.cd = 1.0;
             T.squash = 1;
             onTrampoline();
-          }
-        }
-      }
-      // Disco ball: damped pendulum swing on two axes + constant spin. Fly
-      // into the ball and it takes an impulse in the car's travel direction.
-      disco.cd = Math.max(0, disco.cd - delta);
-      disco.vx += -disco.ax * 5.0 * delta;
-      disco.vz += -disco.az * 5.0 * delta;
-      const discoDamp = Math.exp(-1.5 * delta);
-      disco.vx *= discoDamp;
-      disco.vz *= discoDamp;
-      disco.ax += disco.vx * delta;
-      disco.az += disco.vz * delta;
-      discoPivot.rotation.z = disco.ax;
-      discoPivot.rotation.x = disco.az;
-      disco.spin += DISCO.spin * delta;
-      discoSpin.rotation.y = disco.spin;
-      if (player) {
-        const bx = DISCO.x + Math.sin(disco.ax) * DISCO.len;
-        const bz = DISCO.z + Math.sin(disco.az) * DISCO.len;
-        const by = DISCO.topY - Math.cos(disco.ax) * Math.cos(disco.az) * DISCO.len;
-        const hdx = player.x - bx, hdy = player.y - by, hdz = player.z - bz;
-        if (disco.cd <= 0 && player.y > 2 && hdx * hdx + hdy * hdy + hdz * hdz <= DISCO.hitR * DISCO.hitR) {
-          disco.cd = 0.4;
-          disco.hits += 1;
-          const hl = Math.max(0.001, Math.hypot(hdx, hdz));
-          disco.vx += (hdx / hl) * 1.8;
-          disco.vz += (hdz / hl) * 1.8;
-        }
-      }
-      // Tasks #31–#32: padded-pole trigger. Swept segment check (previous →
-      // current position) against the pole axis so a slow frame can't tunnel
-      // through the trigger volume; airborne gate keeps ground drivers near
-      // the base from firing it. Speed (measured over the frame) decides
-      // reward slam vs soft bounce — main.js owns that response.
-      if (player && onPoleHit) {
-        if (poleCd > 0) poleCd -= delta;
-        if (poleCd <= 0 && player.y > 0.8 && player.y < POLE.h + 2 && havePrev) {
-          const midY = (prevY + player.y) / 2;
-          const d2 = segDistSq(prevX, prevY, prevZ, player.x, player.y, player.z, POLE.x, midY, POLE.z);
-          if (d2 <= POLE.trigR * POLE.trigR) {
-            const speed = Math.hypot(player.x - prevX, player.y - prevY, player.z - prevZ) / Math.max(delta, 1e-4);
-            poleCd = 1.2;
-            poleState.hits += 1;
-            poleState.last = { speed: +speed.toFixed(1), big: speed >= POLE.bigSpeed, at: performance.now() / 1000 };
-            spawnPoleBurst(POLE.x, Math.max(2, Math.min(player.y, POLE.h - 2)), POLE.z);
-            let nx = player.x - POLE.x;
-            let nz = player.z - POLE.z;
-            const nl = Math.hypot(nx, nz) || 1;
-            onPoleHit(nx / nl, nz / nl, speed);
           }
         }
       }
@@ -3483,59 +5665,7 @@ export function addUnderground(parent, opts = {}) {
         }
         b.mesh.position.set(b.x, b.y, b.z);
       }
-      // Task #33: animate any active impact bursts — lights flash out
-      // staggered, shockwave rings expand and fade, then everything disposes.
-      for (let i = fxBursts.length - 1; i >= 0; i--) {
-        const b = fxBursts[i];
-        b.age += delta;
-        const t = b.age / b.life;
-        if (t >= 1) {
-          for (const L of b.lights) parent.remove(L.light);
-          for (const r of b.rings) { parent.remove(r); r.geometry.dispose(); r.material.dispose(); }
-          fxBursts.splice(i, 1);
-          continue;
-        }
-        for (const { light, delay } of b.lights) {
-          light.intensity = 5.5 * Math.max(0, 1 - Math.max(0, t - delay) * 1.6);
-        }
-        const s = 1 + 12 * (1 - (1 - t) * (1 - t));
-        for (const r of b.rings) {
-          r.scale.setScalar(s);
-          r.material.opacity = 0.95 * (1 - t);
-        }
-      }
-      // Task #6: pass-through bump detection on the suspended prompt-blocks.
-      // Swept check (previous → current position) so a slow frame rate can't
-      // step over a block's trigger radius between updates. Airborne gate:
-      // only bumps in the air count; driving under a block never consumes it.
       if (player) {
-        const airborne = player.y > AIRBORNE_Y;
-        for (const b of promptBlocks) {
-          // Task #7: fade any active bump flash back to base and count down
-          // the post-bump cooldown. Runs even while the car is far away so a
-          // flash never sticks on.
-          if (b.flash > 0 || b.cooldown > 0) {
-            b.flash = Math.max(0, b.flash - delta / FLASH_TIME);
-            b.cooldown = Math.max(0, b.cooldown - delta);
-            b.mat.emissiveIntensity = GLOW_INTENSITY + FLASH_EMISSIVE * b.flash;
-            b.glow.intensity = 0.8 + FLASH_LIGHT * b.flash;
-          }
-          const d2 = havePrev
-            ? segDistSq(prevX, prevY, prevZ, player.x, player.y, player.z, b.x, b.y, b.z)
-            : pointDistSq(player.x, player.y, player.z, b.x, b.y, b.z);
-          const inside = d2 <= b.radius * b.radius;
-          if (inside && b.armed && airborne && b.cooldown <= 0) {
-            b.armed = false;            // edge-triggered: one bump per approach
-            b.cooldown = BLOCK_COOLDOWN;
-            b.flash = 1;                // start the emissive/glow flash
-            spawnFoam(b.x, b.y, b.z);   // task #8: pop out a foam collectible
-            bumpCount += 1;
-            lastBump = { x: b.x, y: b.y, z: b.z, at: performance.now() / 1000 };
-            if (onBlockBump) onBlockBump(b);
-          } else if (!inside) {
-            b.armed = true;             // re-arm once the car clears the radius
-          }
-        }
         prevX = player.x; prevY = player.y; prevZ = player.z; havePrev = true;
       }
 
@@ -3582,58 +5712,285 @@ export function addUnderground(parent, opts = {}) {
         const dz = player.z - MOUNT.cz;
         if (dx * dx + dz * dz < 144) holy.entered = true;
       }
-
-      // Task #8: animate the foam collectibles — ballistic fall, damped floor
-      // bounces, then shrink out and despawn once the shrink window ends.
-      for (let i = foamPieces.length - 1; i >= 0; i--) {
-        const f = foamPieces[i];
-        f.age += delta;
-        f.vy -= FOAM_GRAVITY * delta;
-        f.mesh.position.x += f.vx * delta;
-        f.mesh.position.y += f.vy * delta;
-        f.mesh.position.z += f.vz * delta;
-        if (f.mesh.position.y < FOAM_R && f.vy < 0) {
-          // Floor contact: count a real bounce and damp it, but once the
-          // impact speed gets tiny just settle the piece so it doesn't
-          // micro-bounce in place for the rest of its life.
-          f.mesh.position.y = FOAM_R;
-          if (-f.vy > 1.5) {
-            f.bounces += 1;
-            f.vy = -f.vy * FOAM_BOUNCE;
-            f.vx *= 0.75;
-            f.vz *= 0.75;
+      // Goat pilgrimage: 30 s after the ejection flag, the herd LAUNCHES out of
+      // the summit — each goat flies a ballistic arc away from the mountaintop
+      // on its own azimuth (the same gravity/launch-point as the car's own
+      // ejection), tumbles in the air, thuds down, then follows the little car
+      // (or the player when the little car is parked/hidden).
+      if (holy.ejectFlag) { holy.ejectFlag = false; goatEvent.timer = 30; }
+      if (goatEvent.timer > 0) goatEvent.timer -= delta;
+      const goatFollow = (follower && follower.x !== undefined) ? follower : (player || null);
+      if (goatEvent.timer > -1 && goatEvent.timer <= 0) {
+        for (const c of goatCrew) if (c.state === 'wait') c.state = 'fly';
+        goatEvent.timer = -1;
+      }
+      for (const c of goatCrew) {
+        if (c.state === 'wait') continue;
+        const m = c.mesh;
+        if (c.state === 'fly') {
+          if (c.delay > 0) { c.delay -= delta; continue; }     // staggered blast-off
+          if (c.vx === 0 && c.vy === 0 && c.vz === 0) {
+            // Launch exactly like the car was kicked out: from the summit tip,
+            // outward along the goat's azimuth, a strong forward + up velocity.
+            m.visible = true;
+            m.position.set(MOUNT.cx, MOUNT.peakY + 1, MOUNT.cz);
+            const vf = 13 + Math.random() * 3;
+            c.vx = Math.cos(c.phi) * vf;
+            c.vz = Math.sin(c.phi) * vf;
+            c.vy = 24;
+          }
+          c.vy -= GOAT_GRAVITY * delta;
+          m.position.x += c.vx * delta;
+          m.position.z += c.vz * delta;
+          m.position.y += c.vy * delta;
+          m.rotation.x += c.tumble * delta;      // windmill through the air
+          m.rotation.z += c.tumble * delta * 0.7;
+          if (m.position.y <= 0.45) {            // thud down, scramble up
+            m.position.y = 0.45;
+            m.rotation.x = 0;
+            m.rotation.z = 0;
+            m.rotation.y = Math.atan2(c.vx, c.vz);
+            c.state = 'follow';
+          }
+          continue;
+        }
+        if (!goatFollow) continue;
+        // Enable the goat's solid collider (tracked to its feet every frame)
+        // only once it's on the ground — a goat can't be run over.
+        c.col.x = m.position.x;
+        c.col.z = m.position.z;
+        // Flee from the player car just like the city pedestrians: bolt away
+        // (plus a scatter so the herd doesn't all flee in lockstep), keep
+        // running while the car is still near, then settle back to following
+        // once it's clear. 3D distance keeps a car driving up on the far roof
+        // from spooking the goats on the cavern floor.
+        const pdx = player ? player.x - m.position.x : 0;
+        const pdz = player ? player.z - m.position.z : 0;
+        const pdy = player ? player.y - m.position.y : 0;
+        const pDist = player ? Math.hypot(pdx, pdz, pdy) : Infinity;
+        if (pDist < GOAT_FLEE_TRIGGER) {
+          if (!c.flee) {
+            const scatter = (Math.random() - 0.5) * 1.4;
+            const away = Math.atan2(-pdz, -pdx) + scatter;
+            c.flee = { dx: Math.cos(away), dz: Math.sin(away), t: GOAT_FLEE_HOLD };
           } else {
-            f.vy = 0;
+            // Keep re-aiming away from the moving car while it's near, with a
+            // tiny sway so a static goat isn't stiff — like the city people.
+            const ang = Math.atan2(-pdz, -pdx) + Math.sin(c.flee.t * 7 + c.gaitPh) * 0.18;
+            c.flee.dx = Math.cos(ang);
+            c.flee.dz = Math.sin(ang);
+          }
+          c.flee.t = Math.max(c.flee.t, 0.8);
+        } else if (c.flee) {
+          c.flee.t -= delta;
+          if (c.flee.t <= 0) c.flee = null;
+        }
+        const moving = pDist >= GOAT_FLEE_TRIGGER;   // not bolting: normal behaviour
+        if (c.flee) {
+          // Gallop! Big bounding leaps, legs scissoring in a fast diagonal pair.
+          const step = GOAT_FLEE_SPEED * delta;
+          m.position.x += c.flee.dx * step;
+          m.position.z += c.flee.dz * step;
+          m.position.x = Math.max(-140, Math.min(140, m.position.x));   // stay on the slab
+          m.position.z = Math.max(-90, Math.min(175, m.position.z));
+          m.rotation.y = Math.atan2(c.flee.dx, c.flee.dz);
+          c.gaitPh += delta * (13 + Math.random() * 2);
+          const s0 = Math.sin(c.gaitPh) * 1.0;
+          const s1 = Math.sin(c.gaitPh + Math.PI) * 1.0;
+          m.goatLegs[0].rotation.x = s0;     // left front
+          m.goatLegs[3].rotation.x = s0;     // right hind   (diagonal pair together)
+          m.goatLegs[1].rotation.x = s1;     // right front
+          m.goatLegs[2].rotation.x = s1;     // left hind
+          m.position.y = 0.45 + Math.max(0, Math.sin(c.gaitPh * 0.5)) * 0.42;   // leap arc
+          m.rotation.z = Math.sin(elapsed * 6 + c.bob) * 0.08;
+          continue;
+        }
+        // Own wide orbit around the follower, drifting slowly so the herd
+        // spreads out and never moves as one unit.
+        c.orbitA += delta * 0.12 * c.gate;
+        const wobR = c.orbitR + Math.sin(elapsed * 0.3 + c.driftT) * 2.0;
+        const wobX = Math.sin(elapsed * 0.5 + c.driftT) * 1.6;
+        const wobZ = Math.cos(elapsed * 0.4 + c.driftT) * 1.6;
+        const tx = goatFollow.x + Math.cos(c.orbitA) * wobR + wobX;
+        const tz = goatFollow.z + Math.sin(c.orbitA) * wobR + wobZ;
+        const dx = tx - m.position.x;
+        const dz = tz - m.position.z;
+        const d = Math.hypot(dx, dz);
+        const go = d > 2.2;
+        if (go) {
+          const step = Math.min((c.speed + d * 0.6) * delta, d - 2.2);
+          m.position.x += (dx / d) * step;
+          m.position.z += (dz / d) * step;
+          m.rotation.y = Math.atan2(dx, dz);
+        } else {
+          m.rotation.y = Math.atan2(goatFollow.x - m.position.x, goatFollow.z - m.position.z);
+        }
+        // Gait animation keyed to pace: walking (slow step), trotting (diagonal
+        // pairs), and a leaping bound now and again while on the move.
+        if (go) {
+          c.gaitPh += delta * (go ? (c.speed * 1.4 + d * 0.5) : 4);
+          const amp = d > 6 ? 0.95 : 0.55;   // far spots clamp in with a longer stride
+          const s0 = Math.sin(c.gaitPh) * amp;
+          const s1 = Math.sin(c.gaitPh + Math.PI) * amp;
+          m.goatLegs[0].rotation.x = s0;     // left front
+          m.goatLegs[3].rotation.x = s0;     // right hind   (diagonal pair together)
+          m.goatLegs[1].rotation.x = s1;     // right front
+          m.goatLegs[2].rotation.x = s1;     // left hind
+          if (Math.random() < 0.008) c.leap = 0.42;   // occasional leaping bound
+        } else if (moving) {
+          c.gaitPh += delta * 3;
+          const s0 = Math.sin(c.gaitPh * 0.5) * 0.18;
+          m.goatLegs[0].rotation.x = s0;
+          m.goatLegs[3].rotation.x = s0;
+          m.goatLegs[1].rotation.x = -s0;
+          m.goatLegs[2].rotation.x = -s0;
+        } else {
+          // At the grazing stop the legs fold under (relaxed standing).
+          for (const lp of m.goatLegs) lp.rotation.x *= 0.9;
+        }
+        m.position.y = 0.45 + 0.06 * Math.sin(elapsed * 5 + c.bob);
+        if (c.leap > 0) {
+          c.leap -= delta;
+          m.position.y += Math.max(0, Math.sin((0.42 - c.leap) / 0.42 * Math.PI)) * 0.8;
+        }
+        m.rotation.z = Math.sin(elapsed * 6 + c.bob) * 0.1;
+      }
+      // ======================================================================
+      // 2026-09-23 — Factory-floor attractions update
+      // ======================================================================
+      // 1. Bubble wrap strip: drive-over pops a nearby bubble (Game Genie pops
+      //    whichever one is closest to the grounded car), re-inflate the rest
+      //    slowly. Each pop briefly spikes the dome taller before flattening so
+      //    it reads as a refreshed bubble being burst, and the pop counter +
+      //    callback let main.js play the THWACK + haptic + steering wobble.
+      {
+        const bz = bubbleStrip.zone;
+        // Pop the closest READY bubble while a grounded car drives the strip,
+        // paced at ~8 pops/sec so a slow drive reads as a string of THWACKS.
+        if (player
+          && player.y < 1.2
+          && elapsed - bubbleStrip.lastPopTime >= 0.12
+          && player.x >= bz.minX && player.x <= bz.maxX
+          && player.z >= bz.minZ && player.z <= bz.maxZ) {
+          let best = null, bestD = Infinity;
+          for (const b of bubbles) {
+            if (b.scale < 0.9) continue;                     // already popped/re-inflating
+            const dx = b.x - player.x, dz = b.z - player.z;
+            const d = dx * dx + dz * dz;
+            if (d < bestD) { bestD = d; best = b; }
+          }
+          if (best) {
+            best.scale = 0.12;
+            best.regrow = 0.55;
+            best.popFlash = 1;
+            bubbleStrip.pops++;
+            bubbleStrip.lastPopTime = elapsed;
+            if (onBubblePop) onBubblePop(best.x, best.z);
           }
         }
-        f.mesh.rotation.x += f.vx * delta * 0.4;
-        f.mesh.rotation.z -= f.vz * delta * 0.4;
-        // Idea #28: kickable foam. When the car drives into a piece, punt it
-        // radially away from the car with a small pop so a pile scatters
-        // instead of sitting untouched. A short per-piece cooldown keeps a
-        // single pass from re-kicking the same ball every frame.
-        if (f.nudgeCd > 0) f.nudgeCd -= delta;
-        if (player && f.nudgeCd <= 0) {
-          const ndx = f.mesh.position.x - player.x;
-          const ndz = f.mesh.position.z - player.z;
-          const nd2 = ndx * ndx + ndz * ndz;
-          const reach = FOAM_R + 2.4;
-          if (nd2 < reach * reach && Math.abs(f.mesh.position.y - player.y) < 2.5) {
-            const nl = Math.sqrt(nd2) || 0.001;
-            const kick = 3 + Math.min(carSpeed, 14) * 0.9;
-            f.vx = (ndx / nl) * kick;
-            f.vz = (ndz / nl) * kick;
-            f.vy = Math.max(f.vy, 3 + Math.min(carSpeed, 14) * 0.35);
-            f.bounces += 1;
-            f.nudgeCd = 0.25;
+        // Re-inflate + settle popFlash over time (runs for every bubble, cheap:
+        // only touched when regrow pending or flash lingers).
+        let bubblesDirty = false;
+        for (const b of bubbles) {
+          if (b.regrow > 0) {
+            b.regrow -= delta;
+            if (b.regrow <= 0 && b.scale < 0.85) bubblesDirty = true;
+          } else if (b.scale < 1) {
+            b.scale = Math.min(1, b.scale + delta * 0.55);
+            if (b.scale >= 1) bubblesDirty = true;
+          }
+          if (b.popFlash > 0) {
+            b.popFlash = Math.max(0, b.popFlash - delta * 6);
+            bubblesDirty = true;
           }
         }
-        const left = FOAM_LIFE + FOAM_SHRINK - f.age;
-        if (left <= 0) {
-          disposeFoamPiece(f);
-          foamPieces.splice(i, 1);
-        } else if (f.age > FOAM_LIFE) {
-          f.mesh.scale.setScalar(Math.max(0.001, left / FOAM_SHRINK));
+        if (bubblesDirty) {
+          for (let i = 0; i < bubbles.length; i++) {
+            const b = bubbles[i];
+            const s = b.scale * (1 + b.popFlash * 0.5);
+            _v3a.set(b.x, 0.3 * s, b.z);
+            _v3b.set(s, s, s);
+            _bm.compose(_v3a, _quat.identity(), _v3b);
+            bubbleMesh.setMatrixAt(i, _bm);
+          }
+          bubbleMesh.instanceMatrix.needsUpdate = true;
+        }
+      }
+      // 2. Taffy-puller machine: sweep the two hook arms counter-rotating about
+      //    their posts, and spin the visible machinery (gears, pinions, pulleys
+      //    + the endless chain loop) inside the open frame. The machine now
+      //    straddles the westbound z=-30 lane (posts at (128,-26) and (128,-34))
+      //    so the car drives THROUGH the frame like a car wash; a hook sweeps
+      //    out and grabs the car on the way past — main.js polls
+      //    taffy.hookedAt(x,z) each frame. While a hook is in its snap lunge
+      //    its glow doubles — the arm reads as "grabbed you".
+      {
+        for (const m of taffyMotion) {
+          if (m.kind === 'spin') {
+            m.ref.rotation.y += delta * m.speed * m.dir;
+          } else if (m.kind === 'pulley') {
+            m.ref.rotation.z += delta * m.speed * m.dir;
+          } else if (m.kind === 'chain') {
+            // Link circles the two posts on a racetrack loop (the wide span of
+            // the machine), so the belt visibly winds around the whole unit.
+            const t = (elapsed * m.speed + m.phase) % 1;
+            const ang = t * Math.PI * 2;
+            const cx = 128, cz = -30, rx = 4.6, rz = 5.2;
+            m.ref.position.set(cx + Math.cos(ang) * rx, 3.1, cz + Math.sin(ang) * rz);
+            m.ref.rotation.y = ang + Math.PI / 2;
+          }
+        }
+        for (const a of taffyArms) {
+          const h = a.hook;
+          if (h.cd > 0) h.cd = Math.max(0, h.cd - delta);
+          if (h.snap > 0) h.snap -= delta;
+          // Sweep back and forth about each post (phase π apart → the two arms
+          // counter-swing, mirrored across the corner so they never coincide).
+          h.angle = Math.sin(elapsed * 1.1 + h.phase) * 0.9;
+          a.armPivot.rotation.z = Math.sin(elapsed * 2 + h.phase) * 0.06;  // subtle bob
+          a.armPivot.rotation.y = h.angle + (h.snap > 0 ? Math.sin(elapsed * 10) * 0.35 : 0);
+          const isSnap = h.snap > 0;
+          a.claw.material.emissiveIntensity = isSnap ? 3.2 : 1.1;
+        }
+      }
+      // 3. Magnet pit-stop: cycle the field on/off, pulse the coil + beam, and
+      //    expose the live flag main.js reads to yank a near grounded car up to
+      //    magnet.holdY while active. A counter (magnet.hits) edges FWOOSH.
+      {
+        magnet.t += delta;
+        const cyc = MAGNET.on + MAGNET.off;
+        const inOn = (magnet.t % cyc) < MAGNET.on;
+        if (inOn !== magnet.active) {
+          magnet.active = inOn;
+          if (inOn) magnet.hits++;
+        }
+        const pul = 0.5 + 0.5 * Math.sin(magnet.t * (inOn ? 9 : 2.5));
+        const light = magGroup.userData.light;
+        light.intensity = inOn ? 2.4 + pul * 2.2 : 0.15;
+        magGroup.userData.coil.material.emissiveIntensity = inOn ? 2.6 + pul * 1.8 : 0.35;
+        magGroup.userData.beam.material.opacity = inOn ? 0.06 + pul * 0.1 : 0.01;
+      }
+      // 5. Express tube: ride the air-jet rings along the centre line. Each
+      //    ring advances one-ninth of the tube per loop; the rings read as
+      //    pneumatic pulses shooting toward the exit. The intake halo breathes.
+      //    A TorusGeometry lies in the XY plane with its hole along +Z, so the
+      //    ring's +Z is rotated onto the tube's unit tangent — its hole plane
+      //    then matches the tube's cross-section exactly (a plain rotation.y
+      //    only worked on flat runs, which is why the rings read sideways on
+      //    the climbs).
+      {
+        for (let k = 0; k < tubeRings.length; k++) {
+          // Rings "travel" always toward the far mouth the ride heads for: on a
+          // return ride (expressTube.dir = -1) the +1 modulo wraps the phase
+          // so the band sweeps glass-city-bound instead of skate-park-bound.
+          const dir = expressTube.dir || 1;
+          const s = (((elapsed * 0.22 * dir) + k / tubeRings.length) % 1 + 1) % 1;
+          const p = expressTubePoint(s);
+          const tan = expressTubeTangent(s);
+          tubeRings[k].position.set(p.x, p.y, p.z);
+          _ringT.set(tan.tx, tan.ty, tan.tz);
+          _ringQuat.setFromUnitVectors(_ringZ, _ringT);
+          tubeRings[k].quaternion.copy(_ringQuat);
         }
       }
     },
