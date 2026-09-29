@@ -43,33 +43,6 @@ function addSurroundingTrees(scene) {
 }
 
 // ===== Road markings =====
-function addRoadMarkings(scene) {
-  const laneMat = new THREE.MeshStandardMaterial({ color: 0xe9e9e0, roughness: 0.85 });
-  const markY = 0.3;
-  for (let x = -76; x <= 76; x += 8) {
-    const d = new THREE.Mesh(new THREE.BoxGeometry(3, 0.14, 0.42), laneMat);
-    d.position.set(x, markY, 0);
-    d.receiveShadow = true;
-    scene.add(d);
-  }
-  for (let z = -76; z <= 76; z += 8) {
-    const d = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 3), laneMat);
-    d.position.set(0, markY, z);
-    d.receiveShadow = true;
-    scene.add(d);
-  }
-  for (const off of [-11.5, 11.5]) {
-    const e1 = new THREE.Mesh(new THREE.BoxGeometry(160, 0.14, 0.26), laneMat);
-    e1.position.set(0, markY, off);
-    e1.receiveShadow = true;
-    scene.add(e1);
-    const e2 = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.14, 160), laneMat);
-    e2.position.set(off, markY, 0);
-    e2.receiveShadow = true;
-    scene.add(e2);
-  }
-}
-
 // ===== Traffic lights & stop signs =====
 const poleMat = new THREE.MeshStandardMaterial({ color: 0x2f353b, roughness: 0.8 });
 
@@ -144,15 +117,15 @@ function makeLampPost(scene, x, z) {
 
 // ===== Lamp-post field in the park (a whole forest of them to knock down) =====
 function addLampField(scene) {
-  // A 7x7 grid centered on the park (62,62), skipping the pond and one corner
-  // so exactly 39 lamp posts stand in the field, ready to be knocked over.
+  // A 5 x 7 grid filling the park, skipping anything that would stand in the
+  // pond or off the grass. The park is deliberately small now, so the field is
+  // tighter and closer together than it used to be.
   let count = 0;
-  for (let x = 53; x <= 71; x += 3) {
-    for (let z = 53; z <= 71; z += 3) {
-      const dx = x - 62;
-      const dz = z - 62;
-      if (dx * dx + dz * dz < 4.6 * 4.6) continue;   // over the pond
-      if (x === 71 && z === 71) continue;            // keep the total at 39
+  for (let x = 16.2; x <= 27.8; x += 2.9) {
+    for (let z = 46.2; z <= 61.8; z += 2.6) {
+      const dx = x - 22;
+      const dz = z - 54;
+      if (dx * dx + dz * dz < 4.0 * 4.0) continue;   // over the pond
       makeLampPost(scene, x, z);
       count++;
     }
@@ -320,10 +293,10 @@ function makeStreetCone(scene, x, z) {
 // Position on the main east-west road, far east of the intersection.
 export const POTHOLE = { x: -50, z: 8, radius: 3 };
 
-// Park lake: the shallow blue pond in the NE park (centre 62,62) behaves like
-// the pothole — driving in rocks the car, dips it into the water and kicks up
-// splashes. Slightly bigger than the pothole's pool (the pond's top rim is 4).
-export const LAKE = { x: 62, z: 62, radius: 4.4 };
+// Park lake: the shallow blue pond in the town park (centre 22,54) behaves like
+// the pothole - driving in rocks the car, dips it into the water and kicks up
+// splashes. Slightly bigger than the pothole's pool (the pond's top rim is 3.2).
+export const LAKE = { x: 22, z: 54, radius: 3.6 };
 
 function makePothole(scene) {
   const { x, z, radius } = POTHOLE;
@@ -623,12 +596,17 @@ function makePhoneBooth(scene, x, z, rotY) {
 
 // ===== Old Mine Shaft Entrance =====
 // Open pit mine shaft with boulders around the mouth.
-// The entrance faces -X (west, toward the road) so the car can drive in.
+// The pit mouth opens toward -X, so the approach and the mine-spur road both
+// run along the group's local X axis. Local +X points AWAY from the road, into
+// the mountain.
 // Returns { colliders } so main.js can block the car from driving through walls.
 function makeMineShaftEntrance(scene) {
-  // Build the mine in a group, then rotate to face north (+Z = top of minimap).
-  // Local coords: tunnel runs +X, width along Z (same as original layout).
-  // Rotation.y = π/2 maps local +X → world -Z (north) and local +Z → world +X.
+  // Build the mine in a group, then rotate so the local axis lines up with the
+  // spur. Local coords: the drive-in lane runs along X, width along Z.
+  // Rotation.y = -π/2 maps local +X → world +Z and local +Z → world -X. The
+  // mouth sits at the group's local x = 0 line, and props that must stay off the
+  // approach tarmac are placed at local x >= 0.5 (behind the mouth) or pushed
+  // out onto the shoulders.
   const mineGroup = new THREE.Group();
   const _realScene = scene;
   scene = mineGroup;                 // redirect all scene.add() into the group
@@ -666,28 +644,38 @@ function makeMineShaftEntrance(scene) {
   // (above-ground structures removed — open pit mine shaft)
 
   // --- Worn planks on the ground at the entrance ---
+  // Kept on the shoulders and BEHIND the mouth line (local x >= 0.5). Local +X
+  // maps to world +Z, so anything at negative local x sits out on the mine-spur
+  // tarmac in the driver's sightline; the middle of the mouth is the drive-in
+  // lane and the approach in front of it has to stay completely clear.
   for (let i = 0; i < 4; i++) {
     const plank = new THREE.Mesh(new THREE.BoxGeometry(1.8 + Math.random() * 0.8, 0.1, 0.5), plankMat);
-    plank.position.set(x - 2 + Math.random() * 1.5, 0.06 + (Math.random() - 0.5) * 0.04, z + (i - 1.5) * 1.4 + (Math.random() - 0.5) * 0.3);
+    plank.position.set(0.5 + Math.random() * 2.0, 0.06 + (Math.random() - 0.5) * 0.04, (i % 2 ? 1 : -1) * (3.6 + Math.random() * 0.8));
     plank.rotation.y = (Math.random() - 0.5) * 0.3;
     scene.add(plank);
   }
 
   // --- Boulders scattered around the entrance (knockable — they scatter on impact) ---
   const boulderData = [
-    [x - 3.5, z - 3.2, 1.1], [x - 3.8, z + 3.5, 0.9],
-    [x - 2.0, z - 3.8, 0.7], [x - 1.5, z + 3.6, 0.8],
-    [x + 0.5, z - 3.3, 1.0], [x + 0.8, z + 3.4, 0.75],
-    [x - 4.2, z - 1.0, 0.6], [x - 4.0, z + 1.2, 0.55],
-    [x - 3.0, z - 4.0, 0.5], [x - 2.8, z + 4.1, 0.6],
-    [x + 2.5, z - 3.0, 0.85], [x + 2.2, z + 3.1, 0.7],
-    [x + 3.8, z - 2.0, 0.9], [x + 4.0, z + 1.8, 0.8],
-    [x + 1.0, z + 3.9, 0.65], [x + 1.2, z - 3.7, 0.6],
+    [-3.5, -3.2, 1.1], [-3.8, 3.5, 0.9],
+    [-2.0, -3.8, 0.7], [-1.5, 3.6, 0.8],
+    [0.5, -3.3, 1.0], [0.8, 3.4, 0.75],
+    [-4.2, -1.0, 0.6], [-4.0, 1.2, 0.55],
+    [-3.0, -4.0, 0.5], [-2.8, 4.1, 0.6],
+    [2.5, -3.0, 0.85], [2.2, 3.1, 0.7],
+    [3.8, -2.0, 0.9], [4.0, 1.8, 0.8],
+    [1.0, 3.9, 0.65], [1.2, -3.7, 0.6],
     // top of frame boulders
-    [x - 2.5, z - 1.0, 0.5], [x - 2.5, z + 0.8, 0.45],
-    [x + 3.0, z + 0.5, 0.55],
+    [-2.5, -1.0, 0.5], [-2.5, 0.8, 0.45],
+    [3.0, 0.5, 0.55],
   ];
   boulderData.forEach(([bx, bz, r]) => {
+    // The drive-in lane runs along local X (world Z) through the middle of the
+    // mouth, so two things are kept clear: the |bz| band of the lane itself, and
+    // everything in FRONT of the mouth (bx < 0.5), which is the mine-spur
+    // tarmac the player is looking down as they approach. The mouth has to stay
+    // legible from the road and wide enough to drive a car down.
+    if (Math.abs(bz) < 3.2 || bx < 0.5) return;
     const g = new THREE.Group();
     const b = new THREE.Mesh(new THREE.SphereGeometry(r, 7, 5), boulderMat);
     b.position.y = r * 0.6;
@@ -707,17 +695,24 @@ function makeMineShaftEntrance(scene) {
   });
 
   // --- Small rocks/gravel on the ground around the entrance (knockable) ---
+  // Ringed around the mouth rather than scattered through it, for the same
+  // reason the boulders are: the middle of the frame is the way in.
   const gravelMat = new THREE.MeshStandardMaterial({ color: 0x8a8078, roughness: 1 });
   for (let i = 0; i < 12; i++) {
     const angle = Math.random() * Math.PI * 2;
     const dist = 3 + Math.random() * 2.5;
+    const gz = Math.sin(angle) * dist;
+    const gx = Math.cos(angle) * dist;
+    // Same rule as the boulders: ringed around the mouth rather than through
+    // it, and nothing out on the spur tarmac in front of the mouth.
+    if (Math.abs(gz) < 3.4 || gx < 0.5) continue;
     const gr = 0.12 + Math.random() * 0.18;
     const gg = new THREE.Group();
     const g = new THREE.Mesh(new THREE.SphereGeometry(gr, 5, 4), gravelMat);
     g.position.y = gr * 0.4;
     g.scale.y = 0.5;
     gg.add(g);
-    gg.position.set(x + Math.cos(angle) * dist, 0, z + Math.sin(angle) * dist);
+    gg.position.set(gx, 0, gz);
     scene.add(gg);
     addKnockable(gg, gr + 0.2, {
       mode: 'slide',
@@ -732,8 +727,8 @@ function makeMineShaftEntrance(scene) {
   // Weathered boards standing in the grass at the edges of the excavation,
   // leaning inward so each board's base sits on the grass and its top leans
   // against the edge of the wooden ceiling (never skewered through it).
-  // Gaps and missing boards let the rock show through; the entrance (x < 0)
-  // is left clear.
+  // Gaps and missing boards let the rock show through; the mouth (local x = 0,
+  // which opens to the road at negative local x) is left clear.
   // Ceiling height (world y) above the mine bed at local x (tunnel axis).
   const ceilHAt = (lx) => {
     const wz = 34 + lx;
@@ -778,7 +773,10 @@ function makeMineShaftEntrance(scene) {
   }
 
   // --- Rickety gate archway in front of the entrance (open — car drives through) ---
-  const gateX = x - 3.5;   // just in front of the entrance
+  // Just behind the mouth line, not out on the spur: local x is world z, so a
+  // negative value would plant a 4.6-high post in the middle of the tarmac the
+  // player is driving down. It still frames the hole from the road.
+  const gateX = 0.5;       // level with the mouth, framing it from the roadside
   const gateHalf = 2.9;    // half-width of the opening
   for (const side of [-1, 1]) {
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.35, 4.6, 0.35), timberMat);
@@ -812,7 +810,7 @@ function makeMineShaftEntrance(scene) {
   pickHead.position.set(0.55, 1.15, 0);
   pickHead.rotation.z = 0.5;
   pickGroup.add(pickHead);
-  pickGroup.position.set(x - 4.5, 0, z - 1.5);
+  pickGroup.position.set(1.6, 0, -4.2);
   pickGroup.rotation.y = 0.6;
   scene.add(pickGroup);
   addKnockable(pickGroup, 0.5, { mode: 'slide', fallTime: 0.3, slideDistance: 1.0, shovePower: 6, shoveSpinPower: 1.5 });
@@ -826,7 +824,7 @@ function makeMineShaftEntrance(scene) {
   const shovelBlade = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.04, 0.25), toolMetalMat);
   shovelBlade.position.set(0.65, 0.05, 0);
   shovelGroup.add(shovelBlade);
-  shovelGroup.position.set(x - 4.8, 0, z + 1.8);
+  shovelGroup.position.set(1.4, 0, 4.4);
   shovelGroup.rotation.y = -0.4;
   scene.add(shovelGroup);
   addKnockable(shovelGroup, 0.5, { mode: 'slide', fallTime: 0.3, slideDistance: 1.0, shovePower: 6, shoveSpinPower: 1.5 });
@@ -834,7 +832,7 @@ function makeMineShaftEntrance(scene) {
   // A couple of loose timber scraps
   for (let i = 0; i < 3; i++) {
     const scrap = new THREE.Mesh(new THREE.BoxGeometry(1.2 + Math.random() * 0.8, 0.08, 0.25), plankMat);
-    scrap.position.set(x - 4 + Math.random() * 2, 0.05, z + (Math.random() - 0.5) * 4);
+    scrap.position.set(0.6 + Math.random() * 2, 0.05, (i % 2 ? 1 : -1) * (3.8 + Math.random() * 1.4));
     scrap.rotation.y = Math.random() * Math.PI;
     scene.add(scrap);
   }
@@ -858,37 +856,37 @@ function addStreetFurniture(scene) {
   makePothole(scene);
   addPotholeCones(scene);
 
-  // Parking meters — coins clatter everywhere on impact
+  // Parking meters — coins clatter everywhere on impact. Every one of these
+  // sits on a verge, a clear unit or two outside the tarmac in ROADS.
   const meterPos = [
-    [-48, -50], [-52, -48], [30, 14], [-30, 14],
-    [50, 14], [-50, 14], [14, 30], [-14, 30],
-    [14, -30], [-14, -30],
+    [-47, -32], [-47, -14], [14, -14], [44, 14],
+    [-46, 14], [14, 41], [46, 41], [66, 41],
   ];
   meterPos.forEach(([x, z]) => makeParkingMeter(scene, x, z, Math.atan2(-z, -x)));
 
-  // Trash cans — beside shops and select buildings, not along roads
+  // Trash cans — beside the market shops and select buildings, not along roads
   const trashPos = [
-    // beside each shop (south side of shops at z=64)
-    [-68, 61], [-54, 61], [-40, 61], [-26, 61],
+    // beside each shop (north side, behind the shopfronts at z=63)
+    [-51.5, 62], [-40.5, 62], [-29.5, 62], [-18.5, 62],
     // beside select buildings (not all)
-    [-56, -51], [16, -51],   // south row buildings
-    [-56, -21], [26, -21],   // mid row buildings
-    [-28, 16],  [36, 16],    // north row buildings
+    [-70, -27], [20, -55],   // flats and substation
+    [33, -33],                // the south-east block
+    [-27, 16],  [45, 16],    // the square and the north verge
   ];
   trashPos.forEach(([x, z]) => makeTrashCan(scene, x, z));
 
   // Soda vending machines — dozens of cans scatter on impact
   const vendingPos = [
-    [28, 14, 0], [-28, 14, Math.PI],
-    [14, 28, Math.PI / 2], [-14, 28, -Math.PI / 2],
-    [14, -28, -Math.PI / 2], [-14, -28, Math.PI / 2],
+    [46, 14, 0], [-28, 14, Math.PI],
+    [31.5, 50, Math.PI / 2], [14, -34, 0],
+    [-14, -14, Math.PI / 2], [66, 41, Math.PI / 2],
   ];
   vendingPos.forEach(([x, z, r]) => makeSodaVendingMachine(scene, x, z, r));
 
   // Phone booths at a few corners
   const phonePos = [
-    [22, 14, 0], [-22, 14, Math.PI],
-    [14, 22, Math.PI / 2], [-14, 22, -Math.PI / 2],
+    [-27, 20, 0], [-14, 36, 0],
+    [31.5, 64, 0], [45, 64, 0], [66, 66, 0],
   ];
   phonePos.forEach(([x, z, r]) => makePhoneBooth(scene, x, z, r));
 }
@@ -938,7 +936,7 @@ function makeFenceLine(scene, x1, z1, x2, z2, sections = 12) {
   }
 }
 
-// ===== Park (northeast) =====
+// ===== Park (north of the market, beside the library) =====
 function makeBench(scene, x, z, rotY) {
   const group = new THREE.Group();
   const benchMat = new THREE.MeshStandardMaterial({ color: 0x7a5b3a, roughness: 0.9 });
@@ -955,50 +953,78 @@ function makeBench(scene, x, z, rotY) {
   addKnockable(group, 1.1, { fallTime: 0.35 });
 }
 
+// The park is a small square of grass, x 14..30 / z 44..64, with the library
+// hard against its east edge and park-spine along the far side. The library
+// fronts west onto the grass, so the east fence is left off so the two read as
+// one place.
 function addPark(scene) {
-  const park = new THREE.Mesh(new THREE.BoxGeometry(26, 0.16, 26), grassMaterial);
-  park.position.set(62, 0.08, 62);
+  const park = new THREE.Mesh(new THREE.BoxGeometry(16, 0.16, 20), grassMaterial);
+  park.position.set(22, 0.08, 54);
   park.receiveShadow = true;
   scene.add(park);
 
   const pond = new THREE.Mesh(
-    new THREE.CylinderGeometry(4, 4.4, 0.12, 24),
+    new THREE.CylinderGeometry(3.2, 3.6, 0.12, 24),
     new THREE.MeshStandardMaterial({ color: 0x2f6fae, roughness: 0.35 })
   );
-  pond.position.set(62, 0.16, 62);
+  pond.position.set(22, 0.16, 54);
   pond.receiveShadow = true;
   scene.add(pond);
 
-  [[52,52],[72,52],[52,72],[72,72],[62,48],[48,62],[76,62],[62,76]].forEach(([x, z]) => makeTree(scene, x, z));
-  // Park benches around the perimeter — facing inward
-  makeBench(scene, 58, 66, 0);
-  makeBench(scene, 66, 58, Math.PI / 2);
-  makeBench(scene, 50, 58, 0);
-  makeBench(scene, 58, 50, -Math.PI / 2);
-  makeBench(scene, 74, 58, Math.PI);
-  makeBench(scene, 66, 74, Math.PI / 2);
-  makeBench(scene, 74, 66, Math.PI);
-  makeBench(scene, 50, 66, 0);
+  [[15,45],[15,63],[29,45],[29,63],[22,45],[22,63],[15,54],[29,54]].forEach(([x, z]) => makeTree(scene, x, z));
+  // Park benches around the perimeter - facing inward
+  makeBench(scene, 16, 60, 0);
+  makeBench(scene, 28, 60, Math.PI);
+  makeBench(scene, 16, 48, Math.PI);
+  makeBench(scene, 28, 48, 0);
+  makeBench(scene, 22, 62.5, 0);
+  makeBench(scene, 22, 45.5, Math.PI);
 }
 
 // ===== Parking lot (southwest) =====
+// The one shared car park in town: the block between the residential street and
+// the west edge, which the layout reserves as a lot rather than more frontage.
+// It is deliberately a single wide apron off one throat, not a ribbon per
+// building - a row of near-identical private drives off the same street reads as
+// four lanes of a car park rather than as front gardens, and it is what makes a
+// block look like it was paved by machine.
 function addParkingLot(scene) {
   const lot = new THREE.Mesh(
-    new THREE.BoxGeometry(30, 0.16, 26),
+    new THREE.BoxGeometry(26, 0.16, 20),
     new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 1 })
   );
-  lot.position.set(-62, 0.08, -60);
+  lot.position.set(-58, 0.08, -61);
   lot.receiveShadow = true;
   scene.add(lot);
 
+  // The throat: the lot's north edge is z -51 and the residential street's south
+  // kerb is z -48, so without this 3-unit apron the car park is an island you
+  // cannot drive onto. 10 wide, so it reads as a single entrance rather than a
+  // kerb full of separate ways in.
+  const throat = new THREE.Mesh(
+    new THREE.BoxGeometry(10, 0.16, 6),
+    new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 1 })
+  );
+  throat.position.set(-58, 0.08, -49);
+  throat.receiveShadow = true;
+  scene.add(throat);
+
   const lotLineMat = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.8 });
   for (let i = -2; i <= 2; i++) {
-    for (const z of [-60, -68.2]) {
-      const line = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 4.6), lotLineMat);
-      line.position.set(-62 + i * 6, 0.16, z);
+    for (const z of [-63.5, -58.5]) {
+      const line = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 4), lotLineMat);
+      line.position.set(-58 + i * 5, 0.16, z);
       line.receiveShadow = true;
       scene.add(line);
     }
+  }
+  // Bay noses facing the throat, so the stalls read as parking either side of the
+  // aisle rather than as loose stripes.
+  for (let i = -2; i <= 2; i++) {
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 4), lotLineMat);
+    nose.position.set(-58 + i * 5, 0.16, -55.5);
+    nose.receiveShadow = true;
+    scene.add(nose);
   }
 }
 
@@ -1095,20 +1121,22 @@ function makeFruitStall(scene, x, z, rotY) {
   addKnockable(umbrella, 0.8, { mode: 'wobble', fallTime: 0.45 });
 }
 
-// All eight fruit stands lined up along the sidewalk strip that runs across
-// from the shops row (shops face south at z=64, sidewalk spans x -75..-19 at
-// z=59). They stand opposite the shop fronts, facing the town centre just
-// like the shops do, so the whole row reads as one little market street.
+// Seven fruit stands lined up along the kerb of market-row, on the ROAD side of
+// the shops' sidewalk. Keeping them off the sidewalk is the whole point: the
+// stalls used to sit directly in front of the shopfronts and hid them, so the
+// row read as market stalls with shops behind rather than as shops fronting the
+// street. Now you drive up, the stalls are at the kerb, and the shop doors face
+// you over the sidewalk. The row stops at x = -18 because arterial-ns owns
+// everything east of x = -13.
 function addMarketStalls(scene) {
   const stalls = [
-    [-72, 59, Math.PI],
-    [-65, 59, Math.PI],
-    [-58, 59, Math.PI],
-    [-51, 59, Math.PI],
-    [-44, 59, Math.PI],
-    [-37, 59, Math.PI],
-    [-30, 59, Math.PI],
-    [-23, 59, Math.PI],
+    [-51, 55.4, Math.PI],
+    [-45.5, 55.4, Math.PI],
+    [-40, 55.4, Math.PI],
+    [-34.5, 55.4, Math.PI],
+    [-29, 55.4, Math.PI],
+    [-23.5, 55.4, Math.PI],
+    [-18, 55.4, Math.PI],
   ];
   stalls.forEach(([x, z, r]) => makeFruitStall(scene, x, z, r));
 }
@@ -1286,15 +1314,17 @@ function makeFountain(scene, x, z, fountains) {
 
   group.position.set(x, 0, z);
   scene.add(group);
-  // Heavy stone — it TOPPLES over in a satisfying way, tipping around its
-  // base edge so it lands on the plaza instead of slowly rotating into the
-  // ground (which read as a useless wobble). Once down it can be shoved.
+  // The fountain rocks on its base and springs back upright, exactly like the
+  // little shops. It is the centrepiece of the square: a four-tonne basin that
+  // a car could knock flat was never a good idea, and toppling it broke the
+  // water jet and the droplet orbit for good. A slow, low, heavily damped
+  // wobble reads as "solid, heavy, immovable" rather than "bouncy".
   addKnockable(group, 2.4, {
-    mode: 'topple',
-    fallTime: 0.7,
-    toppleRadius: 2.4,
-    shovePower: 9,
-    shoveSpinPower: 2.2,
+    mode: 'wobble',
+    fallTime: 0.6,
+    wobbleAmp: 0.12,
+    wobbleFreq: 7,
+    wobbleDamping: 6,
   });
   fountains.push({ jet, droplets, time: 0 });
 }
@@ -1363,41 +1393,44 @@ function makeStatue(scene, x, z, rotY, material) {
   addKnockable(group, 0.9, { fallTime: 0.7 });
 }
 
-// Build the whimsical village charm: shops on the town-edge sidewalks, the
-// centre-plaza fountain, and historical statues nestled among flowerbeds.
+// Build the whimsical village charm: the market row of shops on its sidewalk
+// north of market-row, the town-square fountain between the two arterials, and
+// historical statues nestled among flowerbeds.
 function addVillageCharm(scene, fountains) {
-  // All four shops in a row on the grass at the town's north edge (NOT on the
-  // sidewalks), facing the town centre. z=64 is out past the sidewalk ring
-  // (>54) and clear of the fountain plaza (x ~20..40) and the park (x 49..75).
+  // The market row. The shops sit on the grass north of their sidewalk, facing
+  // SOUTH over the sidewalk and the stalls and on to market-row, so the whole
+  // row fronts the street. The row is cut short at x = -16 because arterial-ns
+  // takes everything east of x = -13.
   const shopData = [
-    { x: -68, z: 64, r: Math.PI, c: 0xf2d17c, rc: 0xc0563b },
-    { x: -54, z: 64, r: Math.PI, c: 0x8fd0c8, rc: 0x5a6b78 },
-    { x: -40, z: 64, r: Math.PI, c: 0xe8a0b4, rc: 0x8a4f63 },
-    { x: -26, z: 64, r: Math.PI, c: 0xc9b8e8, rc: 0x3f6f5f },
+    { x: -49, z: 63, r: Math.PI, c: 0xf2d17c, rc: 0xc0563b },
+    { x: -38, z: 63, r: Math.PI, c: 0x8fd0c8, rc: 0x5a6b78 },
+    { x: -27, z: 63, r: Math.PI, c: 0xe8a0b4, rc: 0x8a4f63 },
+    { x: -16, z: 63, r: Math.PI, c: 0xc9b8e8, rc: 0x3f6f5f },
   ];
   shopData.forEach((s) => makeShop(scene, s.x, s.z, s.r, s.c, s.rc));
 
-  // Small sidewalk strip in front of the shops (south side, facing the town)
+  // Sidewalk in front of the shops, between them and the stalls at the kerb.
   const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xb0a899, roughness: 0.9 });
-  const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(56, 0.12, 4), sidewalkMat);
-  sidewalk.position.set(-47, 0.07, 59);
+  const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(40, 0.12, 4), sidewalkMat);
+  sidewalk.position.set(-33, 0.07, 59.2);
   sidewalk.receiveShadow = true;
   scene.add(sidewalk);
 
-  // Fountain + statues at the town's north edge, out on the grass and well
-  // clear of the roads (the crossroads run the full length of town).
-  makeFountain(scene, 30, 58, fountains);
-  makeStatue(scene, 24, 58, 0.3, bronzeMat);
-  makeFlowerBed(scene, 20.5, 58, 0);
-  makeStatue(scene, 36, 58, -0.3, statueStoneMat);
-  makeFlowerBed(scene, 39.5, 58, 0);
-  makeFlowerBed(scene, 30, 65, 0);
+  // Fountain + statues on the town square: the block between west-spine and
+  // arterial-ns, set back from the main drag behind the bodega, so you meet the
+  // shopfront first and the fountain opens out behind it.
+  makeFountain(scene, -22, 32, fountains);
+  makeStatue(scene, -25, 32, 0.3, bronzeMat);
+  makeFlowerBed(scene, -27.5, 32, 0);
+  makeStatue(scene, -19, 32, -0.3, statueStoneMat);
+  makeFlowerBed(scene, -16.5, 32, 0);
+  makeFlowerBed(scene, -22, 36, 0);
 
-  // A couple more in the park by the pond
-  makeStatue(scene, 55, 69, -0.8, bronzeMat);
-  makeFlowerBed(scene, 50.6, 69, 0);
-  makeStatue(scene, 69, 55, 0.8, statueStoneMat);
-  makeFlowerBed(scene, 69, 50.6, Math.PI / 2);
+  // A couple more in the park, clear of the pond and the benches
+  makeStatue(scene, 17.5, 62, -0.8, bronzeMat);
+  makeFlowerBed(scene, 15, 62, 0);
+  makeStatue(scene, 26.5, 46, 0.8, statueStoneMat);
+  makeFlowerBed(scene, 26.5, 44, Math.PI / 2);
 }
 
 // ===== Build everything =====
@@ -1405,7 +1438,13 @@ export function addProps(scene) {
   const trafficLights = [];
   const fountains = [];
   addSurroundingTrees(scene);
-  addRoadMarkings(scene);
+  // Road markings are NOT drawn here. The centre lines and kerb lines belong to
+  // cityRoads.js, which lays them per road from the ROADS table so they follow
+  // the real carriageway and skip junctions. The old addRoadMarkings() overlay
+  // painted its own second set straight down x=0/z=0 and along +/-11.5, which is
+  // what made the arterials look double-striped: two centre-line dash runs and
+  // two pairs of edge lines, half a unit apart. Recolouring it white only made
+  // the duplicate white as well; it has to go.
 
   makeTrafficLight(scene, 13.5, 13.5, 'x', trafficLights);      // NE — governs E/W
   makeTrafficLight(scene, -13.5, 13.5, 'z', trafficLights);     // NW — governs N/S
@@ -1427,30 +1466,33 @@ export function addProps(scene) {
     makeLampPost(scene, -17, z);
   }
 
-  // Fire hydrants on the grass, near buildings (never on the road)
-  makeFireHydrant(scene, -62, -58);   // near south-west building (-56,-54)
-  makeFireHydrant(scene, 20, -58);    // near south-east building (12,-54)
-  makeFireHydrant(scene, 60, -20);    // near mid-east building (54,-24)
-  makeFireHydrant(scene, -36, -20);   // near mid-west building (-32,-24)
-  makeFireHydrant(scene, -34, 58);    // near the shops row
-  // 12 additional hydrants spread around the map near buildings
-  makeFireHydrant(scene, -28, -58);   // near south building (-34,-54)
-  makeFireHydrant(scene, -18, -58);   // near south building (-12,-54)
-  makeFireHydrant(scene, 42, -58);    // near south-east building (36,-54)
-  makeFireHydrant(scene, -62, -28);   // near mid-west building (-56,-24)
-  makeFireHydrant(scene, -16, -20);   // near mid building (0,-24)
-  makeFireHydrant(scene, 32, -28);    // near mid-east building (26,-24)
-  makeFireHydrant(scene, -34, 18);    // near north building (-28,12)
-  makeFireHydrant(scene, 16, 18);     // near north building (6,12)
-  makeFireHydrant(scene, 42, 18);     // near north-east building (36,12)
-  makeFireHydrant(scene, 76, 20);     // beside the portal hill
-  makeFireHydrant(scene, -20, 58);    // near rightmost shop
-  makeFireHydrant(scene, 60, 48);     // near park edge
+  // Fire hydrants, all on grass verges. Every one is checked against the ROADS
+  // table in cityRoads.js by the city audit, so none of them stands in tarmac.
+  makeFireHydrant(scene, -64, -32);    // verge on the residential street
+  makeFireHydrant(scene, -58, -49);    // between the parking lot and the flats
+  makeFireHydrant(scene, -70, -16);    // west corner of the flats block
+  makeFireHydrant(scene, -70, -18);    // west end of the flats frontage
+  makeFireHydrant(scene, 14, -34);     // south end of the east-spine block
+  makeFireHydrant(scene, 33, -58);     // west end of the substation
+  makeFireHydrant(scene, 33, -68);     // substation's south-west corner
+  makeFireHydrant(scene, 66, -49);     // south-east block, east end
+  makeFireHydrant(scene, -46, 14);     // bodega frontage
+  makeFireHydrant(scene, -46, 16);     // north verge above the bodega
+  makeFireHydrant(scene, -22, 37);     // north side of the town square
+  makeFireHydrant(scene, 31, 50);      // between the park and the library
+  makeFireHydrant(scene, 44, 100);     // far north, east of the hospital
+  makeFireHydrant(scene, -13.5, 90);   // far north, verge on the main drag
+  makeFireHydrant(scene, 64, 100);     // far north, west of the retained block
+  makeFireHydrant(scene, 67, 60);      // grass east of the park
+  // The market row: three along its own sidewalk and one at its west end.
+  makeFireHydrant(scene, -34, 59);
+  makeFireHydrant(scene, -20, 59);
+  makeFireHydrant(scene, -46, 55);
 
-  makeFenceLine(scene, 49, 49, 49, 75, 13);
-  makeFenceLine(scene, 49, 75, 75, 75, 13);
-  makeFenceLine(scene, 75, 75, 75, 49, 13);
-  makeFenceLine(scene, 75, 49, 49, 49, 13);
+  // Park border, three sides only — the library fronts the open east edge.
+  makeFenceLine(scene, 14, 44, 14, 64, 10);
+  makeFenceLine(scene, 14, 64, 30, 64, 8);
+  makeFenceLine(scene, 30, 64, 30, 44, 10);
 
   addPark(scene);
   addParkingLot(scene);

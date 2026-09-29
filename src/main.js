@@ -3,6 +3,7 @@ import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from '
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1787180000003';
 import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, addTrafficCars } from './cars.js?v=1790448808379';
 import { addFiretruck } from './firetruck.js?v=1787510500000';
+import { cityFireSpots, updateCityBuildings } from './cityBuildings.js';
 import { addPeople } from './people.js?v=1790448808372';
 import { addRobot, buildRobotModel } from './robot.js?v=1790400453800';
 import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1790445221394';
@@ -639,8 +640,10 @@ car.position.set(0, 0.15, 0);
 scene.add(car);
 
 // Autonomous fire engine: patrols the roads and douses roof fires on its own.
+// It is handed the city's fire-tagged colliders so the fires always sit on real
+// roofs of buildings that are actually standing.
 await __loaderYield(0.21, 'the fire engine');
-const firetruck = addFiretruck(scene);
+const firetruck = addFiretruck(scene, cityFireSpots(buildingColliders));
 
 // Giant eating robot: stomps around the city, chases down cars, picks them
 // up and eats them. The player gets eaten too (and respawns).
@@ -2183,6 +2186,24 @@ function rampRampSurfaceY(px, pz) {
   return info ? info.baseY + info.height * info.s : -Infinity;
 }
 
+// True when (x,z) lies on a collider's footprint. A collider carrying `r` is a
+// DISC and is tested as one; everything else falls back to its halfW/halfD box.
+//
+// The one round collider today is the underground's giant spinning platter
+// (underground/index.js PLATTER). Its mesh is a cylinder, so the box that
+// covers the circle overhangs the rim by ~41% at each corner — a car in a
+// corner would be seated on, and carried around by, a shelf of air. Every
+// footprint test that can see a surface has to go through here so a round deck
+// stops reporting standable floor past its rim.
+function onColliderFootprint(c, x, z) {
+  if (c.r !== undefined) {
+    const dx = x - c.x;
+    const dz = z - c.z;
+    return dx * dx + dz * dz <= c.r * c.r;
+  }
+  return Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD;
+}
+
 // Highest rooftop surface (building top + roof lip) whose footprint contains
 // the point, or 0 over open ground. Lets the car land on top of buildings
 // when it flies (mega ramp) instead of sinking through them, and lets it drop
@@ -2195,7 +2216,7 @@ function buildingTopAt(x, z) {
     // not surfaces — they block driving but must never report a rooftop, or
     // the elevated check would let the car drive straight through them.
     if (c.noRoof) continue;
-    if (Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD) {
+    if (onColliderFootprint(c, x, z)) {
       // In the underground, a crumbled checkerboard tile leaves a hole — the
       // ceiling collider must not report a floor there, or the car would
       // drive on air over the gap.
@@ -2274,7 +2295,7 @@ function ugRampRideAt(px, pz, carY) {
 function ugElevatorTopAt(px, pz, carY) {
   let top = 0;
   for (const c of ugColliders) {
-    if (c.soft && Math.abs(px - c.x) <= c.halfW && Math.abs(pz - c.z) <= c.halfD) {
+    if (c.soft && onColliderFootprint(c, px, pz)) {
       // Skip the ceiling collider over a crumbled tile (a hole) so the car
       // falls through instead of riding on air.
       if (c.ceiling) {
@@ -5469,19 +5490,28 @@ function animate() {
   // heading rotates with the disk too, and because the movement vector is
   // rebuilt from the heading below, the car's actual driving direction follows
   // the disk instead of cutting a straight line across it.
+  //
+  // Two details make it read as a turntable rather than a shove:
+  //  - the footprint test is onColliderFootprint, so the round deck stops
+  //    carrying the car in the square corners its mesh never covers (a car that
+  //    ran off the rim there used to orbit on air)
+  //  - the position sweep is the SAME handedness as the heading, and both match
+  //    `disk.rotation.y += a` (Three.js R_y maps a point offset (dx,dz) to
+  //    (dx·cos a + dz·sin a, −dx·sin a + dz·cos a)). Sweeping the other way
+  //    orbits the car against the disk's own rotation, which is the clearest
+  //    possible "this isn't spinning naturally" tell.
   if (worldState === 'underground') {
     for (const c of ugColliders) {
       if (c.spin
         && Math.abs(car.position.y - c.h) < 1.5
-        && Math.abs(car.position.x - c.x) <= c.halfW
-        && Math.abs(car.position.z - c.z) <= c.halfD) {
+        && onColliderFootprint(c, car.position.x, car.position.z)) {
         car.rotation.y += c.spin * delta;
         const dx = car.position.x - c.x;
         const dz = car.position.z - c.z;
         const a = c.spin * delta;
         const ca = Math.cos(a), sa = Math.sin(a);
-        car.position.x = c.x + dx * ca - dz * sa;
-        car.position.z = c.z + dx * sa + dz * ca;
+        car.position.x = c.x + dx * ca + dz * sa;
+        car.position.z = c.z - dx * sa + dz * ca;
         break;
       }
     }
@@ -6870,6 +6900,9 @@ function animate() {
 
   // Animate hovering rings in the open building
   updateHoveringRings(clock.elapsedTime);
+
+  // Blinking alarms and beacons on the new city landmarks
+  updateCityBuildings(clock.elapsedTime);
 
   // Small NW-corner marker arrow: spin on its axis, planted on the ground
   updateNwCornerArrow(delta);

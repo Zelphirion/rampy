@@ -2498,9 +2498,16 @@ export async function addUnderground(parent, opts = {}) {
   // collider seats the car on the disk surface (0.32-high pad, no clip).
   const PLATTER = { cx: -85, cz: 62, r: 16, h: 0.32, spin: 2.0 };   // beside the mountain, off-course
   const platterSpin = { t: 0, disk: null };
+  // `r` is the deck's TRUE radius. The disk mesh is round, so without it the
+  // collider can only be the halfW/halfD square that covers the circle, and the
+  // square's four corners sit ~41% further out than the rim — a car parked in
+  // one of them rides an invisible shelf hanging over the floor. `r` makes
+  // main.js treat the footprint as the disc it actually is (see
+  // onColliderFootprint); halfW/halfD stay as the conservative bound for any
+  // code that has not learned about discs.
   const platterColliders = [{
     x: PLATTER.cx, z: PLATTER.cz,
-    halfW: PLATTER.r, halfD: PLATTER.r,
+    halfW: PLATTER.r, halfD: PLATTER.r, r: PLATTER.r,
     h: PLATTER.h, soft: true,
     spin: PLATTER.spin,
   }];

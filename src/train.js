@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { RAIL } from './cityRoads.js';
 
 // ===== Train =====
 // A freight train that endlessly circles the town on a big rounded-rectangle
@@ -15,10 +16,13 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // to +120, just inside the world's north edge (z=123), so the short grass
 // field behind the mega ramp stays clear of the track; the loop becomes a
 // tall rounded rectangle.
-const ST = 84;       // east/west/south straight rails sit at ±84
-const ST_N = 120;    // north straight rail sits at +120 (field far edge)
-const R = 10;        // corner radius
-const CC = ST - R;   // corner arc centres at ±74 on the east/west/south sides
+//
+// The numbers come from cityRoads.js rather than being restated here. That
+// module owns the loop because railClearance() has to agree with it exactly —
+// it is what keeps buildings, props and roads off the ballast, and a second copy
+// of these five numbers in this file was free to drift out of step with the
+// audit without anything failing until a building quietly grew a rail through it.
+const { st: ST, stN: ST_N, r: R, cc: CC, nz: NZ } = RAIL;
 const TRACK_Y = 0.19;   // rail tube centre height
 
 // Sample points around the closed loop (clockwise). y is fixed (flat ground).
@@ -28,9 +32,8 @@ function buildLoopPath() {
   const aStep = 0.05;
   const push = (x, z) => pts.push(new THREE.Vector3(x, TRACK_Y, z));
   // North corner arc centres sit at x=±CC (matching the south corners) and
-  // z=ST_N-R, so each north corner rounds from the top rail to the side rail
+  // z=NZ, so each north corner rounds from the top rail to the side rail
   // and the whole loop stays inside the world's east/west bounds (±90).
-  const NZ = ST_N - R;
   // top straight (z = +ST_N), left -> right (spans the same x-range as the
   // other straights, [-CC,CC])
   for (let x = -CC; x <= CC; x += step) push(x, ST_N);

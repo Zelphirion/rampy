@@ -96,34 +96,35 @@ export function addPeople(scene) {
     });
   };
 
-  // Sidewalk promenades (patrol back and forth) — the z=42 walk detours north
-  // around the mine pit (x -61..-49, z 32..44) so nobody walks into the hole.
-  const promenade = [
-    { x: -70, z: 42 }, { x: -62, z: 42 }, { x: -62, z: 46 },
-    { x: -48, z: 46 }, { x: -48, z: 42 }, { x: 70, z: 42 },
-  ];
-  add(-40, 42, promenade, 1.5);
-  add(5, 42, promenade, 1.1);
-  add(55, 42, promenade, 1.7);
-  add(-30, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.3);
-  add(15, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.6);
-  add(50, -42, [{ x: -70, z: -42 }, { x: 70, z: -42 }], 1.2);
-  add(42, 30, [{ x: 42, z: 70 }, { x: 42, z: -70 }], 1.4);
-  add(42, -25, [{ x: 42, z: 70 }, { x: 42, z: -70 }], 1.8);
-  add(-42, -15, [{ x: -42, z: 70 }, { x: -42, z: -70 }], 1.3);
-  add(-42, 40, [{ x: -42, z: 70 }, { x: -42, z: -70 }], 1.6);
+  // Sidewalk promenades (patrol back and forth). Each of these hugs a verge or
+  // a footway and never crosses tarmac, so walkers stay off the roads:
+  //   • the market strip's north footway, between market-row and the stalls
+  //   • the verge between the school yard and market-row's east end
+  //   • the strip just south of the main drag, between it and the houses
+  //   • the far-north grass east of the hospital
+  //
+  // The market footway sits at z = 53.9, not z = 55. The stalls stand at z 55.4
+  // with a 2.4 x 1.3 canopy, so their frontage reaches back to z 54.75: a walker
+  // on the old z = 55 line went straight through the fruit stands. The gap
+  // between the market-row kerb (z 53) and the stall fronts (z 54.75) is 1.75,
+  // which is what the footway is for — clear of the carriageway and clear of the
+  // stalls, with the shopfronts on the walker's other side.
+  add(-33, 53.9, [{ x: -51, z: 53.9 }, { x: -15, z: 53.9 }], 1.5);
+  add(30, 42, [{ x: 15, z: 42 }, { x: 45, z: 42 }], 1.1);
+  add(0, -13, [{ x: -30, z: -13 }, { x: 30, z: -13 }], 1.3);
+  add(44, 93, [{ x: 44, z: 82 }, { x: 44, z: 104 }], 1.6);
 
-  // Park goers circle the pond
+  // Park goers circle the pond in the town park
   const parkPath = [];
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
-    parkPath.push({ x: 62 + Math.cos(a) * 7, z: 62 + Math.sin(a) * 7 });
+    parkPath.push({ x: 22 + Math.cos(a) * 4.8, z: 54 + Math.sin(a) * 4.8 });
   }
-  add(69, 62, parkPath, 1.2, true);
-  add(62, 55, parkPath, 1.5, true);
+  add(26, 57, parkPath, 1.2, true);
+  add(19, 51, parkPath, 1.5, true);
 
   // Someone crossing the parking lot
-  add(-62, -60, [{ x: -76, z: -60 }, { x: -48, z: -60 }], 1.4);
+  add(-60, -61, [{ x: -73, z: -61 }, { x: -47, z: -61 }], 1.4);
 
   function update(delta, threats = {}) {
     for (const p of people) {

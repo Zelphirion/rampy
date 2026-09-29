@@ -1,6 +1,6 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addCityBuildings, cityDoorTargets } from './cityBuildings.js';
-import { buildCityRoads, buildDriveways } from './cityRoads.js';
+import * as THREE from './three-stub.mjs';
+import { addCityBuildings, cityDoorTargets } from './undertest-cityBuildings.js';
+import { buildCityRoads, buildDriveways } from './undertest-cityRoads.js';
 
 // ===== Shared map materials =====
 // The tarmac material now lives in cityRoads.js with the rest of the network.

@@ -18,14 +18,21 @@ const FLAME_GEO = {
   corner: new THREE.ConeGeometry(0.85, 3.4, 8),
 };
 
-// Burning buildings next to the main road: x/z = building position, w/d =
-// footprint, h = roof height. Fire = roof plume + a few random windows + the
-// upper corners (no ground-floor fire). At most two buildings burn at once.
-// The truck parks on the road (z=0) and douses them.
+// Burning buildings: x/z = building centre, w/d = footprint, h = roof height.
+// Fire = roof plume + a few random windows + the upper corners (no ground-floor
+// fire). At most two buildings burn at once. The truck parks on the road (z=0)
+// and douses them.
+//
+// The default list is only a fallback for when the caller has not handed us the
+// city: main.js passes cityFireSpots(buildingColliders), so the fires always
+// land on real roofs of the buildings that are actually standing. Deriving them
+// from the colliders is what stops a flame from being left hovering in mid-air
+// beside a building that has since been replaced.
 const FIRE_SPOTS = [
-  { x: -28, z: 12, h: 8,  w: 8,  d: 8 },
-  { x: 36,  z: 12, h: 7,  w: 8,  d: 7 },
-  { x: 0,   z: -24, h: 13, w: 10, d: 8 },
+  { x: -30, z: -28, h: 11.7, w: 20.6, d: 14.6 },   // bank
+  { x: 24, z: -26, h: 7, w: 16, d: 13 },             // fire station
+  { x: 24, z: -67, h: 10, w: 20, d: 12 },            // apartments
+  { x: 28, z: 30, h: 12.5, w: 20, d: 14 },           // hospital
 ];
 
 const FIRE_HEALTH = 7;
@@ -183,13 +190,16 @@ function makeFire(scene, spot) {
   };
 }
 
-export function addFiretruck(scene) {
+export function addFiretruck(scene, spots = null) {
   const truck = createFiretruck();
   truck.position.set(45, 0.15, 0);
   truck.rotation.y = 0;   // face -X at spawn — sits behind the player, facing it
   scene.add(truck);
 
-  const fires = FIRE_SPOTS.map((s) => makeFire(scene, s));
+  // Prefer caller-supplied spots so the fires track the buildings that exist;
+  // fall back to the hard-coded list if none were given.
+  const spotList = (spots && spots.length) ? spots : FIRE_SPOTS;
+  const fires = spotList.map((s) => makeFire(scene, s));
 
   // Only two buildings burn at a time: pick two to start, hold the rest back
   // with staggered relight timers so they cycle in as slots free up.
@@ -238,8 +248,12 @@ export function addFiretruck(scene) {
     const dirWorld = dirLocal.clone().applyQuaternion(truck.quaternion);
 
     const n = Math.floor(delta * 90);
-    // Long shots need extra airtime or the water dies mid-flight.
-    const life = Math.min(2.4, dist / DROP_SPEED + 0.3);
+    // A droplet has to survive its whole ballistic arc, or it evaporates in mid
+    // air and never registers a splash — the fire then can never be doused. The
+    // cap only exists to stop strays littering the ground, and it is set above
+    // the longest shot in the city (the apartments, ~68 units out on the far
+    // side of the road, a 2.6s flight).
+    const life = Math.min(3.6, t + 0.35);
     for (let i = 0; i < n && droplets.length < 220; i++) {
       const d = {
         mesh: new THREE.Mesh(dropGeo, dropMat),
