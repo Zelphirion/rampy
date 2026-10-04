@@ -243,6 +243,364 @@
         border-color: #7ef9ff;
       }
 
+      /* ===== Levels / Objects browser =====
+         Both screens hang off the same gear modal. They are deliberately dark
+         and mostly transparent: the 3D stage behind them is the showroom, so
+         anything opaque here would hide the thing you came to look at. */
+      body.browser-mode #car-prev,
+      body.browser-mode #car-next,
+      body.browser-mode #car-hint { display: none !important; }
+
+      .browser-panel {
+        position: fixed;
+        top: 76px;
+        bottom: 92px;
+        width: 330px;
+        max-width: 42vw;
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        padding: 14px;
+        border-radius: 16px;
+        background: rgba(6, 11, 22, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        backdrop-filter: blur(6px);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+        z-index: 25;
+        overflow: hidden;
+        color: #dbe7ff;
+        font-family: Arial, sans-serif;
+        -webkit-overflow-scrolling: touch;
+      }
+      /* The levels list is a column; the object browser keeps the grid in the
+         middle with the category row on top and the pager pinned at the bottom. */
+      #levels-panel { left: 20px; }
+      #objects-panel { right: 20px; }
+      body.tab-levels #levels-panel { display: flex; }
+      body.tab-objects #objects-panel { display: flex; }
+
+      .browser-title {
+        font-size: 12px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #8fa8cc;
+        font-weight: 700;
+      }
+      .browser-blurb {
+        font-size: 12px;
+        line-height: 1.45;
+        color: #93a9c8;
+      }
+
+      /* Level buttons */
+      #level-list {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      /* A row is the level's own button plus its "Objects" button side by side.
+         Two sibling buttons rather than one nested in the other: a button inside
+         a button is invalid HTML, and the inner one stops being clickable in
+         some browsers — which would make the whole catalogue unreachable. */
+      .level-row {
+        display: flex;
+        gap: 7px;
+        align-items: stretch;
+      }
+      .level-btn {
+        flex: 1 1 auto;
+        min-width: 0;
+        text-align: left;
+        padding: 10px 12px;
+        border-radius: 11px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(16, 27, 48, 0.7);
+        color: #dbe7ff;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        transition: background 0.18s, border-color 0.18s, transform 0.12s;
+      }
+      .level-btn:hover {
+        background: rgba(30, 55, 95, 0.9);
+        border-color: #7ef9ff;
+        transform: translateX(3px);
+      }
+      /* The route into that level's objects, without leaving the Levels tab. */
+      .lv-objects-btn {
+        flex: 0 0 auto;
+        width: 84px;
+        border-radius: 11px;
+        border: 1px solid rgba(126, 249, 255, 0.34);
+        background: rgba(20, 44, 72, 0.7);
+        color: #7ef9ff;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        transition: background 0.18s, border-color 0.18s, color 0.18s;
+      }
+      .lv-objects-btn:hover {
+        background: rgba(40, 90, 150, 0.9);
+        border-color: #7ef9ff;
+        color: #fff;
+      }
+      .level-btn .lv-name {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .level-btn .lv-blurb {
+        font-size: 11.5px;
+        color: #93a9c8;
+        margin-top: 2px;
+        line-height: 1.4;
+      }
+      .level-btn.here {
+        border-color: #7ef9ff;
+        background: rgba(30, 70, 120, 0.8);
+      }
+      .level-btn .lv-here {
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        color: #7ef9ff;
+        text-transform: uppercase;
+      }
+
+      /* Category chips */
+      #obj-cats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .cat-chip {
+        padding: 5px 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(16, 27, 48, 0.7);
+        color: #b9cbe8;
+        font-size: 11px;
+        letter-spacing: 0.05em;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        transition: background 0.18s, border-color 0.18s, color 0.18s;
+      }
+      .cat-chip:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .cat-chip.active {
+        background: rgba(40, 80, 140, 0.9);
+        border-color: #7ef9ff;
+        color: #fff;
+      }
+
+      /* Page numbers: 1 2 3 4 5, one per page of nine. Sits above the grid so
+         you can see how much of the category is left before you turn a page. */
+      #obj-pages {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .page-btn {
+        min-width: 26px;
+        padding: 3px 7px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(16, 27, 48, 0.7);
+        color: #b9cbe8;
+        font-family: Arial, sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: background 0.18s, border-color 0.18s, color 0.18s;
+      }
+      .page-btn:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .page-btn.active {
+        background: rgba(40, 80, 140, 0.92);
+        border-color: #7ef9ff;
+        color: #fff;
+      }
+
+      /* The 3x3 tile grid: nine objects to a page. */
+      #obj-grid {
+        flex: 1 1 auto;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        grid-auto-rows: 1fr;
+        gap: 7px;
+        min-height: 0;
+      }
+      /* The spinning miniatures, drawn over the grid by main.js. Absolutely
+         positioned to sit exactly on top of #obj-grid and sized to it, so each
+         tile's preview lands in the tile's own box. Never interactive: the
+         buttons underneath are what you click. */
+      #obj-thumbs {
+        position: absolute;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+        display: none;
+      }
+      body.tab-objects #obj-thumbs { display: block; }
+      .obj-tile {
+        border-radius: 11px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(16, 27, 48, 0.72);
+        color: #dbe7ff;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        padding: 6px;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: stretch;
+        text-align: left;
+        overflow: hidden;
+        transition: background 0.18s, border-color 0.18s, transform 0.12s;
+      }
+      /* The empty box the miniature is drawn into. Its rect IS the tile's
+         viewport, so it has to take up whatever height the caption below it
+         does not. */
+      .obj-tile .ot-thumb {
+        flex: 1 1 auto;
+        min-height: 0;
+        width: 100%;
+        display: block;
+      }
+      /* The caption strip under the model: its number on the left, the name on
+         the right, always visible because the canvas never covers it. */
+      .obj-tile .ot-foot {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 6px;
+        width: 100%;
+        padding-top: 3px;
+      }
+      .obj-tile:hover {
+        background: rgba(30, 55, 95, 0.9);
+        border-color: #7ef9ff;
+        transform: translateY(-2px);
+      }
+      .obj-tile.active {
+        background: rgba(40, 80, 140, 0.92);
+        border-color: #7ef9ff;
+        box-shadow: 0 0 16px rgba(126, 249, 255, 0.3);
+      }
+      .obj-tile .ot-num {
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        color: #7ef9ff;
+        font-weight: 700;
+      }
+      .obj-tile .ot-name {
+        font-size: 12px;
+        line-height: 1.25;
+        font-weight: 600;
+        word-break: break-word;
+      }
+
+      /* Pager + range caption, pinned to the bottom of the panel. */
+      .obj-pager {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex: 0 0 auto;
+      }
+      #obj-range {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: #93a9c8;
+        text-transform: uppercase;
+        font-weight: 600;
+        text-align: center;
+        flex: 1 1 auto;
+      }
+      .pager-btn {
+        width: 40px;
+        height: 34px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(12, 20, 38, 0.7);
+        color: #dbe7ff;
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        flex: 0 0 auto;
+        transition: background 0.18s, border-color 0.18s;
+      }
+      .pager-btn:hover:not(:disabled) { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .pager-btn:disabled { opacity: 0.3; cursor: default; }
+
+      /* The detail card: title, blurb, where it lives, and the way there. */
+      #obj-detail {
+        flex: 0 0 auto;
+        border-radius: 12px;
+        border: 1px solid rgba(126, 249, 255, 0.28);
+        background: rgba(10, 20, 38, 0.9);
+        padding: 11px 12px;
+        display: none;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #obj-detail.open { display: flex; }
+      #obj-detail .od-title {
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: #fff;
+        text-transform: uppercase;
+      }
+      #obj-detail .od-blurb {
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: #93a9c8;
+      }
+      #obj-detail .od-where {
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        color: #7ef9ff;
+        text-transform: uppercase;
+      }
+      .od-actions { display: flex; gap: 7px; }
+      .od-btn {
+        flex: 1 1 auto;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(20, 34, 58, 0.85);
+        color: #dbe7ff;
+        font-size: 11.5px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: Arial, sans-serif;
+        transition: background 0.18s, border-color 0.18s;
+      }
+      .od-btn:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .od-btn.primary {
+        background: rgba(40, 80, 140, 0.9);
+        border-color: #7ef9ff;
+        color: #fff;
+      }
+      .od-btn.primary:hover { background: rgba(55, 110, 185, 0.95); }
+
+      /* Narrow screens: the panels take the full width and sit above the pager
+         buttons, which the gear modal hides on these tabs anyway. */
+      @media (max-width: 720px) {
+        .browser-panel {
+          left: 12px;
+          right: 12px;
+          width: auto;
+          max-width: none;
+        }
+      }
+
       /* ===== Loading screen ===== */
       #loader {
         position: fixed;
@@ -440,10 +798,51 @@
     <div id="car-hint"></div>
 
     <!-- Showroom tabs: PLAYER swaps your ride, CHASE swaps the car that chases
-         you around the town/ramp worlds. Only visible while the showroom is up. -->
+         you, LEVELS teleports you, OBJECTS browses everything the game is made
+         of. Only visible while the showroom is up. -->
     <div id="picker-tabs">
       <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
       <button id="tab-chase" class="picker-tab" type="button" title="Choose the car that chases you">&nbsp;Chase&nbsp;</button>
+      <button id="tab-levels" class="picker-tab" type="button" title="Go to another level">&nbsp;Levels&nbsp;</button>
+      <button id="tab-objects" class="picker-tab" type="button" title="Browse the objects">&nbsp;Objects&nbsp;</button>
+    </div>
+
+    <!-- Levels: one button per level. Tapping one drops you there. -->
+    <div id="levels-panel" class="browser-panel">
+      <div class="browser-title">Levels</div>
+      <div class="browser-blurb">Pick a level and go straight there.</div>
+      <div id="level-list"></div>
+    </div>
+
+    <!-- Objects: a category row, a row of page numbers, a 3x3 grid of nine at a
+         time (each tile spinning its own little model), a pager, and the detail
+         card for whichever one is open on the spinning stage. -->
+    <div id="objects-panel" class="browser-panel">
+      <div class="browser-title">Objects</div>
+      <div class="browser-blurb" id="obj-cat-blurb"></div>
+      <div id="obj-cats"></div>
+      <!-- The page numbers: 1 2 3 4 5, one button per page of nine. -->
+      <div id="obj-pages"></div>
+      <div id="obj-grid"></div>
+      <!-- The spinning miniatures. One canvas over the whole grid, with each
+           tile's preview drawn into its own scissor rect — see buildObjThumbs
+           in main.js. It never takes a click: pointer-events is off, and every
+           real control is a DOM button underneath it. -->
+      <canvas id="obj-thumbs" aria-hidden="true"></canvas>
+      <div class="obj-pager">
+        <button id="obj-prev" class="pager-btn" type="button" title="Previous nine objects" aria-label="Previous nine objects">&larr;</button>
+        <div id="obj-range"></div>
+        <button id="obj-next" class="pager-btn" type="button" title="Next nine objects" aria-label="Next nine objects">&rarr;</button>
+      </div>
+      <div id="obj-detail">
+        <div class="od-title" id="od-title"></div>
+        <div class="od-blurb" id="od-blurb"></div>
+        <div class="od-where" id="od-where"></div>
+        <div class="od-actions">
+          <button id="od-close" class="od-btn" type="button">Close</button>
+          <button id="od-go" class="od-btn primary" type="button">View in context</button>
+        </div>
+      </div>
     </div>
 
     <!-- Inline error capture for debugging: records runtime errors before modules run -->
@@ -461,6 +860,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1790448808386"></script>
+    <script type="module" src="./src/main.js?v=1791123300000"></script>
   </body>
 </html>

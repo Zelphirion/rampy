@@ -1,13 +1,13 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addGlassCity } from '../../glasscity.js?v=1790448808372';
+import { addGlassCity } from '../../glasscity.js?v=1790707232562';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
-import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js?v=1790448808372';
+import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers, mouthFrame } from '../../modules/holyMountain.js?v=1790707232976';
 // The Pneumatic Express Tube: pure path math (verified by expressTube.test.mjs).
 // This file turns the sampled centre line into a glass TubeGeometry and the
 // travelling air-jet rings; main.js imports the same module for the forced ride.
-import { EXPRESS_TUBE, expressTubeSamples, expressTubePoint, expressTubeTangent } from '../../modules/expressTube.js?v=1790448808372';
+import { EXPRESS_TUBE, expressTubeSamples, expressTubePoint, expressTubeTangent } from '../../modules/expressTube.js?v=1790708040365';
 
 export const UNDERGROUND_Y = -30;
 
@@ -3944,6 +3944,8 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   const glassCity = addGlassCity(parent, {
     // Idea #25: a crystal cluster popping when the car runs into it.
     onCrystalPop: typeof opts.onGlassPop === 'function' ? opts.onGlassPop : null,
+    // A street ghost picking the car up and dropping it at the waterfall's foot.
+    onGhostRide: typeof opts.onGhostRide === 'function' ? opts.onGhostRide : null,
   });
   const cityGlow = new THREE.PointLight(0x9fb8ff, 2.4, 190, 1);
   cityGlow.position.set(0, 26, 152);
@@ -4763,10 +4765,9 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
     const doneTex = new Set();
     root.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
-      if (o.isInstancedMesh) {
-        if (o.instanceMatrix) o.instanceMatrix.dispose();
-        if (o.instanceColor) o.instanceColor.dispose();
-      }
+      // InstancedMesh.dispose() frees instanceMatrix/instanceColor internally;
+      // the attributes themselves have no dispose(), so never call it on them.
+      if (o.isInstancedMesh && typeof o.dispose === 'function') o.dispose();
       const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
       for (const m of mats) {
         if (!m || cached.has(m) || doneMats.has(m)) continue;
@@ -4942,8 +4943,15 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
               // amber → magenta → red. The two dark shades share a single
               // first step, so the SECOND drive-over is the green (lime)
               // that spreads blue to its neighbors.
+              const oldSt = st;
               const newSt = setOrBump(idx, 2);
-              if (mode === 'train') checkerCooldown[idx] = 0;   // setOrBump re-armed it — clear again
+              if (mode === 'train') checkerCooldown[idx] = 0;   // setOrBump re-armed it ??? clear again
+              // Play sound only for direct drive-over (not from spreading)
+              if (typeof opts.onTileBong === 'function' && oldSt < newSt) {
+                const notes = [523.25, 493.88, 440, 392, 349.23]; // C5, B4, A4, G4, F4 - lower notes for each color
+                const idxNote = Math.max(0, Math.min(notes.length - 1, newSt - 2));
+                opts.onTileBong(notes[idxNote]);
+              }
               // The color the tile just turned into radiates a wave outward
               // in concentric rings — each ring bumps its tiles toward a
               // target color (or up one step if already at/past it), so the

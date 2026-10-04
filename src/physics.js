@@ -27,6 +27,7 @@ export function addKnockable(group, radius, opts = {}) {
     group,
     radius,
     mode: opts.mode || 'fall',
+    smashOnlyBy: opts.smashOnlyBy || null,
     state: 'standing',           // standing | falling | fallen | wobbling | sliding | rocking | waitingDrop
     dropWait: 0,
     t: 0,
@@ -41,7 +42,7 @@ export function addKnockable(group, radius, opts = {}) {
     perp: new THREE.Vector3(1, 0, 0),    // sideways fan for 'scatter' mode
     spin: 0,                             // tumble rate for 'scatter' mode
     // Shove physics for a prop that is ALREADY knocked over (fallen/sliding):
-    // hitting it again slides it along the ground like a traffic car — the
+    // hitting it again slides it along the ground like a traffic car ??? the
     // velocity + yaw spin decay each frame, then it settles where it stops.
     shoveVx: 0,                          // slide velocity (x)
     shoveVz: 0,                          // slide velocity (z)
@@ -52,7 +53,7 @@ export function addKnockable(group, radius, opts = {}) {
     linked: null,                        // other knockables that fall together
     // 'domino' mode (ramp-world domino run): a falling domino tips over along
     // its pushDir and knocks any standing domino its body actually *touches*
-    // as it pivots (exact box-vs-box overlap, checked every frame) — a real
+    // as it pivots (exact box-vs-box overlap, checked every frame) ??? a real
     // one-after-another chain reaction, not the all-at-once `linked` burst.
     // If the fall misses a neighbor (a careful / angled hit), that neighbor
     // stays standing, so you can topple just one domino on purpose.
@@ -72,7 +73,7 @@ export function addKnockable(group, radius, opts = {}) {
     wobbleFreq: opts.wobbleFreq ?? 9,       // rock speed (rad/s)
     wobbleDamping: opts.wobbleDamping ?? 3, // how fast it settles back
     // 'roll' mode (ramp-world timber logs): a cylinder lying on its side that
-    // ROLLS along the ground when hit — the whole group slides with a decaying
+    // ROLLS along the ground when hit ??? the whole group slides with a decaying
     // velocity while `spinGroup` (local Z = the log's long axis) rotates at the
     // matching rolling rate, so the log visibly rolls away a good distance.
     rollVx: 0,
@@ -80,7 +81,7 @@ export function addKnockable(group, radius, opts = {}) {
     rollT: 0,
     rollDuration: opts.rollDuration ?? 4,
     rollRadius: opts.rollRadius || 2.1,
-    rollHalfLen: opts.rollHalfLen || 6.5,   // half the log length — capsule collision extent
+    rollHalfLen: opts.rollHalfLen || 6.5,   // half the log length ??? capsule collision extent
     rollPower: opts.rollPower ?? 24,        // initial roll speed
     rollDecay: opts.rollDecay ?? 1.0,       // per-second exponential damping
     rollWrapX: opts.rollWrapX || 0,         // wrap span for x (180) so a log rolling off the west edge reappears on the east (torus seam)
@@ -96,13 +97,13 @@ export function addKnockable(group, radius, opts = {}) {
     rockAmplitude: opts.rockAmplitude ?? 0.2,
     rockFrequency: opts.rockFrequency ?? 9,
     // 'tire' mode (ramp-world tire pyramid): a tire lying flat in a stack.
-    // A hit pops it off in a low arc — most tires tip onto their rim and ROLL
+    // A hit pops it off in a low arc ??? most tires tip onto their rim and ROLL
     // away (rollAxis captured at knock time), the rest tumble onto their
     // SIDE, yaw-spinning through the air before skidding to a stop face-up.
     // Stacked tires also watch `supporters`: when nothing beneath them is
     // still standing in place they drop with gravity, sometimes skidding
     // away on impact.
-    rimLift: opts.rimLift || 0,       // centre-height gain flat→on-rim (= ring radius)
+    rimLift: opts.rimLift || 0,       // centre-height gain flat???on-rim (= ring radius)
     tireStyle: 'rim',                 // chosen per knock: 'rim' | 'side'
     sideChance: opts.sideChance ?? 0,
     dropDelay: opts.dropDelay ?? 0,
@@ -601,13 +602,19 @@ function startFall(k, d, speedFactor = 1) {
 // given, the map wraps like a torus (with separate spans per axis, since the
 // world is wider than it is tall), so a car on one edge can knock a prop near
 // the opposite edge (and never knocks far props across the seam).
-export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0) {
+export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0, vehicle = null) {
   // How hard the hit is: a slow bump barely nudges a prop, a full-speed hit
   // sends it the full distance. 14 is the car's max forward speed.
   const speedFactor = THREE.MathUtils.clamp(Math.abs(speed) / 14, 0.15, 1);
   const _wp = new THREE.Vector3();   // reusable for world-position lookup
   for (const k of knockables) {
-    // A prop that is already down (fallen or sliding) can still be hit — it
+    // Restrict smashing based on vehicle type if specified
+    if (k.smashOnlyBy && vehicle) {
+      if (!vehicle[k.smashOnlyBy]) continue;
+    } else if (k.smashOnlyBy && !vehicle) {
+      continue; // require heavy vehicle but none specified
+    }
+    // A prop that is already down (fallen or sliding) can still be hit ??? it
     // gets shoved along the ground, exactly like knocking a traffic car.
     const lying = k.state === 'fallen' || k.state === 'sliding';
     if (k.state !== 'standing' && !lying) continue;

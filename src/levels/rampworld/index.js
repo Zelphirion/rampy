@@ -732,6 +732,33 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
     });
   }
 
+  // ===== Electrical grid / power utility (smashable only by heavy vehicles) =====
+  const utilMat = new THREE.MeshStandardMaterial({ color: 0x8a8f99, roughness: 0.7, metalness: 0.2 });
+  const utilDark = new THREE.MeshStandardMaterial({ color: 0x2f353b, roughness: 0.8 });
+  // Transformer unit
+  const xfmr = new THREE.Group();
+  const xfmrBase = new THREE.Mesh(new THREE.BoxGeometry(6, 3, 6), utilMat);
+  xfmrBase.position.y = 1.5;
+  xfmr.add(xfmrBase);
+  const xfmrTop = new THREE.Mesh(new THREE.BoxGeometry(4.5, 3, 4.5), utilMat);
+  xfmrTop.position.y = 4.5;
+  xfmr.add(xfmrTop);
+  xfmr.position.set(60, at(60, 30), 30);
+  scene.add(xfmr);
+  addKnockable(xfmr, 5, { mode: 'topple', toppleRadius: 5, smashOnlyBy: 'monster' });
+
+  // Power pole
+  const pole = new THREE.Group();
+  const p = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, 12, 8), utilDark);
+  p.position.y = 6;
+  pole.add(p);
+  const cross = new THREE.Mesh(new THREE.BoxGeometry(5, 0.3, 0.3), utilDark);
+  cross.position.set(2, 9, 0);
+  pole.add(cross);
+  pole.position.set(50, at(50, 25), 25);
+  scene.add(pole);
+  addKnockable(pole, 0.8, { fallTime: 0.5, smashOnlyBy: 'monster' });
+
   // ===== Tire pyramid =====
   // A junkyard pile of big old tires straight ahead of the ramp-world spawn:
   // eight flat-stacked rows shrinking 8-1 (36 tires, ~8 tall). Tires are

@@ -1,5 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { makePerson } from './people.js';
+// Stamp matches main.js's import of this module — see the note in firetruck.js.
+import { makePerson } from './people.js?v=1790712527620';
 
 // ===== Shared car materials =====
 const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa61e1e, roughness: 0.6 });
@@ -1683,6 +1684,233 @@ export function createRaccoonHotRod() {
   stripe.position.set(0.44, 1.1, 0);
   stripe.castShadow = true;
   group.add(stripe);
+  return group;
+}
+
+// ===== Taco truck =====
+// The one you park outside the city and take for a spin. A step-van box body in
+// hot sauce red with a cream serving hatch up one flank, a roof-mounted menu
+// board, a little chimney vent, and a stripe of pennant bunting along the top —
+// so it reads as a taco stand on wheels from any angle, which matters because
+// the showroom turns it.
+//
+// Faces -X like every other car here, and exposes the same { wheels,
+// wheelPivots } contract so the game loop spins and steers it like the rest.
+const tacoRed = new THREE.MeshStandardMaterial({ color: 0xd8451f, roughness: 0.55 });
+const tacoCream = new THREE.MeshStandardMaterial({ color: 0xf6e7c4, roughness: 0.5 });
+const tacoGreen = new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: 0.55 });
+const tacoSign = new THREE.MeshStandardMaterial({ color: 0xfff3cf, emissive: 0xffbb33, emissiveIntensity: 0.9 });
+const tacoSteel = new THREE.MeshStandardMaterial({ color: 0xc4cad4, roughness: 0.35, metalness: 0.35 });
+const tacoWheelGeometry = new THREE.CylinderGeometry(0.58, 0.58, 0.34, 18);
+
+export function createTacoTruck() {
+  const group = new THREE.Group();
+  const box = (w, h, d, mat, x, y, z) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat.clone());
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
+  };
+
+  // ===== Cab (front, faces -X) =====
+  box(2.5, 1.9, 2.2, tacoRed, -2.5, 1.45, 0);
+  box(2.4, 0.16, 2.1, tacoCream, -2.5, 2.5, 0);          // cab roof
+  const screen = box(1.7, 0.62, 1.9, glassMat.clone(), -3.2, 2.05, 0);
+  screen.rotation.z = 0.42;                              // raked windscreen
+  box(1.9, 0.5, 0.12, glassMat.clone(), -2.5, 1.85, 1.1); // side windows
+  box(1.9, 0.5, 0.12, glassMat.clone(), -2.5, 1.85, -1.1);
+  box(0.2, 0.8, 1.6, tacoCream, -3.82, 0.95, 0);         // grille
+  box(0.14, 0.3, 0.32, lightMat.clone(), -3.9, 1.25, -0.6);
+  box(0.14, 0.3, 0.32, lightMat.clone(), -3.9, 1.25, 0.6);
+  box(0.4, 0.38, 2.4, tacoSteel, -3.95, 0.68, 0);        // front bumper
+
+  // A little roof vent/chimney over the cab, because the griddle is inside.
+  box(0.42, 0.5, 0.42, tacoSteel, -1.75, 2.82, -0.5);
+
+  // ===== Serving box (rear) =====
+  // Taller and wider than the cab, with a cream serving hatch folded up on the
+  // +Z flank and a dark serving window behind it.
+  box(4.6, 2.5, 2.55, tacoRed, 0.95, 1.85, 0);
+  box(4.65, 0.2, 2.6, tacoCream, 0.95, 3.16, 0);         // box roof
+  box(4.2, 1.15, 0.14, tacoCream, 0.95, 2.2, 1.34);      // hatch surround
+  box(3.5, 0.8, 0.1, new THREE.MeshStandardMaterial({ color: 0x2a2016, roughness: 0.9 }),
+      0.95, 2.2, 1.42);                                   // the serving window
+  // The hatch awning, hinged up above the window.
+  const awning = box(4.2, 0.1, 0.9, tacoGreen, 0.95, 3.0, 1.75);
+  awning.rotation.x = -0.35;
+
+  // A painted taco on the flank — three shell wedges and a filling stripe.
+  for (let i = 0; i < 3; i++) {
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.1, 16, 1, false, 0, Math.PI), tacoCream.clone());
+    shell.rotation.set(Math.PI / 2, 0, 0);
+    shell.position.set(0.2 + i * 0.75, 1.35, -1.32);
+    shell.castShadow = true;
+    group.add(shell);
+    const filling = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.16, 0.08), tacoGreen.clone());
+    filling.position.set(0.2 + i * 0.75, 1.42, -1.38);
+    group.add(filling);
+  }
+
+  // Roof menu board with a lit face, and a bell on a spring.
+  box(2.0, 0.75, 0.14, tacoCream, 0.9, 3.72, 0);
+  box(1.7, 0.5, 0.06, tacoSign, 0.9, 3.72, 0.1);
+  box(0.12, 0.3, 0.12, tacoSteel, 0.9, 3.28, 0);
+
+  // Pennant bunting strung the length of the roof edge.
+  for (let i = 0; i < 9; i++) {
+    const flag = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.34, 3), (i % 3 === 0 ? tacoGreen : tacoCream).clone());
+    flag.position.set(-1.3 + i * 0.55, 3.3, 1.3);
+    flag.rotation.x = Math.PI;
+    flag.castShadow = true;
+    group.add(flag);
+  }
+
+  // ===== Wheels: 2 axles, front pair steers =====
+  const wheels = [];
+  const wheelPivots = [];
+  [[-2.5, 1.12], [-2.5, -1.12], [2.0, 1.12], [2.0, -1.12]].forEach((pos) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(pos[0], 0.58, pos[1]);
+    const wheel = new THREE.Mesh(tacoWheelGeometry, wheelMaterial.clone());
+    wheel.rotation.x = Math.PI / 2;
+    wheel.castShadow = true;
+    wheel.receiveShadow = true;
+    pivot.add(wheel);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.04, 12), chromeMat.clone());
+    hub.rotation.x = Math.PI / 2;
+    hub.position.z = 0.18;
+    pivot.add(hub);
+    group.add(pivot);
+    wheels.push(wheel);
+    wheelPivots.push(pivot);
+  });
+  group.userData.wheels = wheels;
+  group.userData.wheelPivots = wheelPivots;
+
+  return group;
+}
+
+// ===== Crab (playable) =====
+// A beach crab at driveable scale: wide flat carapace, two big claws in front,
+// eight legs down the sides and two stalks for the eyes, plus little googly eyes
+// that face you. It is NOT a car, so it has no wheels — the legs scissor
+// sideways in userData.crabLegs, which main.js strides off the car's speed.
+const crabShellMat = new THREE.MeshStandardMaterial({ color: 0xd9502f, roughness: 0.62 });
+const crabUnderMat = new THREE.MeshStandardMaterial({ color: 0xf0b48a, roughness: 0.7 });
+const crabLegMat = new THREE.MeshStandardMaterial({ color: 0xb03a1e, roughness: 0.65 });
+const crabClawMat = new THREE.MeshStandardMaterial({ color: 0xe0603a, roughness: 0.6 });
+const crabEyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+
+export function createCrab() {
+  const group = new THREE.Group();
+
+  // Carapace: one wide flattened dome, wider than it is long, sitting on a
+  // paler underside so it reads as a crab from below as it scuttles past.
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(1.5, 20, 12), crabShellMat.clone());
+  shell.scale.set(1.15, 0.5, 0.82);
+  shell.position.y = 0.72;
+  shell.castShadow = true;
+  shell.receiveShadow = true;
+  group.add(shell);
+
+  const under = new THREE.Mesh(new THREE.SphereGeometry(1.32, 16, 10), crabUnderMat.clone());
+  under.scale.set(1.14, 0.34, 0.8);
+  under.position.y = 0.5;
+  group.add(under);
+
+  // A ridge of spines along the back of the shell.
+  for (let i = 0; i < 5; i++) {
+    const spine = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 5), crabClawMat.clone());
+    spine.position.set(0.9 - i * 0.45, 1.24 - Math.abs(i - 2) * 0.03, 0);
+    spine.rotation.z = -0.3 + i * 0.14;
+    spine.castShadow = true;
+    group.add(spine);
+  }
+
+  // Two eye stalks, tipped with googly eyes.
+  const eyes = [];
+  for (const sz of [0.42, -0.42]) {
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.5, 8), crabLegMat.clone());
+    stalk.position.set(1.02, 1.16, sz);
+    stalk.rotation.z = -0.34;
+    group.add(stalk);
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), crabEyeMat.clone());
+    ball.position.set(1.14, 1.42, sz);
+    group.add(ball);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.4 }));
+    pupil.position.set(1.28, 1.44, sz);
+    group.add(pupil);
+    eyes.push(ball, pupil);
+  }
+
+  // The claws. Each is an upper arm, a forearm and a two-part pincer that opens
+  // and closes a little, so the crab looks alive rather than moulded.
+  const claws = [];
+  for (const sz of [1.35, -1.35]) {
+    const arm = new THREE.Group();
+    arm.position.set(0.85, 0.78, sz);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.16, 0.95, 8), crabLegMat.clone());
+    upper.rotation.z = -1.05;
+    upper.position.set(0.42, 0.08, 0);
+    upper.castShadow = true;
+    arm.add(upper);
+    // The pincer body.
+    const palm = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), crabClawMat.clone());
+    palm.scale.set(1.15, 0.85, 0.8);
+    palm.position.set(1.05, 0.24, 0);
+    palm.castShadow = true;
+    arm.add(palm);
+    // Two jaws that pinch shut; `jaw` groups are held so the frame loop can
+    // snap them when the crab is moving.
+    const jaws = [];
+    for (const jy of [0.16, -0.16]) {
+      const jaw = new THREE.Group();
+      jaw.position.set(1.4, 0.24, 0);
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.5, 6), crabClawMat.clone());
+      tip.rotation.z = -Math.PI / 2;
+      tip.position.x = 0.22;
+      tip.castShadow = true;
+      jaw.add(tip);
+      arm.add(jaw);
+      jaws.push({ jaw, jy });
+    }
+    group.add(arm);
+    claws.push({ arm, jaws, sz });
+  }
+
+  // Eight legs, four a side. Each is two segments on a pivot so they can
+  // scissor: the group swings side to side about Y, exactly the rig the robot
+  // and the tarantula use for their walk.
+  const legs = [];
+  for (let i = 0; i < 8; i++) {
+    const sz = i < 4 ? 1 : -1;
+    const idx = i % 4;
+    const pivot = new THREE.Group();
+    pivot.position.set(0.6 - idx * 0.62, 0.66, sz * 1.12);
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 0.78, 6), crabLegMat.clone());
+    thigh.rotation.x = sz * 1.15;
+    thigh.position.set(0, -0.1, sz * 0.32);
+    thigh.castShadow = true;
+    pivot.add(thigh);
+    const shin = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.62, 6), crabLegMat.clone());
+    shin.position.set(0, -0.5, sz * 0.62);
+    shin.rotation.x = sz * 0.5;
+    shin.castShadow = true;
+    pivot.add(shin);
+    group.add(pivot);
+    legs.push(pivot);
+  }
+
+  group.userData.wheels = [];
+  group.userData.wheelPivots = [];
+  // The crab's own walk rig. `crabLegs` is what main.js strides off the car's
+  // speed; `crabClaws` lets it pinch while it scuttles.
+  group.userData.crabLegs = legs;
+  group.userData.crabClaws = claws;
+  group.userData.crabEyes = eyes;
   return group;
 }
 

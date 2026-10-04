@@ -1,5 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { nearestRoadDistance } from './cityRoads.js';
+import { outwardYaw } from './modules/heading.js';
+import { addKnockable } from './physics.js';
 
 // ===== The City Buildings =====
 // The twelve landmark buildings that give the city its character, in place of
@@ -16,7 +18,7 @@ import { nearestRoadDistance } from './cityRoads.js';
 // `addCityBuildings` then drops the group at a world centre and turns it by a
 // compass `face` (N = +Z, E = +X, S = -Z, W = -X). Because those are all
 // quarter turns, a collider's world AABB is just its local half-extents with
-// halfW/halfD swapped for the E/W facings â€” see `placeCollider`.
+// halfW/halfD swapped for the E/W facings — see `placeCollider`.
 //
 // A builder returns `{ group, colliders }` where each collider is a local rect
 // `{ x, z, halfW, halfD, h }`; `h` is the rideable roof height, and the game
@@ -71,7 +73,7 @@ const M = {
   storefront: new THREE.MeshStandardMaterial({
     color: 0xfff0cc, emissive: 0xffd489, emissiveIntensity: 1.15, roughness: 0.15, metalness: 0.1,
   }),
-  // Emissive accents (several of these are animated â€” see blinkers)
+  // Emissive accents (several of these are animated — see blinkers)
   alarmRed: new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0xff1500, emissiveIntensity: 2.2, roughness: 0.3 }),
   signRed: new THREE.MeshStandardMaterial({ color: 0xff5a4a, emissive: 0xd41a00, emissiveIntensity: 1.5, roughness: 0.4 }),
   signGreen: new THREE.MeshStandardMaterial({ color: 0x66ffa8, emissive: 0x18c46a, emissiveIntensity: 1.4, roughness: 0.4 }),
@@ -96,11 +98,27 @@ const M = {
 // base + amp * sin(t * speed + phase).
 const blinkers = [];
 
+// Set by houseStandard() in the open bay's own local space, then exported to the
+// world by houseGarageTrigger() once the layout's origin and facing are known.
+// This is the brown-roofed house's OPEN BAY. The grey-roofed house-with-garage
+// next door used to set it, when its roller door was the way into the house; that
+// door is shut and empty now, and the house is entered through the open bay.
+let houseGarageLocal = null;
+
+// That same open bay's slot in LAYOUT, filled in by addCityBuildings so the
+// trigger can be rotated out of local space once its origin and facing are known.
+let houseGarageEntry = null;
+
+// Compass facing -> yaw. Every builder puts its front on local +Z, so this is
+// the only mapping needed to drop a group into the world, and placeCollider
+// uses the same table to rotate its colliders.
+const FACE_YAW = { N: 0, E: Math.PI / 2, S: Math.PI, W: -Math.PI / 2 };
+
 // ============================================================================
 // Geometry cache
 // ============================================================================
 // A city this detailed is thousands of little boxes, and Three.js caches
-// nothing for us â€” every BoxGeometry(0.4, 0.4, 0.4) call would allocate its own
+// nothing for us — every BoxGeometry(0.4, 0.4, 0.4) call would allocate its own
 // vertex buffers. Keying on the rounded dimensions collapses almost all of that
 // onto a handful of shared buffers.
 const geoCache = new Map();
@@ -113,7 +131,7 @@ const boxGeo = (w, h, d) => cached(`b${w}|${h}|${d}`, () => new THREE.BoxGeometr
 const cylGeo = (rt, rb, h, seg) => cached(`c${rt}|${rb}|${h}|${seg}`, () => new THREE.CylinderGeometry(rt, rb, h, seg));
 const sphGeo = (r) => cached(`s${r}`, () => new THREE.SphereGeometry(r, 10, 8));
 const coneGeo = (r, h, seg) => cached(`k${r}|${h}|${seg}`, () => new THREE.ConeGeometry(r, h, seg));
-// A 4-sided cone, used as a hip / pyramid roof cap. The 45Â° turn puts its four
+// A 4-sided cone, used as a hip / pyramid roof cap. The 45° turn puts its four
 // faces on the diagonals, so scaling x/z to the footprint gives a true hip.
 const hipGeo = () => cached('hip', () => {
   const c = new THREE.CylinderGeometry(0, 1, 1, 4, 1);
@@ -205,7 +223,7 @@ function windowRow(parent, face, y, spread, count, paneW, paneH, material, centr
   }
 }
 
-// A stack of window rows on one wall â€” the workhorse for every two- and
+// A stack of window rows on one wall — the workhorse for every two- and
 // three-storey building here.
 function windowGrid(parent, face, { rows, y0, rowH, spread, count, paneW, paneH, material }) {
   for (let r = 0; r < rows; r++) windowRow(parent, face, y0 + r * rowH, spread, count, paneW, paneH, material);
@@ -315,7 +333,7 @@ function flowerBed(parent, x, z, w, d) {
   }
 }
 
-// A bike rack hoop â€” reused by the apartments, the school and the library.
+// A bike rack hoop — reused by the apartments, the school and the library.
 function bikeHoop(parent, x, z, ry = Math.PI / 2) {
   const m = new THREE.Mesh(
     cached('bikeHoop', () => new THREE.TorusGeometry(0.35, 0.05, 6, 12, Math.PI)),
@@ -391,6 +409,8 @@ function chainFence(parent, x1, z1, x2, z2, h = 2.2) {
   const rail = cyl(parent, 0.05, 0.05, len, (x1 + x2) / 2, h, (z1 + z2) / 2, M.metal, 5);
   rail.rotation.z = Math.PI / 2;
   rail.rotation.y = Math.atan2(dz, -dx);
+  // Make fence knockable by heavy vehicles only (monster truck/steamroller)
+  addKnockable(mid, Math.max(1, len / 2), { mode: 'topple', toppleRadius: Math.max(1, len / 2), smashOnlyBy: 'monster' });
 }
 
 // ============================================================================
@@ -488,40 +508,150 @@ function cityHall() {
 // ============================================================================
 // 2. Fire Station
 // ============================================================================
-// Two-storey red brick with two big bay doors on the ground floor, modelled
-// rolled up into their hoods so the bays read as open. A lattice radio mast and
-// a blinking red alarm light sit on the flat roof.
+// Two-storey red brick whose ground floor is genuinely HOLLOW: two big apparatus
+// bays, both drive-in (the fire engine starts parked nose-out in the right-hand
+// one and reverses back into it after every call), an entrance on the pier
+// between them, a radio mast and a blinking red alarm light on the flat roof.
+//
+// Two things here are load-bearing gameplay, not decoration:
+//   * The bays are open in the COLLIDER set as well as in the mesh set. A
+//     footprint collider would seal the ground floor back up (collider blocking
+//     is 2D — it ignores height entirely), so the station reports thin wall
+//     colliders only, exactly like the open house garage next door. The cost is
+//     that the second-storey roof is not a drivable surface, which is the same
+//     trade the house garage already makes.
+//   * The building IS a `fire: true` target, and it burns like anything else.
+//     An earlier version opted out, on the grounds that a station on fire while
+//     its own truck is parked inside reads as a bug. That was true of the first
+//     attempt, which used a solid footprint collider: the 2D blocking test
+//     ignores height, so the rect sealed the apparatus bays and the engine could
+//     not get out to answer the call it was sitting in. The fire collider is now
+//     `soft`, so it feeds the fire/lizard/engine queries without blocking the
+//     car, and the engine backs out of the bay, turns on the apron and goes to
+//     fight the fire in its own station. Which is the joke.
+const FIRE_STATION = { W: 20, D: 14, BODY: 7, GROUND: 3.9, WALL: 0.5, BAY_W: 7.4, BAY_H: 3.6, BAY_X: 4.9 };
+// Where the truck parks, in LOCAL space (x = bay centre, z = nose just inside
+// the door). Read back out through cityFireStationBay() once the group has been
+// dropped into the world and turned.
+let fireStationBayLocal = null;
+// The same spot in WORLD space, filled in by addCityBuildings. Null until the
+// city is built, and null again if the station ever drops out of the layout.
+let fireStationBayWorld = null;
+
 function fireStation() {
   const g = new THREE.Group();
-  const W = 16, D = 13, BODY = 7;
+  const { W, D, BODY, GROUND, WALL, BAY_W, BAY_H, BAY_X } = FIRE_STATION;
   const colliders = [];
   const frontZ = D / 2;
+  const wallZ = frontZ - WALL / 2;      // centre plane of the front wall
+  const UP = BODY - GROUND;             // the second storey, the main mass
 
-  box(g, W, BODY, D, 0, BODY / 2, 0, M.brickRed);
+  // ---- Second storey: the main mass, so measureWalls() dresses the rears ----
+  box(g, W, UP, D, 0, GROUND + UP / 2, 0, M.brickRed);
   cornice(g, W, D, BODY, 0.4, 0.5, M.limestone);
   flatRoof(g, W, D, BODY + 0.4, 0.75, 0.5, M.brickDark);
 
-  // ---- Two bay doors ----
-  const BAY_W = 4.4, BAY_H = 3.6;
+  // ---- Ground floor: a shell, not a block ----
+  // Back wall runs the full width; the side walls tuck inside it.
+  box(g, W, GROUND, WALL, 0, GROUND / 2, -(D / 2 - WALL / 2), M.brickRed);
   for (const s of [-1, 1]) {
-    const bx = s * 4.1;
-    box(g, BAY_W, BAY_H, 0.5, bx, BAY_H / 2, frontZ - 0.2, M.woodDark, false);      // dark opening
-    box(g, BAY_W - 0.6, BAY_H - 0.6, 0.1, bx, BAY_H / 2, frontZ - 0.75, M.metalDark, false);
-    // The roll-up door, coiled in its hood above the opening.
-    cyl(g, 0.32, 0.32, BAY_W, bx, BAY_H + 0.3, frontZ + 0.1, M.bayRed, 10).rotation.z = Math.PI / 2;
-    box(g, BAY_W + 0.5, 0.22, 0.35, bx, BAY_H + 0.66, frontZ + 0.12, M.metalDark);
-    for (const g2 of [-1, 1]) {
-      box(g, 0.16, BAY_H, 0.3, bx + g2 * (BAY_W / 2 + 0.1), BAY_H / 2, frontZ + 0.06, M.metalDark, false);
-    }
+    box(g, WALL, GROUND, D - WALL * 2, s * (W / 2 - WALL / 2), GROUND / 2, 0, M.brickRed);
+  }
+  // Front piers: the two outer corners and the entrance pier between the bays.
+  // Whatever is left over is the aperture you drive through, so the pier widths
+  // fall out of BAY_X / BAY_W rather than being authored twice.
+  const pierOuter = (W / 2) - (BAY_X + BAY_W / 2);          // 1.4
+  for (const s of [-1, 1]) {
+    box(g, pierOuter, GROUND, WALL, s * (BAY_X + BAY_W / 2 + pierOuter / 2), GROUND / 2, wallZ, M.brickRed);
+  }
+  box(g, BAY_X - BAY_W / 2, GROUND, WALL, 0, GROUND / 2, wallZ, M.brickRed);   // entrance pier
+  // Lintel band over each aperture — the brick that closes the wall off above
+  // the opening. No collider: the bays are full-height slots as far as driving
+  // is concerned, which is the whole point of them being open.
+  for (const s of [-1, 1]) {
+    box(g, BAY_W, GROUND - BAY_H, WALL, s * BAY_X, BAY_H + (GROUND - BAY_H) / 2, wallZ, M.brickRed);
   }
 
+  // ---- Bay doors, coiled in their hoods above the openings ----
+  for (const s of [-1, 1]) {
+    const bx = s * BAY_X;
+    // Dark reveal set back inside the aperture, so the bay reads as a hole in a
+    // wall rather than a hole in a void.
+    box(g, BAY_W, BAY_H, 0.3, bx, BAY_H / 2, frontZ - WALL - 0.15, M.woodDark, false);
+    cyl(g, 0.34, 0.34, BAY_W, bx, BAY_H + 0.34, frontZ + 0.1, M.bayRed, 10).rotation.z = Math.PI / 2;
+    box(g, BAY_W + 0.6, 0.24, 0.4, bx, BAY_H + 0.74, frontZ + 0.12, M.metalDark);
+    for (const g2 of [-1, 1]) {
+      box(g, 0.18, BAY_H, 0.34, bx + g2 * (BAY_W / 2 + 0.1), BAY_H / 2, frontZ + 0.06, M.metalDark, false);
+    }
+    // A red "APPARATUS BAY" strip light over the lintel, one per bay.
+    box(g, BAY_W - 1.0, 0.16, 0.14, bx, GROUND - 0.28, frontZ - WALL + 0.1, M.signRed, false);
+  }
+
+  // ---- Bay interiors ----
+  // Painted apron inside each bay so the open floor is not a grey void, and a
+  // bay outline marking where the engine belongs.
+  flatPanel(g, W - WALL * 2, D - WALL * 2, 0, 0.03, 0, M.concrete);
+  for (const s of [-1, 1]) {
+    const bx = s * BAY_X;
+    // Ceiling lamp panel (the underside of the second storey, lit).
+    flatPanel(g, BAY_W - 1.2, D - 3.0, bx, GROUND - 0.06, 0, lampMatOf());
+    // Painted bay box: two rails and a stop line, the way a depot floor is marked.
+    for (const e of [-1, 1]) flatPanel(g, 0.14, D - 2.4, bx + e * 2.4, 0.05, 0, M.paintWhite);
+    flatPanel(g, 4.8, 0.16, bx, 0.05, -(D / 2 - 2.0), M.signAmber);
+    // A real light per bay, so the open doors throw light onto the forecourt.
+    const bayLight = new THREE.PointLight(0xfff0cf, 5.5, 22, 2);
+    bayLight.position.set(bx, GROUND - 0.5, 1.0);
+    g.add(bayLight);
+  }
+
+  // Right bay = the engine's home. It gets the hose reel, the lockers and the
+  // bench; the left bay is dressed as a second appliance bay with a spare wheel
+  // and a hose cart, so the two do not read as copy-paste.
+  const HX = BAY_X;
+  const backZ = -(D / 2 - WALL) + 0.1;
+  // Locker bank along the back wall of the engine bay.
+  for (let i = 0; i < 5; i++) {
+    box(g, 0.85, 1.9, 0.6, HX - 2.6 + i * 1.0, 0.95, backZ - 0.3, i % 2 ? M.metalDark : M.bayRed, false);
+    box(g, 0.7, 0.06, 0.1, HX - 2.6 + i * 1.0, 1.55, backZ - 0.02, M.metal, false);
+  }
+  // Hose reel on the pier side of the engine bay, fed from the drying hatch.
+  cyl(g, 0.72, 0.72, 0.34, HX + 2.6, 1.9, backZ - 0.3, M.signRed, 14).rotation.x = Math.PI / 2;
+  cyl(g, 0.2, 0.2, 0.5, HX + 2.6, 1.9, backZ - 0.3, M.metalDark, 10).rotation.x = Math.PI / 2;
+  box(g, 1.2, 1.2, 0.24, HX + 2.6, 3.2, backZ - 0.42, M.metalDark, false);   // drying hatch
+  // Work bench with a vice.
+  box(g, 3.0, 0.14, 0.8, HX, 0.95, backZ - 0.4, M.wood, false);
+  for (const s of [-1, 1]) box(g, 0.14, 0.9, 0.7, HX + s * 1.35, 0.47, backZ - 0.4, M.woodDark, false);
+  box(g, 0.4, 0.34, 0.3, HX + 1.1, 1.19, backZ - 0.4, M.metalDark, false);
+  // Breathing-air cylinders racked on the other pier.
+  for (let i = 0; i < 4; i++) cyl(g, 0.19, 0.19, 1.5, HX - 3.5, 0.78, -3.0 + i * 0.5, M.brass, 8, false);
+  // Left bay: a spare wheel leaning on the wall and a hose cart.
+  const tyreMat = cached('spareTyre', () => new THREE.MeshStandardMaterial({ color: 0x1e1e20, roughness: 1 }));
+  cyl(g, 0.8, 0.8, 0.4, -BAY_X + 2.7, 0.9, backZ - 0.5, tyreMat, 16, false).rotation.z = Math.PI / 2;
+  box(g, 1.6, 0.5, 1.0, -BAY_X - 1.4, 0.45, backZ - 0.6, M.metalDark, false);
+  for (const s of [-1, 1]) cyl(g, 0.22, 0.22, 0.16, -BAY_X - 1.4 + s * 0.6, 0.22, backZ - 0.6, M.metalDark, 10, false).rotation.z = Math.PI / 2;
+  cyl(g, 0.55, 0.55, 0.9, -BAY_X - 2.8, 0.45, -1.5, M.signRed, 12, false).rotation.x = Math.PI / 2;
+
+  // The engine's parking spot, in local space. `x`/`z` is nose-first just inside
+  // the door; `roadZ` is the centre line of the street it works from; and
+  // roadMinX/roadMaxX are that street's own extent, so when the engine is out
+  // among the buildings it stays on tarmac instead of wandering onto grass.
+  //
+  // The station is at world z -39.5 facing north, and south-main runs z -30..-16,
+  // so its centre line is world z -23 — local z 16.5. roadMinX/roadMaxX are the
+  // x range of that street, in WORLD x, which for a north-facing building is the
+  // same axis its local x runs along. The far end is 88 rather than the street's
+  // real 90 because world x wraps at +/-90: the engine works its position
+  // through wrapCoordX, and clamping to exactly 90 would snap it across the
+  // world seam to -90.
+  fireStationBayLocal = { x: HX, z: frontZ - 5.1, roadZ: 16.5, roadMinX: -45, roadMaxX: 88 };
+
   // Upper-floor sash windows, with one over each bay.
-  windowGrid(g, 'N', { rows: 1, y0: BODY - 1.8, rowH: 1, spread: W - 4, count: 4, paneW: 1.5, paneH: 1.7, material: M.windowLit });
+  windowGrid(g, 'N', { rows: 1, y0: BODY - 1.8, rowH: 1, spread: W - 4, count: 5, paneW: 1.5, paneH: 1.7, material: M.windowLit });
   for (const f of ['E', 'W', 'S']) {
     windowGrid(g, f, { rows: 1, y0: BODY - 1.8, rowH: 1, spread: D - 4, count: 3, paneW: 1.4, paneH: 1.7, material: M.windowCool });
   }
 
-  // ---- Entrance with the alarm light above it ----
+  // ---- Entrance with the alarm light above it (on the pier between the bays) ----
   box(g, 2.0, 2.6, 0.35, 0, 1.3, frontZ + 0.05, M.woodDark, false);
   box(g, 1.4, 2.1, 0.16, 0, 1.05, frontZ + 0.22, M.door, false);
   box(g, 3.2, 0.22, 1.2, 0, 2.9, frontZ + 0.5, M.metalDark);
@@ -559,12 +689,51 @@ function fireStation() {
   g.add(beaconLight);
   blinkers.push({ light: beaconLight, base: 1, amp: 5, speed: 3.2, phase: 1.4 });
 
-  // Hose-drying hatch and a hydrant out front, because it is a fire station.
-  box(g, 1.2, 1.2, 0.2, -W / 2 + 2, 3.2, frontZ + 0.1, M.metalDark, false);
-  cyl(g, 0.16, 0.2, 0.8, W / 2 - 1.6, 0.4, frontZ + 1.4, M.signRed, 8);
-  sph(g, 0.19, W / 2 - 1.6, 0.85, frontZ + 1.4, M.signRed, false);
+  // Hydrants out front, one per bay, because it is a fire station.
+  for (const s of [-1, 1]) {
+    cyl(g, 0.16, 0.2, 0.8, s * (BAY_X + BAY_W / 2 + pierOuter / 2), 0.4, frontZ + 1.4, M.signRed, 8);
+    sph(g, 0.19, s * (BAY_X + BAY_W / 2 + pierOuter / 2), 0.85, frontZ + 1.4, M.signRed, false);
+  }
+  // Tarmac apron running out of both bays and on to the kerb. It is 10 deep, not
+  // 6, so it reaches local z = 17 — which is world z -29.5, just past the
+  // south-main kerb at z -30. The engine's bay is at local x 4.9, well off to
+  // the side of the doorway ribbon map.js lays down the front door, so without
+  // this the run from the bay to the street would cross bare grass for the last
+  // few metres. A station apron runs to the road anyway.
+  flatPanel(g, W - 2, 10.0, 0, 0.02, frontZ + 5.0, M.asphalt);
+  for (const s of [-1, 1]) {
+    flatPanel(g, 0.14, 9.0, s * (BAY_X + BAY_W / 2 - 0.4), 0.04, frontZ + 4.5, M.paintWhite);
+  }
 
-  colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY, fire: true });
+  // Colliders: the shell only. There is deliberately no collider over the bays,
+  // over the interior floor, or over the second-storey roof — a single 2D
+  // footprint rect would wall the ground floor back up and there is no height
+  // term in the blocking test to let you drive underneath one.
+  for (const s of [-1, 1]) {
+    colliders.push({ x: s * (W / 2 - WALL / 2), z: 0, halfW: WALL / 2, halfD: D / 2, h: BODY });
+  }
+  colliders.push({ x: 0, z: -(D / 2 - WALL / 2), halfW: W / 2, halfD: WALL / 2, h: BODY });
+  for (const s of [-1, 1]) {
+    colliders.push({
+      x: s * (BAY_X + BAY_W / 2 + pierOuter / 2), z: wallZ,
+      halfW: pierOuter / 2, halfD: WALL / 2, h: BODY,
+    });
+  }
+  colliders.push({ x: 0, z: wallZ, halfW: (BAY_X - BAY_W / 2) / 2, halfD: WALL / 2, h: BODY });
+
+  // The station is a `fire: true` target after all — it is a building, and
+  // buildings in this city burn.
+  //
+  // It carries `soft` so it does NOT block driving. Every other fire target is
+  // a plain solid footprint, but a solid footprint here would seal the two
+  // apparatus bays shut: collision is 2D and ignores height, so a rect over the
+  // whole 20 x 14 ground floor would wall the bays back up and the engine could
+  // never drive out of its own garage. `soft` is already the established way to
+  // ship a collider that feeds a query without blocking the car (staircase
+  // steps, ceilings), and cityFireSpots reads the footprint off the same list,
+  // so the fire still lands exactly over the building.
+  colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY + 0.5, fire: true, soft: true });
+
   return { group: g, colliders, h: BODY };
 }
 
@@ -610,7 +779,7 @@ function bank() {
   const vaultY = 4.0;
   box(g, 5.4, 6.2, 0.4, 0, vaultY, frontZ - 1.4, M.metalDark, false);      // recess behind the glass
   cyl(g, 1.7, 1.7, 0.5, 0, vaultY, frontZ - 1.0, M.brass, 20).rotation.x = Math.PI / 2;
-  // The wheel: a rim with four spokes â€” the detail that says "vault".
+  // The wheel: a rim with four spokes — the detail that says "vault".
   const rim = new THREE.Mesh(cached('vaultRim', () => new THREE.TorusGeometry(0.9, 0.11, 8, 24)), M.metalDark);
   rim.position.set(0, vaultY, frontZ - 0.72);
   g.add(rim);
@@ -647,7 +816,7 @@ function bank() {
 // 4. Corner Convenience Store / Bodega
 // ============================================================================
 // Single storey, flat roof, and a fully glazed shopfront with bright promo
-// posters hung inside the glass â€” which is what a bodega window actually looks
+// posters hung inside the glass — which is what a bodega window actually looks
 // like from the street. An HVAC unit sits on the roof, the bins round the side.
 function bodega() {
   const g = new THREE.Group();
@@ -704,7 +873,7 @@ function bodega() {
 // ============================================================================
 // An open-air canopy on four columns over two fuel-pump islands, with the
 // cashier office bolted onto one end and an ice chest standing outside it.
-// The canopy roof is deliberately NOT a collider â€” you drive under it. What
+// The canopy roof is deliberately NOT a collider — you drive under it. What
 // blocks you is the furniture: the four columns, the office block, the kiosk and
 // the price pylon, plus the pump cabinets themselves. The cabinets are marked
 // aiOnly, so traffic cars steer round them but the player glides straight
@@ -810,7 +979,7 @@ function gasStation() {
   for (let i = 0; i < 2; i++) flatPanel(g, 0.16, 4.6, 7.6 + i * 3.2, 0.125, 8.8, M.paintWhite);
   // Hatched keep-clear strip in front of the office door (local x -8.2). The
   // hatch is 2.2 deep, so its centre has to sit at z >= 7.1 for the whole strip
-  // to clear the canopy edge at z=6 â€” at 6.6 the first 0.5 hung under the roof.
+  // to clear the canopy edge at z=6 — at 6.6 the first 0.5 hung under the roof.
   for (let i = 0; i < 5; i++) flatPanel(g, 0.14, 2.2, -9.2 + i * 0.85, 0.125, 7.4, M.paintWhite);
   // Vacuum point: a small kiosk with a hose bay, out by the east kerb, clear of
   // the through lane.
@@ -859,7 +1028,7 @@ function gasStation() {
 // ============================================================================
 // 6. Hospital
 // ============================================================================
-// A white-and-glass slab. The red cross panel is the one that does the work â€”
+// A white-and-glass slab. The red cross panel is the one that does the work —
 // it goes on a short projecting sign box at the entrance, big enough to read
 // from across the plaza, with a matching cross in the paving below it. An
 // ambulance canopy projects over the set-down bay.
@@ -968,15 +1137,23 @@ function lampMatOf() {
 }
 
 // ============================================================================
-// 7. Suburban House â€” with attached open garage
+// 7. Suburban House — with attached open garage
 // ============================================================================
 // A gabled house with a lean-to garage whose front wall is genuinely missing,
 // so you can drive straight in. The garage keeps its own pitched roof, and the
-// interior is left open and lit so the opening reads clearly from the street.
+// interior is dressed as somewhere you would actually want to spend time: a
+// pegboard of tools nailed to the back wall, a workbench under a clamp lamp,
+// and a warm work light at the far end that pulls you in off the street. Drive
+// to the back of it and the level takes you inside the house.
+//
+// GW is 7 rather than the 5 it used to be. Collider blocking is 2D, so a garage
+// 5 wide minus its 0.4 walls left a 4.6 slot for a 4.4-diameter collision
+// circle — 0.1 either side, which is not drivable without grinding both walls.
+// At 7 the interior is 6.6 and the car has a unit of slack each way.
 function houseWithGarage() {
   const g = new THREE.Group();
   const MAIN_X = 2.25, W = 9, D = 9, BODY = 3.4;   // main block sits right of centre
-  const GW = 5, GH = 2.9;                            // garage, attached on -X
+  const GW = 7, GH = 2.9;                            // garage, attached on -X
   const colliders = [];
 
   // ---- Main house ----
@@ -1006,21 +1183,58 @@ function houseWithGarage() {
   panel(g, 1.6, 1.2, MAIN_X, 1.6, -D / 2 - 0.03, Math.PI, M.windowCool);
   for (const s of [-1, 1]) panel(g, 1.1, 1.1, s === 1 ? MAIN_X + W / 2 + 0.03 : MAIN_X - W / 2 - 0.03, 1.7, 0, s * Math.PI / 2, M.windowCool);
 
-  // ---- Attached garage: three walls, NO front wall ----
+  // ---- Attached garage: three walls, and a roller door SHUT on the front ----
   const gx = MAIN_X - W / 2 - GW / 2;
+  const gBackZ = 0.3 - (D - 0.6) / 2 + 0.2;
+  const gFrontZ = 0.3 + (D - 0.6) / 2;   // the shut door's face, on the street
   box(g, GW, GH, D - 0.6, gx, GH / 2, 0.3, M.limestoneDark, false);
   box(g, 0.4, GH, D - 0.6, gx - GW / 2 + 0.2, GH / 2, 0.3, M.limestoneDark, false);
-  box(g, GW, GH, 0.4, gx, GH / 2, 0.3 - (D - 0.6) / 2 + 0.2, M.limestoneDark, false);
+  box(g, GW, GH, 0.4, gx, GH / 2, gBackZ, M.limestoneDark, false);
   // Its own low-pitch roof, leaning back to meet the main eaves.
   const gr = new THREE.Group();
   gr.position.set(gx, GH, 0.3);
   gableRoof(gr, GW + 0.4, D - 0.2, 1.1, 0.3, M.shingle);
   g.add(gr);
-  // Lit interior + a workbench, so the opening has something in it.
+  // A bare concrete floor inside. There used to be a lit ceiling panel, a
+  // beckoning lamp, a pegboard of tools and a workbench in here, because this
+  // garage was the way into the house. It is not any more: the house is entered
+  // through the brown-roofed open bay next door, and this one is shut, so there
+  // is nothing in it and nothing lighting it.
   flatPanel(g, GW - 0.6, D - 1.0, gx, 0.03, 0.3, M.concrete);
-  flatPanel(g, GW - 1.2, D - 2.0, gx, GH - 0.12, 0.3, lampMatOf());
-  box(g, 2.4, 0.12, 0.7, gx, 0.9, 0.3 - (D - 0.6) / 2 + 0.7, M.wood, false);
-  for (const s of [-1, 1]) box(g, 0.12, 0.85, 0.6, gx + s * 1.0, 0.45, 0.3 - (D - 0.6) / 2 + 0.7, M.woodDark, false);
+
+  // ---- The roller door, SHUT ---------------------------------------------
+  // This used to be wound up, with its three slats coiled in a hood over the
+  // mouth, and it was the house entrance. It is now closed, and the three slats
+  // are the same three slats hung out flat from the head to the floor. It keeps
+  // its panelled style, so from the street it reads as the same door the
+  // brown-roofed house has just finished putting away.
+  const GDW = GW - 0.8;                 // clear width of the opening
+  const gDoorTop = 2.55;                // top of the shut door
+  // Header, sitting proud of the elevation across the whole mouth.
+  box(g, GW, 0.5, 0.5, gx, (gDoorTop + GH) / 2, gFrontZ, M.trimWhite, false);
+  // Guide rails down each side of the reveal.
+  for (const s of [-1, 1]) {
+    box(g, 0.22, GH - 0.3, 0.34, gx + s * (GDW / 2 + 0.11), (GH - 0.3) / 2, gFrontZ + 0.05, M.metalDark, false);
+  }
+  // The three slats, each a painted leaf with a band across it, hung from the
+  // head down to the concrete.
+  const slatH = gDoorTop / 3;
+  for (let i = 0; i < 3; i++) {
+    const sy = slatH * (i + 0.5);
+    box(g, GDW, slatH - 0.03, 0.26, gx, sy, gFrontZ + 0.02, M.trimWhite, false);
+    box(g, GDW - 0.55, 0.11, 0.1, gx, sy + slatH / 2 - 0.2, gFrontZ + 0.17, M.concrete, false);
+  }
+  // Weather seal brush and a threshold strip on the apron, so the opening has a
+  // bottom edge instead of just stopping.
+  box(g, GDW, 0.14, 0.3, gx, 0.07, gFrontZ, M.metalDark, false);
+  // A padlock and a hasp on the bottom slat, matching the front door inside:
+  // this one is shut because it is meant to be shut, not because it is broken.
+  box(g, 0.16, 0.3, 0.2, gx + GDW / 2 - 0.5, slatH * 0.5, gFrontZ + 0.22, M.metalDark, false);
+  box(g, 0.2, 0.26, 0.1, gx + GDW / 2 - 0.5, slatH * 0.5 + 0.1, gFrontZ + 0.32, M.signRed, false);
+  // A lamp over the door, because it is a door somebody once used.
+  box(g, 0.5, 0.16, 0.3, gx, gDoorTop + 0.75, gFrontZ + 0.2, M.metalDark, false);
+  sph(g, 0.13, gx, gDoorTop + 0.62, gFrontZ + 0.24, lampMatOf(), false);
+
   // Painted apron and parking bay in front of the open door.
   flatPanel(g, GW - 0.4, 4.2, gx, 0.03, D / 2 + 1.6, M.asphalt);
   for (const s of [-1, 1]) flatPanel(g, 0.12, 3.6, gx + s * (GW / 2 - 0.6), 0.04, D / 2 + 1.6, M.paintWhite);
@@ -1036,25 +1250,48 @@ function houseWithGarage() {
   cyl(g, 0.07, 0.07, 1.1, MAIN_X + 3.0, 0.55, D / 2 + 5.0, M.wood, 6, false);
   box(g, 0.4, 0.3, 0.5, MAIN_X + 3.0, 1.2, D / 2 + 5.0, M.metal, false);
 
-  // Colliders: the main house as a solid block; the garage as three thin walls
-  // with its front deliberately open, so the drive-in gap stays drivable.
+  // Colliders: the main house as a solid block, and the garage as a closed box.
+  // The garage's front used to be left deliberately open so the drive-in gap
+  // stayed drivable; now that the door is shut there is a collider across the
+  // whole mouth, which is the point of a shut door. Anything that tries to drive
+  // into it stops at the tarmac.
   colliders.push({ x: MAIN_X, z: 0, halfW: W / 2, halfD: D / 2, h: BODY + 0.6 });
-  colliders.push({ x: gx, z: 0.3 - (D - 0.6) / 2 + 0.2, halfW: GW / 2, halfD: 0.3, h: GH });
-  colliders.push({ x: gx - GW / 2 + 0.2, z: 0.3, halfW: 0.3, halfD: (D - 0.6) / 2, h: GH });
+  colliders.push({ x: gx, z: gBackZ, halfW: GW / 2, halfD: 0.2, h: GH });
+  colliders.push({ x: gx - GW / 2 + 0.2, z: 0.3, halfW: 0.2, halfD: (D - 0.6) / 2, h: GH });
+  colliders.push({ x: gx, z: gFrontZ, halfW: GW / 2, halfD: 0.3, h: GH });
+
+  // No trigger is exported from here any more. `houseGarageTrigger()` reads
+  // `houseGarageLocal`, which is set by the brown-roofed open bay instead - that
+  // is the way into the house now, and this is a shut door on the street.
   return { group: g, colliders, h: BODY + 0.6 };
 }
 
+
 // ============================================================================
-// 8. Suburban House â€” standard
+// 8. Suburban House — standard
 // ============================================================================
 // A compact gabled house with a garage door on the end wall, a dormer, a front
 // path and a picket-fenced lawn. The fence is low and its gate is left open.
 function houseStandard() {
   const g = new THREE.Group();
   const W = 11, D = 10, BODY = 3.6;
+  // The garage here is a ROOM, not a door: an open bay in the front elevation
+  // with a floor, a back wall and a ceiling that you drive into. GX/GW2/GH2
+  // describe that opening. 5.5 wide is the most the 11-wide elevation gives up
+  // once the front door and its two windows keep the west end, and it leaves
+  // 0.55 either side of the 2.2-radius car, which is tight but drivable.
+  const GX = 2.25, GW2 = 5.5, GH2 = 2.6;
+  const gx0 = GX - GW2 / 2, gx1 = GX + GW2 / 2;   // opening edges in x
+  const gz1 = D / 2, gz0 = 0;                    // mouth at the front, back wall at z 0
   const colliders = [];
 
-  box(g, W, BODY, D, 0, BODY / 2, 0, M.whiteStucco);
+  // The shell is built in pieces AROUND the bay void rather than as one solid
+  // block, because the bay has to be a hole you can drive through: west end,
+  // east end, the rear block behind the bay, and a lintel band over the mouth.
+  box(g, gx0 + W / 2, BODY, D, (gx0 - W / 2) / 2, BODY / 2, 0, M.whiteStucco);
+  box(g, W / 2 - gx1, BODY, D, (gx1 + W / 2) / 2, BODY / 2, 0, M.whiteStucco);
+  box(g, GW2, BODY, gz0 + D / 2, GX, BODY / 2, (gz0 - D / 2) / 2, M.whiteStucco);
+  box(g, GW2, BODY - GH2, 0.6, GX, GH2 + (BODY - GH2) / 2, gz1 - 0.3, M.whiteStucco);
   const roof = new THREE.Group();
   roof.position.y = BODY;
   gableRoof(roof, W, D, 2.6, 0.5, M.shingleWarm);
@@ -1067,32 +1304,118 @@ function houseStandard() {
   g.add(dRoof);
   panel(g, 1.0, 1.0, -3.2, BODY + 1.2, D / 2 - 0.28, 0, M.windowLit);
 
-  // ---- Garage, built into the FRONT elevation ----
+  // ---- Garage: an open bay built into the front elevation ----
   // It used to sit on the +X end wall, which meant the roller door pointed at
   // the side boundary and the only way in was on foot. Both the front door and
   // the garage now share the street elevation, so the house reads as one thing
-  // addressing the road: door on the left, garage on the right, both on tarmac.
-  const GX = 3.0, GW2 = 3.4, GH2 = 2.4, gy = 1.2;   // garage centre X, width, height
-  // Panelled roller door. This one is SHUT: houseWithGarage next door is the
-  // open, drive-in one, and only one of the pair needs to be open.
-  box(g, GW2, GH2, 0.2, GX, gy, D / 2 + 0.02, M.trimWhite, false);
-  for (let i = 0; i < 5; i++) box(g, GW2 - 0.3, 0.28, 0.12, GX, gy - 1.0 + i * 0.5, D / 2 + 0.14, M.concrete, false);
+  // addressing the road: door on the left, bay on the right, both on tarmac.
+  //
+  // There is no roller door here at all. It is an open garage — a room you
+  // drive into — so the mouth is clear from the floor to the lintel and the bay
+  // is fitted out like a workshop rather than panelled over. The grey-roofed
+  // house next door is the one with the panelled door on it.
+  //
   // Its own little gable, turned so the triangle faces the street.
   const gRoof = new THREE.Group();
   gRoof.position.set(GX, BODY, D / 2 - 0.6);
-  gableRoof(gRoof, 3.6, 3.0, 1.2, 0.3, M.shingleWarm);
+  gableRoof(gRoof, 5.8, 3.0, 1.2, 0.3, M.shingleWarm);
   gRoof.rotation.y = Math.PI / 2;
   g.add(gRoof);
-  // Driveway apron from the garage out to the kerb, with a bay line each side.
+  // Driveway apron from the bay out to the kerb, with a bay line each side.
   flatPanel(g, GW2 + 0.6, 4.4, GX, 0.03, D / 2 + 2.4, M.asphalt);
   for (const s of [-1, 1]) flatPanel(g, 0.12, 4.0, GX + s * (GW2 / 2 - 0.3), 0.04, D / 2 + 2.4, M.paintWhite);
+  // A strip light over the mouth, so the bay reads as lit from the street.
+  box(g, GW2 - 1.2, 0.16, 0.2, GX, GH2 - 0.2, gz1 - 0.35, lampMatOf(), false);
+
+  // ---- The bay interior: a room, not a recess ----
+  // Concrete floor, a ceiling over the void, and a back wall you can see. The
+  // floor is deliberately a different material from the apron outside, because
+  // "paved" and "inside" reading the same is what makes a garage look like a
+  // hole cut in a wall.
+  flatPanel(g, GW2 - 0.5, gz1 - gz0 - 0.3, GX, 0.04, (gz0 + gz1) / 2, M.concrete);
+  flatPanel(g, GW2 - 0.4, gz1 - gz0 - 0.2, GX, GH2 - 0.06, (gz0 + gz1) / 2, lampMatOf());
+  // Painted band round the inside of the bay at bumper height.
+  for (const s of [-1, 1]) box(g, 0.1, 0.5, gz1 - gz0 - 0.6, GX + s * (GW2 / 2 - 0.35), 0.55, (gz0 + gz1) / 2, M.paintWhite, false);
+  box(g, GW2 - 0.5, 0.5, 0.1, GX, 0.55, gz0 + 0.35, M.paintWhite, false);
+  // Workbench along the back wall and a shelf above it — enough to say
+  // "somebody works in here" without turning it into a showroom.
+  box(g, 0.7, 0.12, 2.6, gx0 + 0.55, 0.95, gz0 + 1.5, M.wood, false);
+  box(g, 0.7, 0.9, 0.12, gx0 + 0.55, 0.45, gz0 + 0.3, M.woodDark, false);
+  box(g, 0.6, 0.1, 2.4, gx0 + 0.5, 2.15, gz0 + 1.5, M.woodPale, false);
+  for (let i = 0; i < 3; i++) box(g, 0.4, 0.34, 0.3, gx0 + 0.5, 2.37, gz0 + 0.7 + i * 0.8, i % 2 ? M.paper : M.woodDark, false);
+  // Bicycle on the far wall, hung rather than stood, so the floor stays clear
+  // for the car.
+  cyl(g, 0.42, 0.42, 0.1, gx1 - 0.5, 1.15, gz0 + 1.1, M.metalDark, 14, false);
+  cyl(g, 0.42, 0.42, 0.1, gx1 - 0.5, 1.15, gz0 + 2.1, M.metalDark, 14, false);
+  box(g, 0.08, 0.08, 1.1, gx1 - 0.5, 1.15, gz0 + 1.6, M.signRed, false);
+  // Oil cans and a stack of tyres in the corner, out of the driving line.
+  for (let i = 0; i < 2; i++) cyl(g, 0.16, 0.16, 0.34, gx0 + 0.5, 0.17 + i * 0.34, gz0 + 3.4, M.signRed, 8, false);
+  for (let i = 0; i < 2; i++) cyl(g, 0.5, 0.5, 0.22, gx1 - 0.7, 0.12 + i * 0.24, gz0 + 3.6, M.rubber, 14, false);
+
+  // ---- The beckoning light, and the tools it is there to light -----------
+  // This bay is the way into the house now. It used to be the neighbour's job:
+  // the grey-roofed house next door had a clamp lamp on a tripod at the back of
+  // a dark garage and a pegboard of tools in silhouette behind it, and that was
+  // the whole invitation to pull off the street. It has moved here, to the
+  // brown-roofed open bay, because the house you can now get into is entered
+  // through this door and no other.
+  const lampX = GX + 0.5, lampZ = gz0 + 1.3;
+  cyl(g, 0.06, 0.06, 1.7, lampX, 0.85, lampZ, M.metalDark, 6, false);      // tripod mast
+  for (let i = 0; i < 3; i++) {
+    const leg = cyl(g, 0.05, 0.05, 1.3, lampX, 0.5, lampZ, M.metalDark, 5, false);
+    leg.rotation.z = 0.5; leg.rotation.y = (i / 3) * Math.PI * 2;
+  }
+  const shade = cone(g, 0.42, 0.5, lampX, 1.78, lampZ, M.metal, 10, false);
+  shade.rotation.x = 0.34;   // tipped to throw light down onto the back wall
+  sph(g, 0.16, lampX, 1.66, lampZ + 0.06, lampMatOf(), false);
+  const workLight = new THREE.PointLight(0xffd9a0, 16, 17, 2);
+  workLight.position.set(lampX, 1.55, lampZ + 0.2);
+  g.add(workLight);
+  blinkers.push({ light: workLight, base: 13, amp: 2.4, speed: 2.1, phase: 0.7 });
+
+  // Tools on the back wall of the bay, in silhouette against that glow: claw
+  // hammer, handsaw, spanner, screwdrivers, a shovel, a paint roller and a
+  // coiled hose. Small boxes and cylinders only - at this distance the shape is
+  // the whole point.
+  const pegW = 4.0, pegH = 1.4, pegY = 1.4;
+  box(g, pegW, pegH, 0.08, GX - 0.5, pegY, gz0 + 0.06, M.woodDark, false);
+  for (let r = 0; r < 3; r++) {
+    for (let i = 0; i < 8; i++) {
+      cyl(g, 0.05, 0.05, 0.03, GX - 2.2 + i * 0.5, pegY - 0.45 + r * 0.45, gz0 + 0.12, M.wood, 5, false)
+        .rotation.x = Math.PI / 2;
+    }
+  }
+  const toolZ = gz0 + 0.16;
+  box(g, 0.12, 0.68, 0.12, GX - 2.2, pegY - 0.1, toolZ, M.wood, false);            // hammer handle
+  box(g, 0.32, 0.16, 0.14, GX - 2.2, pegY + 0.3, toolZ, M.metalDark, false);      // hammer head
+  const baySaw = box(g, 1.1, 0.32, 0.05, GX - 1.25, pegY + 0.05, toolZ, M.metal, false);
+  baySaw.rotation.z = 0.12;                                                         // handsaw blade
+  box(g, 0.32, 0.22, 0.11, GX - 0.6, pegY + 0.15, toolZ, M.woodDark, false);       // saw grip
+  box(g, 0.13, 0.58, 0.1, GX - 0.3, pegY + 0.02, toolZ, M.metal, false);          // spanner
+  box(g, 0.25, 0.15, 0.1, GX - 0.3, pegY + 0.34, toolZ, M.metal, false);
+  for (let i = 0; i < 2; i++) {
+    box(g, 0.09, 0.38, 0.09, GX + 0.5, pegY + 0.15, toolZ, M.signAmber, false);     // screwdrivers
+    box(g, 0.05, 0.22, 0.05, GX + 0.5, pegY - 0.13, toolZ, M.metal, false);
+  }
+  box(g, 0.07, 0.48, 0.07, GX + 0.72, pegY + 0.05, toolZ, M.wood, false);          // paint roller
+  cyl(g, 0.09, 0.09, 0.48, GX + 0.72, pegY + 0.4, toolZ, M.trimWhite, 8, false).rotation.z = Math.PI / 2;
+  const bayShovel = box(g, 0.11, 1.7, 0.09, GX + 1.35, 0.9, toolZ + 0.1, M.wood, false);
+  bayShovel.rotation.z = 0.22;                                                      // shovel, leaning
+  box(g, 0.32, 0.38, 0.06, GX + 1.55, 0.2, toolZ + 0.1, M.metalDark, false);
+  for (let i = 0; i < 3; i++) {
+    cyl(g, 0.46 - i * 0.05, 0.46 - i * 0.05, 0.1, gx0 + 0.45, 0.5 + i * 0.04, gz0 + 0.6, M.signGreen, 12, false)
+      .rotation.x = Math.PI / 2;                                                    // coiled hose
+  }
 
   // Front: door with a canopy, two windows, a path to the kerb. All on the west
   // half of the elevation, clear of the garage.
   box(g, 1.0, 2.1, 0.16, -3.2, 1.05, D / 2 + 0.02, M.door, false);
   box(g, 1.8, 0.14, 0.9, -3.2, 2.3, D / 2 + 0.45, M.trimWhite, false);
   for (const s of [-1, 1]) cyl(g, 0.07, 0.07, 2.2, -3.2 + s * 0.75, 1.1, D / 2 + 0.8, M.trimWhite, 6, false);
-  for (const x of [-1.0, -4.4]) panel(g, 1.3, 1.3, x, 1.7, D / 2 + 0.03, 0, M.windowLit);
+  // The west window sits at -1.4, not -1.0. The garage bay's west edge is at
+  // -0.5, and a 1.3-wide window centred on -1.0 would run to -0.35 and hang
+  // 0.15 into the opening — glass across the corner of a driveable bay.
+  for (const x of [-1.4, -4.4]) panel(g, 1.3, 1.3, x, 1.7, D / 2 + 0.03, 0, M.windowLit);
   flatPanel(g, 1.1, 4.0, -3.2, 0.03, D / 2 + 2.2, M.concrete);
   // Windows on the returns and the rear.
   for (const s of [-1, 1]) panel(g, 1.1, 1.1, s * (W / 2 + 0.03), 1.8, -2.0, s * Math.PI / 2, M.windowCool);
@@ -1126,12 +1449,46 @@ function houseStandard() {
   cornerBush(g, -W / 2 + 0.8, -D / 2 - 1.6, 0.55);
   cornerBush(g, W / 2 - 0.7, D / 2 + 1.1, 0.55);
   pottedPlant(g, -3.2, D / 2 + 0.5, 1.0);
-  flowerBed(g, -1.0, D / 2 + 1.2, 1.8, 1.0);
+  flowerBed(g, -1.4, D / 2 + 1.1, 1.8, 1.0);
   flowerBed(g, -4.4, D / 2 + 1.1, 1.6, 1.0);
   // Air-con unit on the rear wall.
   box(g, 0.8, 0.6, 0.8, 3.0, 0.5, -D / 2 - 0.3, M.metal, false);
 
-  colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY + 0.6 });
+  // Colliders follow the shell pieces exactly, and there is deliberately NONE
+  // over the garage bay — that gap is the way in. Collision is a flat 2D rect
+  // test with no height term, so these three are what enclose the room on three
+  // sides and the mouth is simply the space between them. The lintel over the
+  // opening needs no collider either: one there would stop the car dead even
+  // though it is 2.6 up, which is the same trap that sealed the house interior's
+  // own garage exit.
+  const H = BODY + 0.6;
+  colliders.push({ x: (gx0 - W / 2) / 2, z: 0, halfW: (gx0 + W / 2) / 2, halfD: D / 2, h: H });
+  colliders.push({ x: (gx1 + W / 2) / 2, z: 0, halfW: (W / 2 - gx1) / 2, halfD: D / 2, h: H });
+  colliders.push({ x: GX, z: (gz0 - D / 2) / 2, halfW: GW2 / 2, halfD: (gz0 + D / 2) / 2, h: H });
+
+  // The drive-in trigger, in local space. It used to be exported by the
+  // grey-roofed house's open roller door; that door is shut now, so the trigger
+  // lives here, in the brown-roofed open bay, which is the way into the house.
+  // main.js reads it through houseGarageTrigger() and turns it into world
+  // coordinates, so it is authored here in the same local frame as the geometry.
+  //
+  // It is a box set back inside the mouth, short of the back wall, so clipping
+  // the threshold on the apron does not fire it - you have to actually be in the
+  // bay before the world changes.
+  houseGarageLocal = {
+    x0: gx0 + 0.4, x1: gx1 - 0.4,
+    z0: gz0 + 0.5, z1: gz1 - 0.7,
+    // The mouth centre and the apron point just beyond it. main.js drops the
+    // returning car here rather than hard-coding a spot in the street, so it
+    // stays correct if this garage is ever moved or re-faced. Coming out of the
+    // house's dark garage, the car emerges from THIS bay.
+    mouthX: GX, mouthZ: gz1,
+    apronX: GX, apronZ: gz1 + 6,
+    // Where the watch camera stands while you drive in: out on the driveway, off
+    // to one side and above the roofline, so the bay's own gable never gets
+    // between it and the car.
+    camX: GX + 3.6, camY: 5.0, camZ: gz1 + 8.5,
+  };
   return { group: g, colliders, h: BODY + 0.6 };
 }
 
@@ -1251,7 +1608,7 @@ function school() {
       }
     }
   }
-  // The E/W faces are short and plain â€” a chimney and a downpipe only.
+  // The E/W faces are short and plain — a chimney and a downpipe only.
   box(g, 0.9, 4.5, 0.9, W / 2 - 0.5, BODY + 2.0, -D / 2 + 3.0, M.brickDark, false);
   cyl(g, 0.08, 0.08, BODY, W / 2 + 0.1, BODY / 2, D / 2 - 4.0, M.metalDark, 6, false);
 
@@ -1322,7 +1679,7 @@ function school() {
   }
 
   // Colliders: the school block and the tower only. The yard is left open on
-  // purpose â€” it is a playground, not a wall. Not a fire target either: the
+  // purpose — it is a playground, not a wall. Not a fire target either: the
   // tower and its hip roof rise past the collider top, so flames would clip
   // through them.
   colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY + 0.45 });
@@ -1432,18 +1789,22 @@ function substation() {
   // ---- Main transformer ----
   const tx = -2.0, tz = 0;
   box(g, 5.0, 0.4, 4.0, tx, 0.2, tz, M.concrete, false);
-  box(g, 3.6, 2.6, 3.0, tx, 1.9, tz, M.metal, false);
+  const xfmr = new THREE.Group();
+  xfmr.position.set(tx, 0, tz);
+  box(xfmr, 3.6, 2.6, 3.0, 0, 1.9, 0, M.metal, false);
   // Cooling fins down both sides.
   for (let i = 0; i < 9; i++) {
-    box(g, 0.1, 2.2, 0.5, tx - 1.9 + i * 0.475, 1.9, tz - 1.6, M.metalDark, false);
-    box(g, 0.1, 2.2, 0.5, tx - 1.9 + i * 0.475, 1.9, tz + 1.6, M.metalDark, false);
+    box(xfmr, 0.1, 2.2, 0.5, 0 - 1.9 + i * 0.475, 1.9, 0 - 1.6, M.metalDark, false);
+    box(xfmr, 0.1, 2.2, 0.5, 0 - 1.9 + i * 0.475, 1.9, 0 + 1.6, M.metalDark, false);
   }
   // Bushings on top, each a stack of insulator discs.
   for (let i = 0; i < 3; i++) {
-    const bx = tx - 1.1 + i * 1.1;
-    cyl(g, 0.14, 0.18, 1.5, bx, 4.0, tz, M.metalDark, 8, false);
-    for (let d = 0; d < 5; d++) cyl(g, 0.3, 0.3, 0.1, bx, 3.5 + d * 0.28, tz, M.porcelain, 10, false);
+    const bx = -1.1 + i * 1.1;
+    cyl(xfmr, 0.14, 0.18, 1.5, bx, 4.0, 0, M.metalDark, 8, false);
+    for (let d = 0; d < 5; d++) cyl(xfmr, 0.3, 0.3, 0.1, bx, 3.5 + d * 0.28, 0, M.porcelain, 10, false);
   }
+  g.add(xfmr);
+  addKnockable(xfmr, 3, { mode: 'topple', toppleRadius: 3, smashOnlyBy: 'monster' });
   // The hazard band: the one piece of graphic that identifies a substation.
   box(g, 3.7, 0.5, 3.1, tx, 0.75, tz, M.warning, false);
   for (let i = 0; i < 5; i++) {
@@ -1527,7 +1888,7 @@ function substation() {
 //   block  x  30..72, z -72..-16  substation, fire station, filling station
 //
 // The school is the only landmark that needs a 30 x 26 footprint, and the only
-// block with room for it is the civic block on arterial-ew â€” hence the long
+// block with room for it is the civic block on arterial-ew — hence the long
 // frontage there rather than in the quieter far north.
 
 const LAYOUT = [
@@ -1548,8 +1909,14 @@ const LAYOUT = [
   // their front doors on an empty lawn with the tarmac off to one side; facing
   // the street means the door, the path and the garage apron all land on the
   // road. The garage house has its bay open, so you can drive in off the drag.
-  { name: 'houseStandard', build: houseStandard, x: -22,   z: -64,  face: 'E' },
-  { name: 'houseGarage',   build: houseGarage,   x: -22,   z: -46.5, face: 'E' },
+  { name: 'houseStandard', build: houseStandard, x: -22,   z: -68,  face: 'E' },
+  // The house-with-garage sits 2.5 further south than it used to (z -49, not
+  // -46.5) because its garage went from 5 wide to 7. The garage is hung on the
+  // house's -X side, which after the E facing lands on world -Z, so every extra
+  // unit of width pushes the whole building 1 further south. At -46.5 the widened
+  // garage's outer wall would have run into the retained block at z -36.2; at
+  // -49 it clears it by 1.6 and still leaves 4.6 between the two houses.
+  { name: 'houseGarage',   build: houseGarage,   x: -22,   z: -49,  face: 'E' },
   // The substation fills the far corner and the two public buildings face the
   // street. The gas station sits back from south-main so its drive-in forecourt
   // has room: its canopy starts 6 south of the kerb. The substation is pushed
@@ -1559,6 +1926,12 @@ const LAYOUT = [
   // its fence inside the loop; -64 leaves a 1.6 gap of open ground.
   { name: 'substation',    build: substation,    x: 48,    z: -64,  face: null },
   { name: 'gasStation',    build: gasStation,    x: 44,    z: -42,  face: 'N' },
+  // The fire station was widened from 16 x 13 to 20 x 14 to give its apparatus
+  // bays a 7.4-wide aperture each. The player car is a 2.2-radius circle, so a
+  // 4.4 bay left only half a unit of slack on centre — technically passable
+  // through the wall-slide, but it read as a brick wall. The footprint now runs
+  // x 54..74, z -46.5..-32.5, which still clears the gas canopy (x ..52), the
+  // vacuum kiosk (z ..-32.2) and the price pylon (z -48.6).
   { name: 'fireStation',   build: fireStation,   x: 64,    z: -39.5, face: 'N' },
 ];
 
@@ -1784,11 +2157,13 @@ function dressRear(g, entry, built) {
 export function addCityBuildings(scene, colliders) {
   blinkers.length = 0;
   doorTargets.length = 0;
+  fireStationBayWorld = null;
+  houseGarageLocal = null;
+  houseGarageEntry = null;
 
   for (const entry of LAYOUT) {
     const built = entry.build();
-    const yaw = entry.face === null ? 0
-      : { N: 0, E: Math.PI / 2, S: Math.PI, W: -Math.PI / 2 }[entry.face];
+    const yaw = entry.face === null ? 0 : FACE_YAW[entry.face];
     const g = built.group;
     dressRear(g, entry, built);
     g.position.set(entry.x, 0, entry.z);
@@ -1800,6 +2175,38 @@ export function addCityBuildings(scene, colliders) {
     // Where the front door ends up in world space, so map.js can run a
     // driveway ribbon from it to the nearest street.
     doorTargets.push({ name: entry.name, ...doorPoint(entry, built) });
+    // The fire station's apparatus bay is a spawn point, not a doorway: the
+    // engine starts parked in it and reverses back into it after every call.
+    if (entry.name === 'fireStation' && fireStationBayLocal) {
+      const yaw = FACE_YAW[entry.face] ?? 0;
+      const cos = Math.cos(yaw), sin = Math.sin(yaw);
+      fireStationBayWorld = {
+        x: entry.x + fireStationBayLocal.x * cos + fireStationBayLocal.z * sin,
+        z: entry.z - fireStationBayLocal.x * sin + fireStationBayLocal.z * cos,
+        // The engine's nose points out of the bay (+Z in local space), and the
+        // model faces -X, so a quarter turn puts it nose-out.
+        yaw: yaw + Math.PI / 2,
+        // The lane it works from: the centre line of the street the station
+        // fronts. Expressed in world space so the firetruck can line up on it
+        // without knowing anything about the building.
+        roadZ: entry.z + (fireStationBayLocal.roadZ) * cos,
+        // ...and that street's own extent, so the engine stays on tarmac instead
+        // of wandering off the end of it. These describe the STREET, not the
+        // building, so they are already world x and are passed straight through
+        // — south-main runs along world x, which a north-facing building's local
+        // x axis also runs along, so no rotation is wanted here anyway.
+        roadMinX: fireStationBayLocal.roadMinX,
+        roadMaxX: fireStationBayLocal.roadMaxX,
+      };
+    }
+    // The brown-roofed house's open bay is the opposite case: not a spawn point
+    // but a door you drive through into another level, so main.js only needs to
+    // know where the trigger sits and which way the car was pointing when it
+    // left. It is the bay, not the neighbouring house-with-garage, because that
+    // one's roller door is shut and empty now.
+    if (entry.name === 'houseStandard') {
+      houseGarageEntry = { x: entry.x, z: entry.z, yaw: FACE_YAW[entry.face] ?? 0 };
+    }
   }
 
   // The two retained blocks, drawn as plain masses exactly as before so the
@@ -1884,11 +2291,74 @@ export function updateCityBuildings(t) {
 
 // Every world collider flagged `fire`, as a flat list the firetruck can consume.
 // Derived from the same data the colliders come from, so a building can never
-// be a fire target without a roof for the fire to stand on.
+// be a fire target without a roof for the fire to stand on. The fire station is
+// deliberately NOT in this list — see the builder's comment — so the engine
+// never has to douse the building it is parked inside.
 export function cityFireSpots(colliders) {
   return colliders
     .filter((c) => c.fire)
     .map((c) => ({ x: c.x, z: c.z, w: c.halfW * 2, d: c.halfD * 2, h: c.h }));
+}
+
+// Where the engine's home bay is, in world space: { x, z, yaw }. `yaw` already
+// includes the building's own facing, so the caller can assign it straight to
+// the truck. Null if the city hasn't been built yet, which the firetruck treats
+// as "no station" and falls back to plain road patrol.
+export function cityFireStationBay() {
+  return fireStationBayWorld;
+}
+
+// The suburban house's drive-in garage, in world space:
+//   { x0, x1, z0, z1, cx, cz, camX, camY, camZ, yaw }
+//
+// x0..x1 / z0..z1 is the trigger rectangle — get the car anywhere inside it and
+// the level takes you into the house. cx/cz is its middle, which is where the
+// car is placed on arrival. cam* is the fixed spot the watch camera stands at
+// while you drive in, and yaw is the house's facing so the caller can turn the
+// car to match the garage it came out of. Null before the city is built.
+//
+// This is a plain AABB rather than the rotated rectangle because every house in
+// the set faces a compass point, so its local axes always land on world X and Z
+// one way or the other: the corners can simply be rotated and min/max'd.
+export function houseGarageTrigger() {
+  if (!houseGarageLocal || !houseGarageEntry) return null;
+  const l = houseGarageLocal;
+  const e = houseGarageEntry;
+  const cos = Math.cos(e.yaw), sin = Math.sin(e.yaw);
+  // Same convention as placeCollider: a local (lx, lz) lands at
+  // (x + lx*cos + lz*sin, z - lx*sin + lz*cos).
+  const toWorld = (lx, lz) => ({ x: e.x + lx * cos + lz * sin, z: e.z - lx * sin + lz * cos });
+  const corners = [toWorld(l.x0, l.z0), toWorld(l.x1, l.z0), toWorld(l.x1, l.z1), toWorld(l.x0, l.z1)];
+  const cam = toWorld(l.camX, l.camZ);
+  // The mouth is the open local +Z face, on the building's centreline. This is
+  // where the car is handed BACK to the city after the house, so main.js never
+  // has to know the garage's local geometry to place it — it just drops the car
+  // a car-length short of the mouth, on the axis, facing back out into the street.
+  const mouth = toWorld(l.mouthX, l.mouthZ);
+  const apron = toWorld(l.apronX, l.apronZ);
+  return {
+    x0: Math.min(...corners.map((c) => c.x)), x1: Math.max(...corners.map((c) => c.x)),
+    z0: Math.min(...corners.map((c) => c.z)), z1: Math.max(...corners.map((c) => c.z)),
+    // The box's centre in WORLD space, matching the x0..x1/z0..z1 above. A
+    // rotated trigger is not axis-aligned in local space, so this has to come
+    // from the world corners — taking the mean of the local numbers would hand
+    // main.js a point somewhere near the origin instead.
+    cx: (Math.min(...corners.map((c) => c.x)) + Math.max(...corners.map((c) => c.x))) / 2,
+    cz: (Math.min(...corners.map((c) => c.z)) + Math.max(...corners.map((c) => c.z))) / 2,
+    camX: cam.x, camY: l.camY, camZ: cam.z,
+    // The open face, and a point out on the apron in front of it.
+    //
+    // `exitYaw` is the car heading that points back OUT of the mouth, which is
+    // NOT the building's own yaw: the car and the building use different yaw
+    // conventions. See modules/heading.js — in short, a car's forward is
+    // (-cos ry, sin ry) while a building's front is (sin yaw, cos yaw), so the
+    // outward heading is the building yaw plus a quarter turn. Using e.yaw
+    // directly made the car come out of the garage sideways.
+    mouthX: mouth.x, mouthZ: mouth.z,
+    apronX: apron.x, apronZ: apron.z,
+    exitYaw: outwardYaw(e.yaw),
+    yaw: e.yaw,
+  };
 }
 
 // ---- named builder aliases, so the layout table reads as a list of places ----

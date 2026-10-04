@@ -1,19 +1,18 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1791039533538';
-import { clamBowlHeightAt, clamInsideShell } from './clam.js';
-import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1790978292693';
-import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createCrab, createFiretruck, addTrafficCars } from './cars.js?v=1791123166969';
-import { addFiretruck } from './firetruck.js?v=1791123166969';
-import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger } from './cityBuildings.js?v=1790915140701';
-import { addPeople } from './people.js?v=1790712527620';
-import { addRobot, buildRobotModel } from './robot.js?v=1790913447539';
-import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1790712412969';
+import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1790870000000';
+import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1790870000000';
+import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, addTrafficCars } from './cars.js?v=1790869000000';
+import { addFiretruck } from './firetruck.js?v=1790869000000';
+import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger } from './cityBuildings.js?v=1790870000000';
+import { addPeople } from './people.js?v=1790869000000';
+import { addRobot, buildRobotModel } from './robot.js?v=1790869000000';
+import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1790869000000';
 import { addLizard } from './lizard.js';
-import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1790720563730';
+import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1790869000000';
 import { updateKnockables, knockAt, resetKnockables, snapKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import { createTaffyState, getTaffyScale, stepTaffyState } from './carTaffyMode.mjs';
-import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent } from './modules/expressTube.js?v=1790708040365';
+import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent } from './modules/expressTube.js?v=1790869000000';
 import {
   worldXLo,
   worldXHi,
@@ -40,21 +39,14 @@ import {
   isStillWithinLevitationHall,
   isInMineDiveTrigger,
   isInUndergroundReturnZone,
-} from './modules/portalRules.js?v=1790707232983';
+} from './modules/portalRules.js?v=1790869000000';
 import { resolveStuck, wallNormal } from './modules/unstick.js';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE } from './levels/house/index.js?v=1791123166969';
-import { addCat } from './cat.js?v=1790881800021';
+import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE } from './levels/house/index.js?v=1790887349662';
+import { addCat } from './cat.js?v=1790882219480';
 import { makeAsh, inHearth, stepAsh, ashBlack, ashFlakeRate } from './ash.js';
-import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1791039533469';
-import {
-  createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
-  BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1,
-  BEACH_CAMPFIRE,
-} from './levels/beach/index.js?v=1791042091764';
-// The object catalogue: every level's categories and the small standalone
-// models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791123166969';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1790869000000';
+import { createBeachWorld } from './levels/beach/index.js?v=1790869000000';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -415,7 +407,7 @@ scene.add(dirLight);
 await __loaderYield(0.04, 'the city streets');
 const { buildingColliders, ramps } = buildMap(scene);
 await __loaderYield(0.08, 'the traffic lights');
-const { trafficLights, fountains, mineColliders, mineGems, clamShell } = addProps(scene);
+const { trafficLights, fountains, mineColliders, mineGems } = addProps(scene);
 await __loaderYield(0.12, 'the traffic cars');
 const traffic = addTrafficCars(scene);
 await __loaderYield(0.16, 'the pedestrians');
@@ -505,16 +497,9 @@ const bumperBaseSpeed = 5;
 // The active world's solid-collider list. The house is a fourth world with its
 // own walls, so every collider query in the file routes through here rather than
 // repeating the same ternary (and accidentally forgetting the house).
-//
-// The one conditional case is the beach's crabs: they are live solid discs, so
-// driving into one stops you — but if you ARE the crab, the other crabs would
-// lock you in place. The list is rebuilt once per swap rather than per query,
-// because it only changes when the player changes ride.
-let beachCollidersNoCrabs = null;
 function activeColliders() {
   if (worldState === 'underground') return ugColliders;
   if (worldState === 'house') return houseColliders;
-  if (worldState === 'beach') return playerCrab ? beachCollidersNoCrabs : beachWorld.colliders;
   return colliders;
 }
 
@@ -552,9 +537,6 @@ function isPositionBlockedByFiretruck(x, z, radius) {
   // position leaks into the underground and invisibly walls off course props
   // that share the same x/z.
   if (worldState !== 'city') return false;
-  // Stood down in its bay for the player to borrow: an invisible engine must not
-  // wall off the station apron.
-  if (!firetruck.duty()) return false;
   const dx = wrappedDeltaX(x, firetruck.truck.position.x);
   const dz = wrappedDeltaZ(z, firetruck.truck.position.z);
   return dx * dx + dz * dz <= (radius + firetruckColliderR) * (radius + firetruckColliderR);
@@ -664,12 +646,8 @@ function distanceToObstacleAhead(t) {
     const p = aheadDist(mx, mz, t.dir, t.axis, car.position.x, car.position.z);
     if (p < best) best = p;
   }
-  // Traffic brakes for the engine — but not for one stood down in its bay, which
-  // is tucked off the lanes anyway and invisible while you are driving.
-  if (firetruck.duty()) {
-    const f = aheadDist(mx, mz, t.dir, t.axis, firetruck.truck.position.x, firetruck.truck.position.z);
-    if (f < best) best = f;
-  }
+  const f = aheadDist(mx, mz, t.dir, t.axis, firetruck.truck.position.x, firetruck.truck.position.z);
+  if (f < best) best = f;
   // Traffic also brakes for the robot's legs if they're close enough to the
   // lane to actually block it (its body is much wider than a car).
   const robOff = t.axis === 'x' ? Math.abs(mz - robot.mesh.position.z) : Math.abs(mx - robot.mesh.position.x);
@@ -720,7 +698,7 @@ function carCollisionList() {
   // Cars being held in the robot's claw are not driving — leave them out.
   if (!robot.playerCaptured) list.push({ mesh: car, radius: playerCarRadius, kind: 'player', steamroller: playerSteamroller });
   if (!robot.bumperCaptured) list.push({ mesh: bumperCar, radius: aiCarRadius, kind: 'bumper' });
-  list.push({ mesh: firetruck.truck, radius: firetruckColliderR, kind: 'firetruck', offDuty: !firetruck.duty() });
+  list.push({ mesh: firetruck.truck, radius: firetruckColliderR, kind: 'firetruck' });
   for (const t of traffic) {
     // The steamroller is a ghost — it drives right over the player car (and
     // everything else) without bumping or shoving anything, so it never
@@ -832,10 +810,6 @@ function resolveCarCollisions() {
     for (let j = i + 1; j < list.length; j++) {
       const a = list[i];
       const b = list[j];
-      // A stood-down fire engine is parked in its bay and out of sight, so it
-      // takes no part in the collision pass — it would otherwise shove traffic
-      // around a station the player cannot even see.
-      if (a.offDuty || b.offDuty) continue;
       // The player is flying over everything while airborne (mega ramp), so
       // ground cars must not shove it around mid-flight — car collisions are
       // 2D (altitude-blind), which would otherwise brake the car over the
@@ -994,11 +968,7 @@ const buildingLevitate = {
 };
 
 function cityGroundHeightAt(x, z) {
-  // The beach is its own ground: a sand profile that falls away into the sea,
-  // read straight off the level's own function so the mesh and the physics can
-  // never disagree about where the shore is.
-  if (worldState === 'beach') return groundHeight + beachGroundOffsetAt(x, z);
-  return groundHeight + portalHillHeightAt(x, z) + clamBowlHeightAt(x, z);
+  return groundHeight + portalHillHeightAt(x, z);
 }
 
 // ===== Mine shaft portal (entrance at -55,50, tunnel faces north) =====
@@ -1301,7 +1271,6 @@ function spiralPoseAtUp(s) {
 function flattenCarFromRock() {
   if (playerRobot) return;   // a giant mech can't be squashed into a pancake
   if (playerCarKind === 'skateboarder') return;   // the skater is a person, not a car — never a pancake
-  if (playerCrab) return;   // and a crab is neither — it just keeps scuttling
   if (flatCarState.phase === 'bounce') return;
   flatCarState.active = true;
   flatCarState.phase = 'flat';
@@ -1312,7 +1281,7 @@ function updateFlatCarState(delta) {
   // The boulder (ramp world), the steamroller (city) and the underground's
   // steam press all flatten the car; once flat, driving for a while pops it
   // back up in every world.
-  const isDriving = (worldState === 'ramp' || worldState === 'city' || worldState === 'underground' || worldState === 'house' || worldState === 'beach') && flatCarState.active && flatCarState.phase === 'flat' && Math.abs(velocity.value) > 0.8;
+  const isDriving = (worldState === 'ramp' || worldState === 'city' || worldState === 'underground' || worldState === 'house') && flatCarState.active && flatCarState.phase === 'flat' && Math.abs(velocity.value) > 0.8;
   flatCarState = stepFlatCarState(flatCarState, delta, isDriving);
   const scaleY = flatCarState.active ? getFlatCarScaleY(flatCarState) : 1;
   // The underground's taffy pullers also distort the car: it stretches LONG
@@ -1368,16 +1337,7 @@ beachScene.add(beachHemi);
 const beachDir = new THREE.DirectionalLight(0xfff2d8, 1.4);
 beachDir.position.set(20, 30, 14);
 beachScene.add(beachDir);
-const beachWorld = createBeachWorld(beachScene, {});
-const beachShell = beachWorld.shell;
-// The way home is the giant scallop bedded in the sand east of the spawn, and
-// nothing else: no threshold to cross, no water to fall into. You drive down
-// into the dish and the valves come together over you, exactly as they do in
-// the city.
-const beachShellPortal = {
-  armed: false,
-  fadeTimer: -1,
-};
+createBeachWorld(beachScene, {});
 
 await __loaderYield(0.31, 'the ramp world hills');
 const rampWorld = buildRampWorld(rampScene);
@@ -1791,19 +1751,6 @@ const ugBuildOpts = {
   },
   // Glass City crystal cluster popped by the car (idea #25).
   onGlassPop: () => playCrystalPop(),
-  // A street ghost picked the car up: a low whoosh, a shake, and the car is
-  // carried to the foot of the candy waterfall — a long way south and west out
-  // of the glass city, which is the whole reward for being caught.
-  onGhostRide: (at) => {
-    playCrystalPop();
-    shake.intensity = Math.max(shake.intensity, 0.45);
-    GHOST_RIDE_FROM.x = car.position.x;
-    GHOST_RIDE_FROM.y = car.position.y;
-    GHOST_RIDE_FROM.z = car.position.z;
-    void at;
-    ghostRideActive = true;
-    ghostRideT = 0;
-  },
   // Statue tagged by a fast car on the second roof (idea #31).
   onStatueTopple: () => {
     playStatueCrash();
@@ -2004,11 +1951,9 @@ const ashFlakeTex = (() => {
   g.fillRect(0, 0, 32, 32);
   return new THREE.CanvasTexture(c);
 })();
-// Every flake is parented to whichever world is live, so they vanish with the
-// house and can never be left floating in the city — and the beach campfire's
-// flakes land on the beach's sand instead of a house wall 200 units away.
-// `live` is how many of the pool are in use; the rest are parked invisible below
-// the floor.
+// Every flake is parented to the house root, so they vanish with the house and can
+// never be left floating in the city. `live` is how many of the pool are in use;
+// the rest are parked invisible below the floor.
 const ashFlakes = Array.from({ length: ASH_FLAKE_MAX }, () => {
   const mat = new THREE.SpriteMaterial({ map: ashFlakeTex, transparent: true, depthWrite: false, opacity: 0 });
   const s = new THREE.Sprite(mat);
@@ -2016,9 +1961,6 @@ const ashFlakes = Array.from({ length: ASH_FLAKE_MAX }, () => {
   houseRoot.add(s);
   return { sprite: s, vel: new THREE.Vector3(), life: 0, maxLife: 1, spin: 0 };
 });
-// Which root the pool is currently parented to, so reparenting is a no-op on the
-// 99% of frames where the world has not changed.
-let ashFlakeRootRef = houseRoot;
 // How many are currently in flight, and how much is left of this frame's quota.
 let ashFlakeLive = 0;
 // Carries the fractional remainder between frames so a rate of 70/s does not turn
@@ -2036,30 +1978,9 @@ function updateHouseFire(delta, elapsed) {
 
   // The spider and the skater are repelled before they can get warm. Checked
   // first, and returns early, so neither ever picks up soot on the way out.
-  if (isFireRepelledKind(playerCarKind) && knockCarOffHearth(FIREPLACE.hearth, FIREPLACE.repulse)) return;
+  if (isFireRepelledKind(playerCarKind) && knockCarOffHearth()) return;
 
-  stepSootFromFire(delta, FIREPLACE.hearth);
-}
-
-// ===== The campfire, per frame =====
-// The beach fire is the house hearth with the walls taken off, so it runs the same
-// two jobs: flicker the flames, then run the ash state machine against the ring's
-// own trigger box. `BEACH_CAMPFIRE.hearth` and the level's `fireplace` are the same
-// box, read from the same constant.
-function updateBeachFire(delta) {
-  // The flames themselves are already ticked by beachWorld.update() a few lines
-  // above, so this is only the half that is the car's business: the repulsion
-  // check and the ash state machine.
-  if (isFireRepelledKind(playerCarKind) && knockCarOffHearth(BEACH_CAMPFIRE.hearth, BEACH_CAMPFIRE.repulse)) return;
-  stepSootFromFire(delta, BEACH_CAMPFIRE.hearth);
-}
-
-// The shared half of both fires: is the car in the box, step the rule, tint the
-// body, shed the flakes. One function rather than two so the house hearth and the
-// beach campfire cannot drift apart — they are the same mechanic with a different
-// box.
-function stepSootFromFire(delta, hearth) {
-  const near = inHearth(hearth, car.position.x, car.position.z, playerCarRadius);
+  const near = inHearth(FIREPLACE.hearth, car.position.x, car.position.z, playerCarRadius);
   const wasBlack = ashBlack(ashState);
   stepAsh(ashState, near, delta);
   applyAshToCar(ashBlack(ashState));
@@ -2068,7 +1989,7 @@ function stepSootFromFire(delta, hearth) {
     updateAshFlakes(delta);
   }
   // A settled car hands its colours back and forgets them, so the next visit to
-  // a fire starts from whatever paint it is wearing now (which might be a
+  // the hearth starts from whatever paint it is wearing now (which might be a
   // different car — see resetHouseAsh on the car swap).
   if (ashBlack(ashState) === 0 && ashBaseColors) restoreAshColors();
 }
@@ -2079,35 +2000,33 @@ function isFireRepelledKind(kind) {
   return kind === 'tarantula' || kind === 'skateboarder';
 }
 
-// Push a fire-averse ride back out of a fire. Returns true if it actually
-// bounced, so the caller can skip the ash update for that frame. Takes the
-// hearth box and the repulse point rather than reading the house's FIREPLACE, so
-// the same bounce works for the house fireplace and the beach campfire.
+// Push a fire-averse ride back out of the hearth. Returns true if it actually
+// bounced, so the caller can skip the ash update for that frame.
 //
 // Two ways in, and the second matters more than it looks:
 //   - Nose already in the box: kick it out along the way it came.
 //   - Nose just short of the box but heading in: bounce it BEFORE it gets warm.
 //     Without this you could hold the accelerator against the apron and pick up
 //     soot on your way past, which is not "does not catch fire".
-// The kick sends it toward `repulse` — about halfway across the living room, or
-// out onto the open sand at the beach — so the bounce is legible as a bounce
-// rather than a nudge.
-function knockCarOffHearth(H, repulse) {
+// The kick sends it toward FIREPLACE.repulse — about halfway across the living
+// room — so the bounce is legible as a bounce rather than a nudge.
+function knockCarOffHearth() {
+  const H = FIREPLACE.hearth;
   const inside = inHearth(H, car.position.x, car.position.z, playerCarRadius);
   const headingIn = velocity.value > 1 && Math.cos(car.rotation.y - Math.PI / 2) * (H.x1 + H.x0) > 0;
   if (!inside && !(headingIn && car.position.x < H.x1 + 6 && car.position.x > H.x0 - 10
     && car.position.z > H.z0 - 4 && car.position.z < H.z1 + 4)) return false;
 
-  // Aim at the far side of the open ground from the fire.
-  let nx = repulse.x - car.position.x;
-  let nz = repulse.z - car.position.z;
+  // Aim at the far side of the room from the fire.
+  let nx = FIREPLACE.repulse.x - car.position.x;
+  let nz = FIREPLACE.repulse.z - car.position.z;
   const len = Math.hypot(nx, nz) || 1;
   nx /= len; nz /= len;
   playerKnock = makeKnock(car, 2.15, 0.9, nx, nz, 62, 1.2);
   velocity.value = Math.max(velocity.value, 4);
   shake.intensity = Math.max(shake.intensity, 0.5);
-  // Dropped on the far side of the open ground, so any soot it had already
-  // picked up goes with it rather than following it home.
+  // Dropped on the far side of the room, so any soot it had already picked up
+  // goes with it rather than following it home.
   ashState.mode = 'burning';
   ashState.t = Math.min(ashState.t, 1.2);
   return true;
@@ -2174,19 +2093,6 @@ function resetHouseAsh() {
 // and a life between 0.5 and 1.1s.
 function emitAshFlakes(n) {
   ashFlakeCarry += n;
-  if (ashFlakeCarry < 1) return;
-  // Move the pool into the world the car is actually standing in before the
-  // first flake of this burst goes out, so a beach burnout does not draw its
-  // ash inside the house.
-  const wantRoot = worldState === 'beach' ? beachScene
-    : worldState === 'ramp' ? rampScene
-    : worldState === 'underground' ? undergroundScene
-    : worldState === 'house' ? houseRoot
-    : scene;
-  if (wantRoot !== ashFlakeRootRef) {
-    for (const f of ashFlakes) wantRoot.add(f.sprite);
-    ashFlakeRootRef = wantRoot;
-  }
   while (ashFlakeCarry >= 1) {
     ashFlakeCarry -= 1;
     if (ashFlakeLive >= ASH_FLAKE_MAX) return;
@@ -2749,7 +2655,6 @@ function capShadowCasters(root) {
 capShadowCasters(scene);
 capShadowCasters(rampScene);
 capShadowCasters(undergroundScene);
-capShadowCasters(beachScene);
 
 await __loaderYield(0.96, 'finishing setup');
 
@@ -2766,6 +2671,9 @@ await __loaderYield(0.96, 'finishing setup');
 // are already on the GPU before the player ever drops in. Frustum culling is
 // temporarily disabled so the WHOLE map (not just one camera's wedge) gets
 // warmed in one pass.
+*/
+
+
 {
   const warmRT = new THREE.WebGLRenderTarget(8, 8);
   const wideCam = new THREE.PerspectiveCamera(100, 1, 0.1, 400);
@@ -3095,20 +3003,6 @@ const MONSTER_SPEED = 19;       // full throttle for the biggest ramp jumps
 const playerKnockRadius = 2.6;      // how far the player shoves props
 const aiKnockRadius = 1.5;          // how far the blue car shoves props
 const shake = { intensity: 0 };
-// ===== The ghost ride =====
-// A street ghost picking the car up and carrying it to the foot of the candy
-// waterfall. Held at the very end of the frame for the same reason the seagull
-// is: physics has already run and had its say, so overwriting the transform
-// here is what actually holds the car in the air.
-let ghostRideActive = false;
-let ghostRideT = 0;
-// Where the ride starts - the car at the moment it was touched, captured by the
-// callback so the arc always departs from wherever the ghost actually caught it.
-const GHOST_RIDE_FROM = { x: 0, y: 0, z: 0 };
-// Where the ride ends: the base of the grand ramp, on the cavern floor just
-// south of it, facing back up the slope so you drive straight into the candy.
-const GHOST_RIDE_DROP = { x: 24, z: 82, heading: -Math.PI / 2 };
-const GHOST_RIDE_TIME = 1.9;
 // Pothole / lake wobble — set when driving over the pothole or into the park
 // lake; `zone` remembers which one triggered it so the bump direction matches.
 const potholeWobble = { active: false, t: 0, zone: null };
@@ -3384,92 +3278,21 @@ function enterRampWorld() {
   shake.intensity = Math.max(shake.intensity, 0.5);
 }
 
-// City → Beach (the giant scallop in the park).
-//
-// The shell owns the whole sequence: clamShell.update() drives the valves, and
-// this object only remembers which half of the trip we are on. Drive into the
-// bowl and the valves snap shut over you; once they meet, cut to black and the
-// swap happens while the screen is dark. Coming back, the valves are already
-// shut when you arrive and reopen behind you as the screen clears.
-const shellPortal = { armed: false, fadeTimer: -1 };
-
-function resetShellTripPhysics() {
-  velocity.value = 0;
-  steering.value = 0;
-  jumpState.inAir = false;
-  jumpState.yVelocity = 0;
-  wasOnRamp = null;
-  currentRamp = null;
-  playerKnock = null;
-  flatCarState = createFlatCarState(false);
-  taffyState = createTaffyState(false);
-  portalGrace = 1.6;
-}
-
-function enterBeachWorld() {
-  scene.remove(car);
-  beachScene.add(car);
-  worldState = 'beach';
-  resetKnockables();
-  resetHydrantSprays();
-  resetShellTripPhysics();
-  // Leaving whatever world you were in means leaving its fire — and the soot
-  // tint lives on materials the beach's traffic and props share, so a black car
-  // rolling onto the sand would be a bug, not a feature.
-  resetHouseAsh();
-  minePortal.active = false;
-  minePortal.timer = 0;
-  housePortal.watch.active = false;
-  shellPortal.armed = false;
-  beachShellPortal.armed = false;
-  beachShellPortal.fadeTimer = -1;
-  // Arrive on the sand, facing out to sea - the way out is straight ahead.
-  car.position.set(BEACH_START.x, groundHeight + beachGroundOffsetAt(BEACH_START.x, BEACH_START.z), BEACH_START.z);
-  car.rotation.set(0, BEACH_START.yaw, 0);
-  car.visible = true;
-  shake.intensity = Math.max(shake.intensity, 0.35);
-  // Both shells spring back open while the screen is still dark, so you fade in
-  // on the beach with its shell lying open rather than mid-snap, and the one you
-  // left behind is ready for the trip back.
-  clamShell.reopen();
-  beachShell.reopen();
-}
-
-function returnToPark() {
-  beachScene.remove(car);
-  scene.add(car);
-  worldState = 'city';
-  resetKnockables();
-  resetHydrantSprays();
-  // Off the campfire, same as off the house hearth: the soot is dropped here
-  // rather than carried back into the street.
-  resetHouseAsh();
-  // Back in the city, so this is the one place on the shell trip that has to
-  // put the city lights back to normal.
-  globalDarkness = false;
-  applyGlobalDarkness();
-  resetShellTripPhysics();
-  minePortal.active = false;
-  housePortal.watch.active = false;
-  beachShellPortal.armed = false;
-  beachShellPortal.fadeTimer = -1;
-  shellPortal.armed = false;
-  // Back down in the bowl you left from, which is exactly where the trip began.
-  car.position.set(clamShell.x, clamBowlHeightAt(clamShell.x, clamShell.z), clamShell.z);
-  car.rotation.set(0, -Math.PI / 2, 0);   // face +X, back out the way you came
-  car.visible = true;
-  shake.intensity = Math.max(shake.intensity, 0.35);
-  clamShell.reopen();
-  beachShell.reopen();
-}
-
-// Global darkness is a CITY-only effect - the ramp, underground, house and
-// beach keep their own fixed lighting, so this deliberately touches nothing but
-// the city's two lights. Reset whenever the car arrives back in the city.
 function applyGlobalDarkness() {
   const dark = globalDarkness;
+  // City lights
   if (hemiLight) hemiLight.intensity = dark ? 0.15 : 1.2;
   if (dirLight) dirLight.intensity = dark ? 0.2 : 1.3;
+  // Ramp world
+  if (rampHemi) rampHemi.intensity = dark ? 0.15 : 1.6;
+  if (rampDir) rampDir.intensity = dark ? 0.2 : 1.75;
+  // Underground
+  if (ugHemi) ugHemi.intensity = dark ? 0.1 : 1.8;
+  if (ugDir) ugDir.intensity = dark ? 0.15 : 1.2;
+  // House
+  if (houseSky) houseSky.intensity = dark ? 0.2 : 1.5;
+  if (houseSun) houseSun.intensity = dark ? 0.25 : 2.1;
+  // Also darken scene background if needed? Keep for now.
 }
 
 function enterCityWorld() {
@@ -4298,38 +4121,6 @@ function drawMinimap() {
   ctx.translate(160, 160);
   ctx.scale(-1, -1);
 
-  // ===== Beach backdrop: sand, shallow sea, deep water =====
-  // Drawn HERE, inside the 180° turn, and that placement is the whole fix. It
-  // used to be painted before this transform, while every other thing on the
-  // minimap - the grid, the cliffs, the waterline, the shell, the car - was
-  // drawn after it. One set of coordinates rotated and the other did not, so
-  // the bands came out mirrored: the sea sat along the top edge of the map and
-  // the sand along the bottom, the exact opposite of the world, and no amount
-  // of reversing the fill order fixed it because the bug was in the transform,
-  // not the fill.
-  if (worldState === 'beach') {
-    // Three bands, because the beach has three depths of water and the
-    // difference between "the basin you can drive in" and "past the lip you
-    // cannot" is the whole point of the far edge of the map.
-    const pz = (z) => mmCenter + z * mmScale;
-    const band = (fromZ, toZ, style) => {
-      // Built from the MAP bounds rather than 0/160, and clipped: z = +123 is a
-      // little past the edge of the canvas even before the rotation.
-      const y0 = Math.max(0, Math.min(160, pz(fromZ)));
-      const y1 = Math.max(0, Math.min(160, pz(toZ)));
-      ctx.fillStyle = style;
-      ctx.fillRect(0, y0, 160, y1 - y0);
-    };
-    ctx.fillStyle = 'rgba(227,205,154,0.45)';
-    ctx.fillRect(0, 0, 160, 160);
-    // Sand: the waterline up past the landward map edge.
-    band(BEACH_SHORE_Z, BEACH_MAP_Z1, 'rgba(227,205,154,0.45)');
-    // Shallow sea: the waterline down to the drop-off lip.
-    band(BEACH_RIM_Z, BEACH_SHORE_Z, 'rgba(43,134,184,0.5)');
-    // Deep water: the lip out to the seaward edge of the map.
-    band(BEACH_MAP_Z0, BEACH_RIM_Z, 'rgba(22,64,88,0.45)');
-  }
-
   // ===== Debug coordinate grid: faint lines every 20 world units =====
   // x runs -90..90 (right..left after the rotation), z runs -90..123
   // (south..north; north is the TOP of the minimap, where the grass field /
@@ -4363,14 +4154,10 @@ function drawMinimap() {
     ctx.beginPath();
     ctx.arc(mmCenter + bumperCar.position.x * mmScale, mmCenter + bumperCar.position.z * mmScale, 2.6, 0, Math.PI * 2);
     ctx.fill();
-    // Only while it is on the road: a stood-down engine is parked in its bay and
-  // would otherwise put an orange dot on the map for a truck you cannot see.
-  if (firetruck.duty()) {
     ctx.fillStyle = '#ff8800';   // fire engine
     ctx.beginPath();
     ctx.arc(mmCenter + firetruck.truck.position.x * mmScale, mmCenter + firetruck.truck.position.z * mmScale, 3, 0, Math.PI * 2);
     ctx.fill();
-  }
     ctx.fillStyle = '#00ffcc';   // giant robot
     ctx.beginPath();
     ctx.arc(mmCenter + robot.mesh.position.x * mmScale, mmCenter + robot.mesh.position.z * mmScale, 5.5, 0, Math.PI * 2);
@@ -4597,39 +4384,6 @@ function drawMinimap() {
     ctx.fillStyle = 'rgba(120,110,95,0.85)';
     ctx.fillRect(px(FRONT_DOOR.at) - 2, pz(FRONT_DOOR.z0), 4,
       (FRONT_DOOR.z1 - FRONT_DOOR.z0) * mmScale);
-
-  } else if (worldState === 'beach') {
-    // The beach map is about the boundaries, not the furniture: the three walls
-    // of cliffs and the lip of the drop-off are the only things on this level
-    // that can stop the car, so they are the only things worth drawing. Everything
-    // else the player can judge by driving.
-    const px = (x) => mmCenter + x * mmScale;
-    const pz = (z) => mmCenter + z * mmScale;
-
-    // The cliffs, as solid bands on the map edge they actually occupy. The band
-    // is drawn INSET from the face by the same amount the rock's overhangs reach
-    // out over the sand, because that inset face is where the car is stopped -
-    // drawing the face itself would promise ground the cliff covers.
-    const face = BEACH_HALF_W - 2;
-    const band = Math.max(2.5, 9 * mmScale);
-    const zA = BEACH_MAP_Z0;
-    const zB = BEACH_MAP_Z1;
-    ctx.fillStyle = 'rgba(122,92,58,0.85)';
-    ctx.fillRect(px(-face) - band / 2, pz(zA), band, (zB - zA) * mmScale);
-    ctx.fillRect(px(face) - band / 2, pz(zA), band, (zB - zA) * mmScale);
-    ctx.fillRect(px(-face), pz(BEACH_CLIFF_Z) - band / 2,
-      face * 2 * mmScale, band);
-
-    // The drop-off: a heavy bar, because it is the barrier that matters. The
-    // trench behind it is left as the dark band already painted, so the map
-    // reads at a glance as "you can drive here, and this is where you stop".
-    ctx.fillStyle = 'rgba(200,70,50,0.9)';
-    ctx.fillRect(px(-face), pz(BEACH_RIM_Z) - 1, face * 2 * mmScale, 2);
-
-    // The waterline, thin, so the sand/water boundary is readable under the
-    // player's marker.
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.fillRect(px(-BEACH_HALF_W), pz(BEACH_SHORE_Z), BEACH_HALF_W * 2 * mmScale, 0.7);
   }
   ctx.fillStyle = '#ff4444';   // player — elongated triangle pointing the way it's driving
   ctx.save();
@@ -4897,21 +4651,6 @@ const CAR_KINDS = [
   // two hot red eyes. Faces +Z like the robot, so `faceZ` quarter-turns it
   // onto the cars' -X forward axis; `show` shrinks it for the showroom stage.
   { id: 'tarantula', label: 'Giant Tarantula', color: '#3a2c1c', scale: 2.5, faceZ: true, show: 0.3, build: () => makeTarantula() },
-  // The taco truck — the street-food box van with the serving hatch up one side.
-  // Drives like any other vehicle (wheels spin, front pair steers); it is here
-  // so you can take it round the city and park it wherever you like.
-  { id: 'taco', label: 'Taco Truck', color: '#d8451f', scale: 1, build: () => createTacoTruck() },
-  // The fire engine, the same model the city's AI engine drives around in (so
-  // the ladder, the deck gun and the lightbar are all real). Drives like any
-  // other vehicle and its beacons flash while it moves — but while you are in
-  // the seat, the AI engine stands down and parks out of sight, because two
-  // engines answering the same call is one too many. See playerFiretruck.
-  { id: 'firetruck', label: 'Fire Truck', color: '#c8202a', scale: 1, build: () => createFiretruck() },
-  // Play as the crab. A beach crab at driveable size: carapace, two claws, eight
-  // scissoring legs. It faces +Z like the robot and the skater, so `faceZ`
-  // quarter-turns it onto the cars' -X forward axis, and `show` shrinks it for
-  // the showroom stage.
-  { id: 'crab', label: 'Crab', color: '#d9502f', scale: 1, faceZ: true, show: 1.5, build: () => createCrab() },
 ];
 let playerCarKind = CAR_KINDS[0].id;
 // Gear screen: which tab is on show ('player' swaps your ride, 'chase' swaps
@@ -4930,45 +4669,6 @@ let playerMonster = false;
 let playerIndy = false;
 let playerTrain = false;
 let playerTarantula = false;
-let playerCrab = false;
-// Driving the fire engine yourself. The city's AI engine is a separate mesh
-// doing its own rounds; while you are in the seat of your own, that one stands
-// down and is parked out of sight rather than left driving a copy of you
-// around the same streets.
-let playerFiretruck = false;
-// Beacon flash clock for the player's own engine. The AI truck keeps its own in
-// firetruck.js; this is the same lightbar pattern driven from the frame loop.
-let playerFiretruckFlash = 0;
-// Scuttle phase for the drivable crab. It has no wheels, so its legs scissor
-// side to side off the car's speed instead — the same trick the tarantula uses,
-// on a rig it carries in `car.userData.crabLegs`.
-let playerCrabPhase = 0;
-function updatePlayerCrabScuttle(delta, speed) {
-  const legs = car.userData.crabLegs;
-  if (!legs || !legs.length) return;
-  const rate = 0.9 + Math.abs(speed) * 1.9;
-  playerCrabPhase += delta * rate;
-  const t = THREE.MathUtils.clamp(Math.abs(speed) / 1.4, 0, 1);
-  const swing = Math.sin(playerCrabPhase) * 0.55 * t;
-  // Alternating diagonal pairs, like the tarantula: legs 0,5 and 3,6 (and the
-  // rest of each diagonal) move together, the opposite diagonal counter to it.
-  const A = [0, 3, 5, 6];
-  for (let i = 0; i < legs.length; i++) {
-    const drive = (A.indexOf(i) >= 0 ? swing : -swing)
-      + 0.05 * Math.sin(playerCrabPhase * 1.6 + i * 1.1);
-    legs[i].rotation.y = drive;
-  }
-  // The claws pinch while it is moving, and hold open when it is parked.
-  const claws = car.userData.crabClaws;
-  if (claws) {
-    const pinch = (Math.sin(playerCrabPhase * 1.5) * 0.5 + 0.5) * t;
-    for (const c of claws) {
-      for (const j of c.jaws) j.jaw.rotation.z = (j.jy > 0 ? -1 : 1) * pinch * 0.35;
-      // Opposite claws swing slightly out of phase, so it does not look rigid.
-      c.arm.rotation.y = Math.sin(playerCrabPhase + (c.sz > 0 ? 0 : Math.PI)) * 0.16 * t;
-    }
-  }
-}
 // Stride phase + walk updater for the giant tarantula (its 8 legs scissor in
 // an alternating diagonal gait instead of spinning wheels).
 let playerTarantulaPhase = 0;
@@ -5070,11 +4770,6 @@ function swapPlayerCar(kind) {
   // robot uses (nothing else references robotAnim there), so the frame loop
   // can stride its legs rather than spin wheels.
   if (kind === 'tarantula') car.userData.robotAnim = newMesh.userData;
-  // The crab keeps its own rig slots: eight leg pivots and two claw arms.
-  car.userData.crabLegs = kind === 'crab' ? newMesh.userData.crabLegs : null;
-  car.userData.crabClaws = kind === 'crab' ? newMesh.userData.crabClaws : null;
-  // The engine's lightbar halves, for the beacon flash in the frame loop.
-  car.userData.firetruckLights = kind === 'firetruck' ? newMesh.userData.warningLights : null;
   while (car.children.length > 0) car.remove(car.children[0]);
   car.add(inner);
   playerCarKind = kind;
@@ -5090,12 +4785,6 @@ function swapPlayerCar(kind) {
   playerIndy = kind === 'indy';
   playerRobot = isRobot;
   playerTarantula = kind === 'tarantula';
-  playerCrab = kind === 'crab';
-  playerFiretruck = kind === 'firetruck';
-  // Hand the city's engine over to the player: it parks in its bay, beacons
-  // dark, and stops answering calls, so there is one engine on the road and it
-  // is the one you are sitting in.
-  if (firetruck) firetruck.standDown(playerFiretruck);
   // The locomotive pulls its freight consist along; any other ride packs the
   // cars away.
   if (playerTrain && kind !== 'train') {
@@ -5106,15 +4795,9 @@ function swapPlayerCar(kind) {
     playerTrain = true;
   }
   if (isRobot) car.scale.set(1, 1, 1);   // no taffy/flat squash
-  // Riding as the skater (or the robot, or the crab) — none of those are cars,
-  // so clear any pancake left over from the ride you just swapped out of.
-  if (isRobot || kind === 'skateboarder' || kind === 'crab') flatCarState = createFlatCarState(false);
-  // The beach's crabs are solid, and the player-crab would be shoving itself.
-  // Cache the beach's collider list with the crab discs taken out, rebuilt only
-  // on a swap — activeColliders() reads it whenever the player is a crab.
-  beachCollidersNoCrabs = (beachWorld && beachWorld.crabColliders)
-    ? beachWorld.colliders.filter((c) => !beachWorld.crabColliders.includes(c))
-    : null;
+  // Riding as the skater (or the robot) — a person can't be a flattened car, so
+  // clear any pancake left over from the ride you just swapped out of.
+  if (isRobot || kind === 'skateboarder') flatCarState = createFlatCarState(false);
 }
 
 // ===== Drivable locomotive — trailing freight consist =====
@@ -5419,15 +5102,6 @@ let selectLastNow = 0;
 // the frame at, leaving generous dark space around it on the stage.
 const SELECT_CAR_SHOW_SCALE = 0.5;
 
-// Object-browser framing. The showroom camera is fixed at (0, 2.4, 10.5) looking
-// at (0, 0.95, 0) with a 42-degree lens, which works out to roughly 8.3 units of
-// visible height at the stage. These two numbers turn that into the rule the
-// object browser uses: normalise each model to PREVIEW_TARGET_H tall (about a
-// quarter of the frame, comfortably inside the 8x8 glow) and hang its middle on
-// the camera's focus height so short and tall objects both sit centred.
-const PREVIEW_TARGET_H = 2.2;
-const SELECT_PREVIEW_FOCUS_Y = 0.95;
-
 // Radial blue-haze texture for the showroom stage: bright at the centre and
 // fading to fully transparent, so the glow melts away instead of ending at a
 // hard disc edge.
@@ -5483,6 +5157,7 @@ function buildSelectScene() {
 }
 
 function refreshSelectCar(kind) {
+  if (selectCarGroup) selectScene.remove(selectCarGroup);
   const entry = CAR_KINDS.find((k) => k.id === kind);
   if (!entry) return;
   const model = entry.build();
@@ -5493,7 +5168,8 @@ function refreshSelectCar(kind) {
   // stage framing.
   inner.scale.setScalar(entry.scale * SELECT_CAR_SHOW_SCALE * (entry.show || 1));
   while (model.children.length > 0) inner.add(model.children[0]);
-  setSelectPreview(inner);
+  selectCarGroup = inner;
+  selectScene.add(inner);
   selectPreview = kind;
   // The arrows arm the tab you're on; the other tab's arm is left alone.
   if (pickerTab === 'chase') chasePreview = kind;
@@ -5501,41 +5177,15 @@ function refreshSelectCar(kind) {
   if (carHintEl) carHintEl.textContent = entry.label;
 }
 
-// Put a model on the showroom stage in place of whatever was there. The car tabs
-// and the object browser both go through here so they spin on exactly the same
-// stage.
-//
-// NOTE: the outgoing group is only detached, never disposed. The builders lean
-// on module-level shared resources — cars.js exports a single wheelGeometry and
-// wheelMaterial that every car in the world uses — so disposing a preview group
-// would pull the buffers out from under the car you are actually driving. The
-// leaked preview geometry is small and bounded by how much the player browses,
-// which is a much better trade than invisible broken wheels.
-function setSelectPreview(group) {
-  if (selectCarGroup) selectScene.remove(selectCarGroup);
-  selectCarGroup = group;
-  if (group) selectScene.add(group);
-}
-
-// Empty the stage. The Levels tab has nothing to show, and leaving the last car
-// spinning under a level list just looks like a bug.
-function clearSelectPreview() {
-  setSelectPreview(null);
-}
-
 function enterSelectMode() {
   if (selectMode || selectScene === null) return;
   selectWasPaused = isPaused;
   selectLastNow = performance.now();
+  refreshSelectCar(pickerTab === 'chase' ? chasePreview : playerPreview);
   selectMode = true;
   document.body.classList.add('select-mode');
   gearBtn.textContent = '←';
   gearBtn.title = 'Back to the game';
-  // Build whatever the tab on show needs — a car, a level list, or the object
-  // that the URL asked for. Doing this through setPickerTab (rather than only
-  // refreshing a car) is what makes a refresh with ?objects=... land on the
-  // same screen instead of an empty stage.
-  setPickerTab(pickerTab);
   setPaused(true);   // hides the minimap + joystick and freezes the world
 }
 
@@ -5543,10 +5193,6 @@ function exitSelectMode(apply) {
   if (!selectMode) return;
   selectMode = false;
   document.body.classList.remove('select-mode');
-  // Leaving the modal drops the stage furniture too, so reopening it starts
-  // from the tab that was showing rather than a stale object or a bare glow.
-  document.body.classList.remove('tab-levels', 'tab-objects', 'browser-mode');
-  clearSelectPreview();
   gearBtn.textContent = '⚙';
   gearBtn.title = 'Settings';
   // Committing applies BOTH arms — the player ride you picked and the chaser
@@ -5570,47 +5216,20 @@ function cycleCar(dir) {
   refreshSelectCar(CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id);
 }
 
-// Switch the showroom to one of its four tabs.
-//
-// PLAYER and CHASE spin a car and commit a choice. LEVELS and OBJECTS are
-// browsers: they do not change what you drive, they take you somewhere or show
-// you something, and they leave the car tabs' armed previews untouched.
+// Switch the showroom to the PLAYER or CHASE tab — the carousel now spins and
+// applies whichever kind the active tab is allowed to change.
 function setPickerTab(tab) {
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
-  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-objects', 'objects']]) {
-    const el = tabEl(id);
-    if (el) el.classList.toggle('active', tab === name);
-  }
-  // The panel visibility and the "hide the car stage furniture" rules are both
-  // driven off these two classes, so there is one place that knows which screen
-  // is up.
-  document.body.classList.toggle('tab-levels', tab === 'levels');
-  document.body.classList.toggle('tab-objects', tab === 'objects');
-  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects');
-
-  if (tab === 'levels') {
-    clearSelectPreview();
-    renderLevelList();
-  } else if (tab === 'objects') {
-    renderObjectBrowser();
-  } else {
-    // Restore that tab's own armed preview — the other one is left untouched.
-    refreshSelectCar(tab === 'chase' ? chasePreview : playerPreview);
-  }
+  const pt = tabEl('tab-player');
+  const ct = tabEl('tab-chase');
+  if (pt) pt.classList.toggle('active', tab === 'player');
+  if (ct) ct.classList.toggle('active', tab === 'chase');
+  // Restore that tab's own armed preview — the other one is left untouched.
+  refreshSelectCar(tab === 'chase' ? chasePreview : playerPreview);
 }
 
 function updateSelectCar() {
-  // The grid's miniatures turn on the same tick as the big stage, and only on the
-  // Objects tab — a grid of nine models spinning behind the car picker would be
-  // drawing into tiles that are not on screen.
-  if (selectMode && pickerTab === 'objects') {
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - selectLastNow) / 1000) || 0;
-    selectLastNow = now;
-    layoutObjThumbs();
-    updateObjThumbs(dt);
-  }
   if (!selectMode || !selectCarGroup) return;
   const now = performance.now();
   const dt = Math.min(0.05, (now - selectLastNow) / 1000) || 0;
@@ -5634,8 +5253,6 @@ const tabPlayerBtn = document.getElementById('tab-player');
 if (tabPlayerBtn) tabPlayerBtn.addEventListener('click', () => setPickerTab('player'));
 const tabChaseBtn = document.getElementById('tab-chase');
 if (tabChaseBtn) tabChaseBtn.addEventListener('click', () => setPickerTab('chase'));
-const tabLevelsBtn = document.getElementById('tab-levels');
-const tabObjectsBtn = document.getElementById('tab-objects');
 
 // The chase defaults to the little blue car, so dress the chaser right away.
 applyChaseCar(chaseCarKind);
@@ -5647,607 +5264,12 @@ const selectNdc = new THREE.Vector2();
 window.addEventListener('pointerdown', (e) => {
   if (!selectMode) return;
   if (e.target && e.target.closest && e.target.closest('#gear-btn,button')) return;
-  // Only the car tabs have a click-to-commit. On the Levels and Objects tabs the
-  // stage is decoration, and clicking it must not close the modal you are
-  // reading — that reads as the game being broken.
-  if (pickerTab !== 'player' && pickerTab !== 'chase') return;
   selectNdc.x = (e.clientX / window.innerWidth) * 2 - 1;
   selectNdc.y = -(e.clientY / window.innerHeight) * 2 + 1;
   selectRay.setFromCamera(selectNdc, selectCamera);
   if (selectCarGroup && selectRay.intersectObject(selectCarGroup, true).length > 0) {
     exitSelectMode(true);
   }
-});
-
-// ===== Levels and Objects =====
-//
-// Two browsers hanging off the gear modal, both sharing the showroom's stage.
-//
-// Levels is a list: pick one, go there. Objects is a catalogue: a category row, a
-// 3x3 grid of nine at a time, a pager, and a detail card whose "view in context"
-// drops you at the thing on the stage.
-//
-// The URL carries the whole screen — ?level=&cat=&objects= — so a refresh puts
-// you back on the same object rather than on the top of the list. All three
-// parameters are written together on every change, because an object name alone
-// is only unique by accident (two levels could both have a "Fireplace") and a
-// URL that silently drops you on the wrong one is worse than a long one.
-
-const OBJ_PAGE_SIZE = 9;              // nine to a page: the 3x3 grid
-let objLevel = LEVELS[0].id;
-let objCat = null;
-let objPage = 0;
-let objOpen = null;                   // the open object's name, or null
-
-// The catalogue is built lazily and cached, so a category with no id (a bad
-// ?cat=) resolves to an empty list instead of throwing on a user-editable URL.
-function currentCategories() {
-  const cats = categoriesForLevel(objLevel);
-  if (!cats.length) return [];
-  if (!objCat || !cats.some((c) => c.id === objCat)) objCat = cats[0].id;
-  return cats;
-}
-
-function currentCategory() {
-  return currentCategories().find((c) => c.id === objCat) || null;
-}
-
-// Where an object sits in the whole catalogue, counting from 1. This is the
-// number printed on its tile and the range in the pager caption, so it has to be
-// the index within the category, not within the page — otherwise "Objects 10 -
-// 18" would restart at 1 on every page.
-function objectIndex(category, name) {
-  const i = category.objects.findIndex((o) => o.name === name);
-  return i < 0 ? 0 : i + 1;
-}
-
-// ===== The URL =====
-//
-// One place writes it and one place reads it. Anything that changes what the
-// browser is showing goes through pushBrowserUrl, so Back always steps through
-// the history of what you looked at rather than leaving the game.
-
-function pushBrowserUrl() {
-  const p = new URLSearchParams();
-  p.set('level', objLevel);
-  if (objCat) p.set('cat', objCat);
-  if (objOpen) p.set('objects', objOpen);
-  const url = `${location.pathname}?${p.toString()}`;
-  const state = { tab: pickerTab };
-  if (objLevel === lastBrowserLevel && objCat === lastBrowserCat) {
-    // Same level and category, so this entry only records a different object.
-    // Replacing keeps Back walking categories instead of every object glanced
-    // at, which would mean dozens of presses to get out of one category.
-    history.replaceState(state, '', url);
-  } else {
-    history.pushState(state, '', url);
-    lastBrowserLevel = objLevel;
-    lastBrowserCat = objCat;
-  }
-}
-
-// The level+category currently reflected in the address bar. Compared on every
-// write to decide push vs replace; seeded from the URL on load so that opening a
-// second object after a refresh replaces rather than duplicating the entry.
-let lastBrowserLevel = null;
-let lastBrowserCat = null;
-
-function readBrowserUrl() {
-  let p;
-  try { p = new URLSearchParams(location.search); } catch { return false; }
-  const level = p.get('level');
-  const cat = p.get('cat');
-  const objects = p.get('objects');
-  if (!level) return false;
-  if (!LEVELS.some((l) => l.id === level)) return false;
-  objLevel = level;
-  objCat = cat || null;
-  objPage = 0;
-  objOpen = objects || null;
-  // A URL naming a level and an object but no category is still a usable
-  // bookmark, so recover the category from the catalog. But when the URL DOES
-  // name a category we take it at its word and do not go looking:
-  // ?level=beach&cat=reefs&objects=School must show the reef, not the city's
-  // school that happens to share a name. The same rule is why this only fires
-  // when `cat` is missing.
-  if (objOpen && !objCat) {
-    const hit = findObject(objOpen);
-    if (hit && hit.level.id === level) objCat = hit.category.id;
-  }
-  return true;
-}
-
-// ===== Levels =====
-
-const levelListEl = document.getElementById('level-list');
-
-function renderLevelList() {
-  if (!levelListEl) return;
-  levelListEl.textContent = '';
-  for (const lvl of LEVELS) {
-    // The row is a wrapper, not a button: the level's own button travels you
-    // there, and its neighbour opens that level's objects. Nesting one button
-    // inside the other is invalid HTML and the inner one stops working.
-    const row = document.createElement('div');
-    row.className = 'level-row';
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'level-btn' + (worldState === lvl.id ? ' here' : '');
-    const name = document.createElement('div');
-    name.className = 'lv-name';
-    name.textContent = lvl.label;
-    const blurb = document.createElement('div');
-    blurb.className = 'lv-blurb';
-    blurb.textContent = lvl.blurb;
-    b.append(name, blurb);
-    if (worldState === lvl.id) {
-      const here = document.createElement('div');
-      here.className = 'lv-here';
-      here.textContent = 'You are here';
-      b.append(here);
-    }
-    b.addEventListener('click', () => travelToLevel(lvl.id));
-    // "Objects" beside every level: straight into that level's categories,
-    // remembering where you were if you come back to the Levels tab.
-    const ob = document.createElement('button');
-    ob.type = 'button';
-    ob.className = 'lv-objects-btn';
-    ob.textContent = 'Objects';
-    ob.title = `Browse the objects in ${lvl.label}`;
-    ob.addEventListener('click', () => openLevelObjects(lvl.id));
-    row.append(b, ob);
-    levelListEl.append(row);
-  }
-}
-
-// The "Objects" button on a level row: switch to the Objects tab already
-// pointed at that level, on its first category, with nothing open yet. The level
-// itself is NOT travelled to — browsing a catalogue of a place you are not in is
-// exactly what this screen is for, and "view in context" is the button that
-// takes you there.
-function openLevelObjects(levelId) {
-  objLevel = levelId;
-  objCat = null;          // resolved to the level's first category on render
-  objPage = 0;
-  objOpen = null;
-  clearSelectPreview();
-  setPickerTab('objects');   // this renders the browser itself
-  pushBrowserUrl();
-}
-
-// Teleporting to a level is the same set of state resets the portals do, minus
-// the cinematics: you asked to be there, so you are there. Each branch below
-// mirrors one of the enter*World functions and then immediately overrides the
-// spawn, rather than reusing them and fighting the drop they set up.
-function travelToLevel(levelId) {
-  if (levelId === worldState) { exitSelectMode(false); return; }
-  if (levelId === 'city') {
-    enterCityWorld();
-  } else if (levelId === 'ramp') {
-    enterRampWorld();
-  } else if (levelId === 'underground') {
-    enterUndergroundWorld();
-    // The shaft's arrival is a scripted orbit with the car still in the tunnel.
-    // Cut it short: the jump is a jump, not a cutscene.
-    spiralCine.active = false;
-    portalGrace = 0.5;
-  } else if (levelId === 'house') {
-    // Entering the house the normal way plays a held shot and then parks the car
-    // in the garage — which would throw away the position this jump asked for. So
-    // swap directly instead: same scene move, no theatre, and nothing left mid-
-    // fade when control comes back.
-    housePortal.side = null;
-    housePortal.swapping = false;
-    housePortal.watch.active = false;
-    _fadeOverlay.style.transition = 'none';
-    _fadeOverlay.style.opacity = '0';
-    scene.remove(car);
-    houseScene.add(car);
-    worldState = 'house';
-    globalDarkness = true;
-    applyGlobalDarkness();
-    houseCat.reset();
-  } else if (levelId === 'beach') {
-    scene.remove(car);
-    beachScene.add(car);
-    worldState = 'beach';
-    resetKnockables();
-    resetHydrantSprays();
-    resetHouseAsh();
-    resetShellTripPhysics();
-  }
-  car.visible = true;
-  velocity.value = 0;
-  steering.value = 0;
-  jumpState.inAir = false;
-  jumpState.yVelocity = 0;
-  playerKnock = null;
-  exitSelectMode(false);
-  shake.intensity = Math.max(shake.intensity, 0.4);
-}
-
-// ===== Objects =====
-
-const objCatsEl = document.getElementById('obj-cats');
-const objGridEl = document.getElementById('obj-grid');
-const objPagesEl = document.getElementById('obj-pages');
-const objRangeEl = document.getElementById('obj-range');
-const objCatBlurbEl = document.getElementById('obj-cat-blurb');
-const objPrevBtn = document.getElementById('obj-prev');
-const objNextBtn = document.getElementById('obj-next');
-const objDetailEl = document.getElementById('obj-detail');
-const odTitleEl = document.getElementById('od-title');
-const odBlurbEl = document.getElementById('od-blurb');
-const odWhereEl = document.getElementById('od-where');
-const odCloseBtn = document.getElementById('od-close');
-const odGoBtn = document.getElementById('od-go');
-
-function renderObjectBrowser() {
-  const cats = currentCategories();
-  // Category chips.
-  if (objCatsEl) {
-    objCatsEl.textContent = '';
-    for (const c of cats) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'cat-chip' + (c.id === objCat ? ' active' : '');
-      chip.textContent = c.name;
-      chip.addEventListener('click', () => {
-        if (objCat === c.id) return;
-        objCat = c.id;
-        objPage = 0;
-        objOpen = null;
-        clearSelectPreview();
-        renderObjectBrowser();
-        pushBrowserUrl();
-      });
-      objCatsEl.append(chip);
-    }
-  }
-
-  const cat = currentCategory();
-  if (!cat) {
-    if (objGridEl) objGridEl.textContent = '';
-    if (objRangeEl) objRangeEl.textContent = '';
-    // The tiles are gone, so the models behind them have to go too — otherwise
-    // the canvas sits over an empty grid still turning last category's objects.
-    rebuildObjThumbs([]);
-    renderObjectDetail(null);
-    return;
-  }
-  if (objCatBlurbEl) objCatBlurbEl.textContent = cat.blurb || '';
-
-  // Clamp the page: a category can have fewer than nine objects, and the catalog
-  // can shrink between a URL being written and it being read.
-  const pages = Math.max(1, Math.ceil(cat.objects.length / OBJ_PAGE_SIZE));
-  if (objPage >= pages) objPage = pages - 1;
-  if (objPage < 0) objPage = 0;
-
-  const from = objPage * OBJ_PAGE_SIZE;
-  const slice = cat.objects.slice(from, from + OBJ_PAGE_SIZE);
-
-  // The grid.
-  if (objGridEl) {
-    objGridEl.textContent = '';
-    slice.forEach((o, i) => {
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'obj-tile' + (o.name === objOpen ? ' active' : '');
-      // The empty box the spinning miniature is drawn into. Its rect is the
-      // tile's viewport, so it must be a real element with a real size rather
-      // than something the renderer guesses at.
-      const thumb = document.createElement('span');
-      thumb.className = 'ot-thumb';
-      const foot = document.createElement('span');
-      foot.className = 'ot-foot';
-      const num = document.createElement('span');
-      num.className = 'ot-num';
-      num.textContent = String(from + i + 1);
-      const label = document.createElement('span');
-      label.className = 'ot-name';
-      label.textContent = o.name;
-      foot.append(num, label);
-      tile.append(thumb, foot);
-      tile.addEventListener('click', () => openObject(o));
-      objGridEl.append(tile);
-    });
-  }
-
-  // The page numbers: 1 2 3 4 5, so you can see how far through the category you
-  // are and jump straight to a page instead of clicking the arrow nine times.
-  // Only worth drawing when there is more than one; a single page of nine
-  // objects does not need a "1" on it.
-  if (objPagesEl) {
-    objPagesEl.textContent = '';
-    if (pages > 1) {
-      for (let p = 0; p < pages; p++) {
-        const pb = document.createElement('button');
-        pb.type = 'button';
-        pb.className = 'page-btn' + (p === objPage ? ' active' : '');
-        pb.textContent = String(p + 1);
-        pb.title = `Objects ${p * OBJ_PAGE_SIZE + 1} - ${Math.min((p + 1) * OBJ_PAGE_SIZE, cat.objects.length)}`;
-        pb.addEventListener('click', () => { objPage = p; renderObjectBrowser(); });
-        objPagesEl.append(pb);
-      }
-    }
-  }
-
-  // The caption: "Objects 10 - 18". A category that does not fill the page says
-  // where it actually ends rather than counting into the next category.
-  if (objRangeEl) {
-    const last = from + slice.length;
-    objRangeEl.textContent = slice.length
-      ? `Objects ${from + 1} - ${last}`
-      : 'No objects';
-  }
-  if (objPrevBtn) objPrevBtn.disabled = objPage <= 0;
-  if (objNextBtn) objNextBtn.disabled = objPage >= pages - 1;
-
-  // The tiles just changed, so the models behind them have to be rebuilt and the
-  // canvas re-fitted. Done here rather than lazily in the frame loop so the
-  // first painted frame already shows them.
-  rebuildObjThumbs(slice);
-
-  renderObjectDetail(cat.objects.find((o) => o.name === objOpen) || null);
-}
-
-// ===== The grid's spinning miniatures =====
-//
-// Each tile shows its own object turning slowly, the way the player car picker
-// shows one car on the blue glow — just nine of them at once, small.
-//
-// One canvas covers the whole grid and every tile is drawn into its own scissor
-// rect, rather than nine canvases. Nine WebGL contexts would be nine chances to
-// hit the browser's context limit, and nine renderers to resize on every window
-// drag; one context with a scissor per tile costs one clear and nine small draws.
-//
-// The canvas sits ON TOP of the tiles (they are opaque), which is why each tile
-// carries an empty .ot-thumb box: its rect is the viewport. The caption strip
-// below that box stays DOM, so the names are real text — selectable, and not
-// re-rasterised sixty times a second.
-const objThumbCanvas = document.getElementById('obj-thumbs');
-let thumbRenderer = null;      // built on first use: a second GL context is not free
-let thumbScene = null;
-let thumbCamera = null;
-let objThumbs = [];            // [{ el, group, spin }]
-const OBJ_THUMB_H = 2.2;       // how tall a normalised model stands, in thumb units
-const OBJ_THUMB_SPIN = 0.5;    // rad/s — a shade slower than the big stage's 0.55
-
-function buildObjThumbs() {
-  if (thumbScene || !objThumbCanvas) return;
-  thumbScene = new THREE.Scene();
-  // No background clear colour: each render is confined to its own scissor rect,
-  // so the tile's own background shows through around the model.
-  thumbScene.background = null;
-  thumbCamera = new THREE.PerspectiveCamera(34, 1, 0.1, 60);
-  thumbCamera.position.set(0, 0.85, 4.6);
-  thumbCamera.lookAt(0, 0, 0);
-
-  thumbScene.add(new THREE.HemisphereLight(0xffffff, 0x1a2b45, 0.75));
-  const key = new THREE.DirectionalLight(0xffffff, 1.05);
-  key.position.set(2.5, 4, 3);
-  thumbScene.add(key);
-  const rim = new THREE.DirectionalLight(0x5ab8ff, 0.6);
-  rim.position.set(-3, 2, -3);
-  thumbScene.add(rim);
-
-  try {
-    thumbRenderer = new THREE.WebGLRenderer({ canvas: objThumbCanvas, alpha: true, antialias: true });
-  } catch (e) {
-    // No second context available. The browser then just shows the name tiles
-    // with no model in them, which is a poorer grid rather than a broken game.
-    console.warn('objects: no thumbnail renderer, showing names only', e);
-    thumbRenderer = null;
-    return;
-  }
-  thumbRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  thumbRenderer.setClearColor(0x000000, 0);
-}
-
-// (Re)build the models for the page on show. The outgoing groups are dropped but
-// not disposed, matching setSelectPreview: the catalogue builders share nothing
-// with the world, but the same bounded-and-tiny leak is not worth a dispose path
-// that could pull a buffer out from under the game.
-function rebuildObjThumbs(slice) {
-  if (!objGridEl || !objThumbCanvas) return;
-  buildObjThumbs();
-  for (const t of objThumbs) {
-    if (t.group && thumbScene) thumbScene.remove(t.group);
-  }
-  objThumbs = [];
-  if (!thumbRenderer) return;
-  const els = objGridEl.querySelectorAll('.ot-thumb');
-  slice.forEach((o, i) => {
-    const el = els[i];
-    if (!el) return;
-    let group;
-    try {
-      group = normalizedModelGroup(o.build(), OBJ_THUMB_H, 1.35);
-    } catch (e) {
-      return;   // one bad builder must not empty the whole grid
-    }
-    objThumbs.push({ el, group, spin: 0 });
-  });
-}
-
-// Pin the canvas over the grid. The grid's box is what everything else is
-// measured against, so this follows it rather than being given a size of its own.
-function layoutObjThumbs() {
-  if (!objThumbCanvas || !objGridEl || !thumbRenderer) return;
-  const panel = objThumbCanvas.parentElement;
-  if (!panel) return;
-  const g = objGridEl.getBoundingClientRect();
-  const p = panel.getBoundingClientRect();
-  if (g.width < 1 || g.height < 1) return;
-  // An absolutely positioned child is placed against its containing block's
-  // PADDING box, which sits one border-width inside the rect getBoundingClientRect
-  // reports. clientLeft/clientTop are exactly that inset.
-  const ox = p.left + panel.clientLeft;
-  const oy = p.top + panel.clientTop;
-  objThumbCanvas.style.left = `${g.left - ox}px`;
-  objThumbCanvas.style.top = `${g.top - oy}px`;
-  objThumbCanvas.style.width = `${g.width}px`;
-  objThumbCanvas.style.height = `${g.height}px`;
-  thumbRenderer.setSize(g.width, g.height, false);
-}
-
-// Turn the page's models. Called from the showroom frame tick, which only runs
-// while the modal is open and paused.
-function updateObjThumbs(dt) {
-  if (!thumbRenderer || !objThumbs.length || !objGridEl) return;
-  // Every rect is read BEFORE anything is drawn or written, so the browser never
-  // has to re-lay-out mid-loop to answer the next question.
-  const host = objThumbCanvas.getBoundingClientRect();
-  const views = [];
-  for (const t of objThumbs) {
-    const r = t.el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) continue;
-    views.push({
-      t,
-      // three's viewport origin is bottom-left, the DOM's is top-left.
-      x: r.left - host.left,
-      y: host.height - (r.bottom - host.top),
-      w: r.width,
-      h: r.height,
-    });
-  }
-  if (!views.length) return;
-
-  // One clear for the lot, then a scissored render per tile. autoClear stays on:
-  // with the scissor test up, each of those renders only clears its own rect.
-  thumbRenderer.setScissorTest(false);
-  thumbRenderer.clear();
-  thumbRenderer.setScissorTest(true);
-  const aspect = views[0].w / views[0].h;
-  if (Math.abs(thumbCamera.aspect - aspect) > 1e-4) {
-    thumbCamera.aspect = aspect;
-    thumbCamera.updateProjectionMatrix();
-  }
-  for (const v of views) {
-    v.t.spin += dt * OBJ_THUMB_SPIN;
-    v.t.group.rotation.y = v.t.spin;
-    thumbRenderer.setViewport(v.x, v.y, v.w, v.h);
-    thumbRenderer.setScissor(v.x, v.y, v.w, v.h);
-    thumbScene.add(v.t.group);
-    thumbRenderer.render(thumbScene, thumbCamera);
-    thumbScene.remove(v.t.group);
-  }
-  thumbRenderer.setScissorTest(false);
-}
-
-// Normalise a catalogue model into a group that spins about its own middle.
-//
-// Every builder hands back the object at its real-world size, and those sizes run
-// from a fire hydrant to a whole building. So measure this one and scale it to
-// fit a stage of `targetH` units tall instead of trusting a per-object guess.
-// Both axes matter: fitting on height alone would let a wide storefront burst
-// straight out of the 8x8 glow.
-//
-// Two nested groups on purpose. `pivot` shifts the model's own space so its
-// bounding-box middle sits at the origin, which is the axis the stage spins
-// about — spinning about the base instead makes a tall object swing around
-// visibly. `inner` then only carries the scale.
-//
-// Shared by the big showroom stage (one object, big) and the grid thumbnails
-// (nine at once, small), which is why it takes its target height as an argument.
-function normalizedModelGroup(model, targetH, widthRatio = 1.7) {
-  const inner = new THREE.Group();
-  const pivot = new THREE.Group();
-  const box = new THREE.Box3().setFromObject(model);
-  const size = new THREE.Vector3();
-  box.getSize(size);
-  const cx = box.min.x + size.x / 2;
-  const cy = box.min.y + size.y / 2;
-  const cz = box.min.z + size.z / 2;
-  const fitH = targetH / Math.max(size.y, 1e-3);
-  const fitW = (targetH * widthRatio) / Math.max(size.x, size.z, 1e-3);
-  inner.scale.setScalar(Math.min(fitH, fitW));
-  pivot.position.set(-cx, -cy, -cz);
-  while (model.children.length > 0) pivot.add(model.children[0]);
-  inner.add(pivot);
-  return inner;
-}
-
-// Put an object's model on the spinning stage and fill in the detail card.
-function openObject(o) {
-  objOpen = o.name;
-  const inner = normalizedModelGroup(o.build(), PREVIEW_TARGET_H);
-  // Lift so the box's middle lands on the showroom camera's focus height rather
-  // than the base, so short and tall objects both sit centred in frame.
-  inner.position.y = SELECT_PREVIEW_FOCUS_Y;
-  setSelectPreview(inner);
-
-  renderObjectBrowser();
-  pushBrowserUrl();
-}
-
-function renderObjectDetail(o) {
-  if (!objDetailEl) return;
-  if (!o) {
-    objDetailEl.classList.remove('open');
-    clearSelectPreview();
-    return;
-  }
-  objDetailEl.classList.add('open');
-  const cat = currentCategory();
-  if (odTitleEl) odTitleEl.textContent = o.name;
-  if (odBlurbEl) odBlurbEl.textContent = (cat && cat.blurb) ? cat.blurb : '';
-  // World coordinates, deliberately not minimap ones: the "view in context" jump
-  // uses these numbers verbatim, and a minimap number pasted in here would drop
-  // the car on the wrong side of the map.
-  if (odWhereEl) {
-    const lvl = LEVELS.find((l) => l.id === objLevel);
-    odWhereEl.textContent = `${lvl ? lvl.label : objLevel} · x ${Math.round(o.x)} · z ${Math.round(o.z)}`;
-  }
-}
-
-function closeObject() {
-  objOpen = null;
-  clearSelectPreview();
-  renderObjectBrowser();
-  pushBrowserUrl();
-}
-
-// "View in context": go to the object's level and park in front of it.
-function viewObjectInContext() {
-  const cat = currentCategory();
-  if (!cat) return;
-  const o = cat.objects.find((x) => x.name === objOpen);
-  if (!o) return;
-  // Land a little back from it rather than inside it, facing it.
-  const back = 9;
-  const targetX = o.x;
-  const targetZ = o.z;
-  travelToLevel(objLevel);
-  car.position.set(targetX, groundHeightForWorld(objLevel, targetX, targetZ), targetZ - back);
-  car.rotation.set(0, 0, 0);   // face +Z, straight at the thing
-  velocity.value = 0;
-}
-
-// The floor height at (x,z) in whichever world we are in. Each level has its own
-// idea of where the ground is, and asking the wrong one drops the car through the
-// floor — so this is the only place that knows the mapping.
-function groundHeightForWorld(levelId, x, z) {
-  if (levelId === 'beach') return groundHeight + beachGroundOffsetAt(x, z);
-  if (levelId === 'ramp') return groundHeight + terrainHeightAt(x, z);
-  if (levelId === 'underground') return UNDERGROUND_Y + groundHeight;
-  return groundHeight;
-}
-
-// ===== The browser's own wiring =====
-
-if (tabLevelsBtn) tabLevelsBtn.addEventListener('click', () => setPickerTab('levels'));
-if (tabObjectsBtn) tabObjectsBtn.addEventListener('click', () => setPickerTab('objects'));
-if (objPrevBtn) objPrevBtn.addEventListener('click', () => { objPage--; renderObjectBrowser(); });
-if (objNextBtn) objNextBtn.addEventListener('click', () => { objPage++; renderObjectBrowser(); });
-if (odCloseBtn) odCloseBtn.addEventListener('click', closeObject);
-if (odGoBtn) odGoBtn.addEventListener('click', viewObjectInContext);
-
-// Back and forward move through the object history, because every screen change
-// pushed an entry.
-window.addEventListener('popstate', () => {
-  readBrowserUrl();
-  if (selectMode && (pickerTab === 'objects')) renderObjectBrowser();
 });
 
 // Scroll-wheel camera zoom: wheel up zooms in, wheel down zooms out. Works
@@ -7204,9 +6226,7 @@ function updateCamera(delta) {
   // surface line (which left the car shrinking out of the bottom of frame).
   cameraTarget.y = minePortal.active
     ? car.position.y
-    : ((worldState === 'underground' || worldState === 'beach') && car.position.y < 0.8
-      ? car.position.y
-      : Math.max(0.8, car.position.y));
+    : (worldState === 'underground' && car.position.y < 0.8 ? car.position.y : Math.max(0.8, car.position.y));
   // Playing as the giant robot: aim up at the mech's chest (its head is ~14
   // tall) so the whole body fills the frame instead of the camera staring at
   // its feet.
@@ -7583,14 +6603,6 @@ function updateCamera(delta) {
   camera.lookAt(_lookTarget);
 }
 
-// A gull on the beach lifts the car out of the world entirely, so the player is
-// inert while she has it - not because anything is cancelling the keys, but
-// because the car is not being simulated at all. Poll the world's published
-// pose; non-null means she has it.
-function gullHasTheCar() {
-  return worldState === 'beach' && beachWorld && beachWorld.carCarry;
-}
-
 function animate() {
   requestAnimationFrame(animate);
 
@@ -7610,7 +6622,7 @@ function animate() {
       renderer.render(selectScene, selectCamera);
     } else {
       updateCamera(1 / 60);
-      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
+      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : scene, camera);
     }
     return;
   }
@@ -7628,7 +6640,7 @@ function animate() {
   // shot of the car rolling in on its own, so the player must not steer or
   // throttle it. Without this the arrows would fight the cut, and a held
   // accelerator would carry the car past the door before the fade lands.
-  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active && !gullHasTheCar()) {
+  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active) {
 
   let forward = 0;
   let reverse = 0;
@@ -8286,32 +7298,7 @@ function animate() {
     updatePlayerRobotWalk(delta, velocity.value);
   } else if (playerTarantula) {
     updatePlayerTarantulaWalk(delta, velocity.value);
-  } else if (playerCrab) {
-    // A crab has no wheels either — its eight legs scissor and its claws pinch.
-    updatePlayerCrabScuttle(delta, velocity.value);
   }
-  // The fire engine's lightbar, when you are the one driving it. The AI engine
-  // flashes its own beacons inside firetruck.js; this is the same pattern driven
-  // from here, and it only runs while the truck is actually rolling — an engine
-  // parked in the street with its bar going reads as a call it is not answering.
-  if (playerFiretruck) {
-    const wl = car.userData.firetruckLights;
-    if (wl) {
-      playerFiretruckFlash += delta;
-      const moving = Math.abs(velocity.value) > 0.4;
-      const blink = Math.floor(playerFiretruckFlash / 0.35) % 2 === 0;
-      const ON = moving ? 2.4 : 0.05;
-      const setAll = (lights, on) => {
-        if (!Array.isArray(lights)) return;   // tolerate stale/mismatched builds
-        for (const l of lights) l.material.emissiveIntensity = on ? ON : 0.05;
-      };
-      setAll(wl.redLeft, blink);
-      setAll(wl.redRight, !blink);
-      setAll(wl.yellow, !blink);
-      setAll(wl.white, Math.floor(playerFiretruckFlash / 0.175) % 2 === 0);
-    }
-  }
-
   // Hot-rod engine FX: the raccoon's rod rumbles and the twin tailpipes
   // breathe fire — louder and longer the faster you go, with random pops.
   if (car.userData.effects) {
@@ -8543,7 +7530,6 @@ function animate() {
   else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'house') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
-  else if (worldState === 'beach') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
 
   }  // end !robot.playerCaptured
 
@@ -9221,47 +8207,6 @@ function animate() {
     if (undergroundWorld.steamPress && undergroundWorld.steamPress.slamActive) {
       flattenCarFromRock();
     }
-
-    // ===== Held: a street ghost has the car =====
-    // Same ordering trick as the seagull. The ghost's own update above has just
-    // decided the car is touched; here, at the end of the frame, we take the
-    // wheel and fly the car along the ride arc. When the timer runs out we stop
-    // applying the pose and simply leave the car where we put it, already on its
-    // wheels at the foot of the waterfall - no landing physics needed, because
-    // the drop point is on the flat cavern floor beside the ramp.
-    if (ghostRideActive) {
-      ghostRideT += delta;
-      const t = Math.min(1, ghostRideT / GHOST_RIDE_TIME);
-      // Ease in and out so it lifts off and sets down rather than snapping.
-      const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) * (-2 * t + 2)) / 2;
-      const from = GHOST_RIDE_FROM;
-      const dx = GHOST_RIDE_DROP.x - from.x;
-      const dz = GHOST_RIDE_DROP.z - from.z;
-      // A high arc, so the ride reads as being carried rather than teleported.
-      const arc = Math.sin(e * Math.PI) * 26;
-      car.position.set(
-        from.x + dx * e,
-        from.y + (0 - from.y) * e + arc,
-        from.z + dz * e
-      );
-      // Face the direction of travel the whole way, landing on the drop heading.
-      const travel = Math.atan2(dx, dz);
-      car.rotation.set(0, t < 0.85 ? travel : GHOST_RIDE_DROP.heading, 0);
-      velocity.value = 0;
-      steering.value = 0;
-      jumpState.inAir = false;
-      jumpState.yVelocity = 0;
-      playerKnock = null;
-      if (t >= 1) {
-        ghostRideActive = false;
-        // Settle exactly onto the floor: the arc's y is an approximation and the
-        // drop point is flat ground, so land on 0 rather than wherever the sine
-        // left us.
-        car.position.set(GHOST_RIDE_DROP.x, 0, GHOST_RIDE_DROP.z);
-        car.rotation.set(0, GHOST_RIDE_DROP.heading, 0);
-        shake.intensity = Math.max(shake.intensity, 0.3);
-      }
-    }
     // Record the player's path so the little car can follow it up the ramps
     // and onto the ceiling, then advance the little car follower: waits ~30s,
     // rides the spiral tunnel out, then follows the player around the cavern.
@@ -9358,106 +8303,6 @@ function animate() {
   // garage's roller door comes back. Both directions are a fade-swap managed
   // here, examined once per frame like every other portal in the file.
   updateHousePortal(delta);
-
-  // ===== Giant scallop portal (city ↔ beach) =====
-  // The shell's own update() always runs while you are in the city, so the
-  // pearls keep drifting and the valves keep time even when nothing is
-  // happening. Everything else is gated on which half of the trip we are on.
-  if (worldState === 'city') {
-    const shutNow = clamShell.update(delta);
-    if (portalGrace <= 0 && !shellPortal.armed && !clamShell.closing && !jumpState.inAir &&
-        clamInsideShell(car.position.x, car.position.z)) {
-      shellPortal.armed = true;
-      clamShell.close();
-    }
-    if (shutNow && shellPortal.armed && shellPortal.fadeTimer < 0) {
-      // The valves have met: cut to black, swap under the cover of it, and
-      // clear the screen again with the beach (and an already-open shell) on it.
-      shellPortal.fadeTimer = 0;
-      _fadeOverlay.style.transition = 'opacity 0.42s';
-      _fadeOverlay.style.opacity = '1';
-    }
-    if (shellPortal.armed) {
-      // The valves are closing on top of you, so hold the car still - otherwise
-      // it rolls back out of the bowl through the closing gap.
-      velocity.value *= Math.max(0, 1 - 9 * delta);
-      steering.value = 0;
-      if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
-    }
-  }
-  if (shellPortal.fadeTimer >= 0) {
-    shellPortal.fadeTimer += delta;
-    if (shellPortal.fadeTimer > 0.42 && worldState === 'city') {
-      enterBeachWorld();
-      _fadeOverlay.style.transition = 'opacity 1.1s';
-      _fadeOverlay.style.opacity = '0';
-      shellPortal.fadeTimer = -1;
-    }
-  }
-
-  // ===== The way home: drive into the giant scallop =====
-  if (worldState === 'beach') {
-    // The world's update drives the shell as well as the sea and the wildlife,
-    // and hands back whether the valves have just met.
-    const shutNow = beachWorld.update(delta, car.position, playerCarRadius,
-      beachShellPortal.armed || beachShell.closing || beachShellPortal.fadeTimer >= 0);
-
-    // ===== The campfire =====
-    // Same ash rule as the house hearth, against the ring's own box. Living on
-    // the sand next to the fire is not a safe place to park.
-    updateBeachFire(delta);
-
-    // ===== Held: a gull has the car in her talons =====
-    // The world publishes a pose and we apply it here, at the very end of the
-    // frame. That ordering is deliberate and is the reason this works: physics
-    // has already run and had its say, then we overwrite the transform and zero
-    // the velocity, so nothing the simulation did survives.
-    //
-    // It also means the DROP needs no special handling at all. The frame she
-    // opens her claws, carCarry goes null, we stop applying the pose, and the
-    // car is simply left falling under the gravity the main loop has been
-    // applying all along - from the exact spot she let go of it.
-    const carried = beachWorld.carCarry;
-    if (carried) {
-      car.position.set(carried.x, carried.y, carried.z);
-      car.rotation.set(carried.pitch, carried.yaw, carried.roll, 'YXZ');
-      velocity.value = 0;
-      steering.value = 0;
-      jumpState.inAir = false;
-      jumpState.yVelocity = 0;
-      // The chase camera is NOT nudged here. updateCamera() has already run this
-      // frame, back at the top of the loop, and calling it a second time would
-      // advance it at double rate for exactly as long as the theft lasts. It
-      // follows the car every frame regardless, so it comes along for the ride
-      // with a frame of lag, which at these speeds is invisible.
-    }
-    if (portalGrace <= 0 && !beachShellPortal.armed && !beachShell.closing && !jumpState.inAir &&
-        BEACH_SHELL.inside(car.position.x, car.position.z)) {
-      beachShellPortal.armed = true;
-      beachShell.close();
-    }
-    if (shutNow && beachShellPortal.armed && beachShellPortal.fadeTimer < 0) {
-      beachShellPortal.fadeTimer = 0;
-      _fadeOverlay.style.transition = 'opacity 0.42s';
-      _fadeOverlay.style.opacity = '1';
-    }
-    if (beachShellPortal.armed) {
-      // The valves are closing on top of you, so hold the car still - otherwise
-      // it rolls back out of the dish through the closing gap.
-      velocity.value *= Math.max(0, 1 - 9 * delta);
-      steering.value = 0;
-      if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
-    }
-    if (beachShellPortal.fadeTimer >= 0) {
-      beachShellPortal.fadeTimer += delta;
-      if (beachShellPortal.fadeTimer > 0.42 && worldState === 'beach') {
-        returnToPark();
-        _fadeOverlay.style.transition = 'opacity 0.9s';
-        _fadeOverlay.style.opacity = '0';
-        beachShellPortal.fadeTimer = -1;
-      }
-    }
-  }
 
   // ===== Hilltop portal trigger =====
   if (portalGrace <= 0 && worldState === 'city') {
@@ -9631,7 +8476,7 @@ function animate() {
 
   drawMinimap();
 
-  renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
+  renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : scene, camera);
 }
 
 animate();
@@ -9687,36 +8532,6 @@ try {
     }, 100);
   }
 } catch (e) {}
-
-// ===== Coming back to an object =====
-//
-// A refresh on ?level=...&cat=...&objects=... reopens the gear modal on the
-// Objects tab with that object on the stage. It deliberately does NOT move the
-// car: this URL describes what you were LOOKING at, not where you were driving,
-// and silently teleporting the player on every reload would be hostile.
-//
-// The debug jump above keys off ?x and ?z as well. Those two never appear
-// together with an object URL in normal use, but if a hand-edited link has both,
-// the debug jump is the more specific request and wins outright — teleporting and
-// opening a browser at once would be nonsense.
-{
-  const hasJump = new URLSearchParams(location.search).has('x')
-    && new URLSearchParams(location.search).has('z');
-  if (!hasJump && readBrowserUrl()) {
-    pickerTab = 'objects';
-    enterSelectMode();
-    const backCat = currentCategory();
-    const wanted = backCat && backCat.objects.find((o) => o.name === objOpen);
-    if (wanted) {
-      openObject(wanted);
-    } else {
-      // The name in the URL is not in this category (a hand-edited URL, or a
-      // catalog that changed). Show the category rather than an empty stage.
-      objOpen = null;
-      renderObjectBrowser();
-    }
-  }
-}
 
 // ===== Dev hook (?debug in the URL) =====
 // Exposes a minimal read/teleport API on window for automated testing.
@@ -9842,23 +8657,6 @@ if (location.search.includes('debug')) {
       _fadeOverlay.style.transition = 'none';
       _fadeOverlay.style.opacity = '0';
       housePortal.swapping = false;
-    },
-    // Force-enter the beach (?debug only): stages the car on the sand without
-    // having to sit through the shell's closing animation. Puts you where
-    // driving into the shell would have left you.
-    toBeach() {
-      if (worldState === 'beach') return;
-      enterBeachWorld();
-      _fadeOverlay.style.transition = 'none';
-      _fadeOverlay.style.opacity = '0';
-    },
-    // Jump straight into the shell bowl, aimed at the closing valves.
-    toShell() {
-      if (worldState !== 'city') return;
-      clamShell.reopen();
-      car.position.set(clamShell.x, clamBowlHeightAt(clamShell.x, clamShell.z), clamShell.z);
-      car.rotation.set(0, -Math.PI / 2, 0);
-      velocity.value = 0;
     },
     // Which room of the house the car is in, and how close it is to the cat.
     house: () => {

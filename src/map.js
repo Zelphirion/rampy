@@ -1,6 +1,15 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addCityBuildings, cityDoorTargets } from './cityBuildings.js';
+// The `?v=` stamp here MUST match the one on main.js's import of this module, and
+// the reason it has to exist at all is that it is easy to stamp one site and not
+// the other. Two different query strings are two different cache keys, so the
+// browser then holds two copies of cityBuildings.js and `addCityBuildings()` —
+// which is called from HERE, and is what fills in the house garage trigger —
+// runs whichever copy this unstamped URL happens to have cached. That is how the
+// brown bay kept refusing to send you into the house: the trigger was still the
+// grey garage's, from before the roles were swapped, and that door is now shut.
+import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1790915140701';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
+import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
 
 // ===== Shared map materials =====
 // The tarmac material now lives in cityRoads.js with the rest of the network.
@@ -23,16 +32,49 @@ export function portalHillHeightAt(x, z) {
 }
 
 // ===== Ground =====
+// The north slab, punched for the giant scallop in the park. Same slab the
+// mine-shaft version built, but extruded from a shape so it can carry the
+// shell's fan-shaped hole. The hole is cut to T_SLAB_HOLE, tighter than the
+// lawn's T_GRASS_HOLE, which is what leaves the turf an unbroken lip over the
+// shell's edge instead of a trench around it.
+function makeNorthSlab(scene, w, d, x, z) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-w / 2, -d / 2);
+  shape.lineTo(w / 2, -d / 2);
+  shape.lineTo(w / 2, d / 2);
+  shape.lineTo(-w / 2, d / 2);
+  shape.closePath();
+  const hole = new THREE.Path();
+  clamFanOutline(T_SLAB_HOLE, x, z).forEach(([px, py], i) => (i ? hole.lineTo(px, py) : hole.moveTo(px, py)));
+  hole.closePath();
+  shape.holes.push(hole);
+  const slab = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(shape, { depth: 0.25, bevelEnabled: false }),
+    grassMaterial
+  );
+  slab.rotation.x = -Math.PI / 2;
+  slab.position.set(x, -0.25, z);
+  slab.receiveShadow = true;
+  scene.add(slab);
+}
+
 function addGround(scene) {
   // Asymmetric ground: the grass only extends far to the NORTH (the mega-ramp
   // approach field, z up to ~126). The east/west/south edges end at ±90 like
   // the original map. The box overhangs each wrap seam slightly (to ~±95) so
   // no grass edge is ever visible through the seams.
   //
-  // The ground is split into four slabs with a rectangular HOLE over the
-  // abandoned mine shaft (x -60..-50, z 34..54). The descending-adit
-  // excavation lives in that hole, so the car visibly drives DOWN into the
-  // shaft instead of sinking below a flat meadow plane.
+  // The ground is split into slabs with a rectangular HOLE over the abandoned
+  // mine shaft (x -60..-50, z 34..54). The descending-adit excavation lives in
+  // that hole, so the car visibly drives DOWN into the shaft instead of sinking
+  // below a flat meadow plane.
+  //
+  // The north slab gets a second, fan-shaped hole: the giant scallop in the
+  // park sinks its lower valve below this slab's top face, and the lawn's hole
+  // (cut in props.js) is no use on its own - without cutting the slab too, its
+  // top surface would show through as a floor and flatten the shell's dish.
+  // The slab hole is cut slightly tighter than the lawn hole so the turf keeps
+  // an unbroken lip over the shell's edge.
   const groundY = -0.125;
   const groundH = 0.25;
   const makeSlab = (w, d, x, z) => {
@@ -43,8 +85,8 @@ function addGround(scene) {
   };
   // South slab: z -95..32 (full width) — hole starts closer to the rocks.
   makeSlab(190, 127, 0, -31.5);
-  // North slab: z 44..126 (full width).
-  makeSlab(190, 82, 0, 85);
+  // North slab: z 44..126 (full width), punched for the scallop.
+  makeNorthSlab(scene, 190, 82, 0, 85);
   // West slab: x -95..-61, z 32..44 — wider hole.
   makeSlab(34, 12, -78, 38);
   // East slab: x -49..95, z 32..44 — wider hole.

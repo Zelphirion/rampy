@@ -109,11 +109,18 @@ export function makeTarantula() {
 // ===== The ramp-world guardian =====
 // A huge tarantula sleeps inside the giant velodrome bowl on the hills. It
 // stays perfectly still with dimmed eyes until the player bumps into it —
-// then its eyes BLAZE red, it scrambles after the same patrol trail the wild
-// monster truck uses, wanders for 30 seconds, and settles back down wherever
-// it is, dozing until you poke it again. It never knocks props over.
+// then its eyes BLAZE red and it FREEZES for a beat (STIR_TIME) before it
+// starts scrambling after the same patrol trail the wild monster truck uses.
+// It wanders for 30 seconds, then settles back down wherever it is, dozing
+// until you poke it again. It never knocks props over.
+//
+// Three modes: sleep → stir → awake. The 'stir' beat matters: without it the
+// eyes and the first strides land on the same frame and the whole wake-up
+// reads as a single jump-cut. Holding the body perfectly still while the eyes
+// flare sells the "it has noticed you, and it is deciding" moment.
 const NPC_SCALE = 3;
 const WAKE_TIME = 30;          // seconds of roaming before it sleeps again
+const STIR_TIME = 0.3;         // 300ms of lit-eyes-and-no-motion before it moves
 const NPC_SPEED = 9;           // full-throttle scurry
 const EYE_SLEEP = 0.06;
 const EYE_WAKE = 2.6;
@@ -128,8 +135,8 @@ export function addRampTarantula(rampScene, surface, spawn, waypoints) {
     mesh,
     surface,
     waypoints,
-    mode: 'sleep',            // 'sleep' → dormant in the bowl | 'awake' → roaming
-    timer: 0,                 // seconds left awake
+    mode: 'sleep',            // 'sleep' → dormant | 'stir' → awake but frozen | 'awake' → roaming
+    timer: 0,                 // seconds left in the stir beat, or awake
     patrol: 0,                // waypoint index
     heading: Math.random() * Math.PI * 2,
     phase: 0,
@@ -139,9 +146,12 @@ export function addRampTarantula(rampScene, surface, spawn, waypoints) {
 }
 
 export function wakeTarantula(c) {
-  if (c.mode !== 'awake') {
-    c.mode = 'awake';
-    c.timer = WAKE_TIME;
+  // Bumping a dozing spider only ever starts the stir beat — a spider already
+  // stirring keeps its existing countdown rather than having the 300ms reset.
+  if (c.mode === 'sleep') {
+    c.mode = 'stir';
+    c.timer = STIR_TIME;
+    c.mesh.userData.eyeMat.emissiveIntensity = EYE_WAKE;   // eyes blaze on the hit
   }
 }
 
@@ -160,9 +170,10 @@ function strideTarantulaLegs(c, delta) {
   }
 }
 
-// Drive the wanderer. Sleep: keep still, eyes dim. Awake: patrol the monster
-// truck's waypoint loop, ride the terrain, face its heading, and ease the eye
-// glow up; after WAKE_TIME it sleeps again wherever it stopped.
+// Drive the wanderer. Sleep: keep still, eyes dim. Stir: eyes fully lit, body
+// locked in place for STIR_TIME. Awake: patrol the monster truck's waypoint
+// loop, ride the terrain, face its heading, and ease the eye glow up; after
+// WAKE_TIME it sleeps again wherever it stopped.
 export function updateTarantulaNpc(c, delta) {
   const mesh = c.mesh;
   const eyes = mesh.userData.eyes;
@@ -173,6 +184,20 @@ export function updateTarantulaNpc(c, delta) {
     c.phase += delta * 0.5;
     for (const eye of eyes) eye.scale.setScalar(1);
     strideTarantulaLegs(c, delta);
+    return;
+  }
+
+  // Stir: the eyes snapped to full on the bump (see wakeTarantula) and the body
+  // holds dead still while they burn. No patrol, no legs, no travel — just the
+  // 300ms beat before it comes at you. Falling off the end of the beat hands over
+  // to the awake timer, so the roam is always the full WAKE_TIME.
+  if (c.mode === 'stir') {
+    c.timer -= delta;
+    for (const eye of eyes) eye.scale.setScalar(1.08);
+    if (c.timer <= 0) {
+      c.mode = 'awake';
+      c.timer = WAKE_TIME;
+    }
     return;
   }
 

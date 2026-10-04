@@ -1,6 +1,3 @@
--get proper cordinates from the minimap on where you should the start and finish lines
--Add the disco ball and spinner and conveery belt back
-
 
 
 
@@ -24,17 +21,17 @@ fix the logo, it has a faint white outline when it is against black, and ther ar
 
 
 
+   
+
+beach world with crabs.  enter through a giant shell.  can go underwater, bubbles and many fish
 
 
-Design a massive subterranean level for an open-world, physics-driven vehicle playground with no goals, scores, or time limits—just pure sandbox driving, jumping, and getting knocked around.
 
-The environment is set directly beneath a surreal, non-Euclidean surface world consisting of The Cosmic Desert, The Golden Factory, The Glass City, and The Base of the Holy Mountain. The entire cavern floor acts as a chaotic, oversized mechanical obstacle course designed specifically for cars, fully illuminated by vibrant, glowing props that fill the vast underground space.
+in the interior house world inside of the house, I want you to make the house a lot bigger. it should be a huge square covering most of the map. you don't need to make the furniture inside of the house bigger. just make all the rooms bigger. some of those rooms are pretty narrow. also the cat is too fat. make the cat more thin and more felines 
 
-Core Subterranean Features & Kinetic Obstacles:
+The entrance to the inside of the house is in the wrong garage. put it in the other garage and put a nice door with three slats on it like you had before on the garage where the entrance is now. be sure there's a beckoning light inside the garage that's open. be sure there's nothing inside the closed garage. if you put any tools in there, move them to the open garage under the brown roof 
 
-    Glowing Overhead & Track Hazards: The cavern ceiling and open zones feature suspended, glowing neon prompt-blocks that release giant foam collectibles when bumped by a leaping vehicle, along with oversized, glowing conduit pipes motorized to slide rapidly back and forth across track lanes.
+inside the house, remove the exit to the house near the front and close up that wall. just keep the windows and have a front door but it's closed and locked. you can't get out of it. when you make the house bigger. add a whole garage. it's very dark in the garage. you can enter it through a door from the kitchen. you can just see the beckoning light. once you enter the garage, the camera stays back and you emerge out of the garage from the open garage in the house of the brown roof in the city 
 
- 
-
-    Industrial Car Elevators & Sweeper Arms: Simple, continuous vertical platform lifts move up and down over deep foam pits, allowing drivers to ride their cars to elevated tiers and drive along upper ledges. High-altitude balance beams feature spinning, glowing mechanical sweeper arms at bumper height, forcing cars to time their runs or get knocked into the abyss.
+when you make the house bigger, make it a giant square, not a rectangle like it is now. don't worry about matching the shape of the house in the city. this is a silly video game. when you make the house into a giant square that covers most of the map edit the minimap so all the walls outside of the house and the interior walls show up on the map. also add things like the couch, refrigerator, beds and other large objects to the map 
 

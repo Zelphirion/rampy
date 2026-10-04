@@ -1,5 +1,9 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { addKnockable, setKnockableWorldGroup } from './physics.js';
+import {
+  SHELL_X, SHELL_Z, SHELL_GRASS, SHELL_RIBS, SHELL_SPAN, SHELL_SQUASH,
+  SHELL_RIBIAMP, SHELL_THICK, T_GRASS_HOLE, clamFanOutline, PARK_CLAM,
+} from './clam.js';
 
 const grassMaterial = new THREE.MeshStandardMaterial({ color: 0x3a7a3f, roughness: 1 });
 
@@ -97,6 +101,7 @@ function makeStopSign(scene, x, z, rotY) {
 
 // ===== Lamp posts =====
 const lampBulbMat = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 1.4 });
+const lampBulbMatDark = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 0 });
 
 function makeLampPost(scene, x, z) {
   const group = new THREE.Group();
@@ -958,8 +963,35 @@ function makeBench(scene, x, z, rotY) {
 // fronts west onto the grass, so the east fence is left off so the two read as
 // one place.
 function addPark(scene) {
-  const park = new THREE.Mesh(new THREE.BoxGeometry(16, 0.16, 20), grassMaterial);
-  park.position.set(22, 0.08, 54);
+  // The lawn is an extruded slab with the scallop's own silhouette punched out
+  // of it, so the shell's wavy margin finishes its run inside the turf instead
+  // of sitting on top of it. The hole is cut to the FAN, not to a circle: the
+  // valve only spans ~200 degrees, so a round hole would open onto bare earth
+  // behind the hinge.
+  // Park lawn: x 14..30, z 44..64, expressed in the shape's frame for a mesh
+  // sitting at (SHELL_X, 0, SHELL_Z) rotated -90 deg about X - so sy runs from
+  // (SHELL_Z - 64) to (SHELL_Z - 44).
+  const lawnShape = new THREE.Shape();
+  lawnShape.moveTo(14 - SHELL_X, SHELL_Z - 64);
+  lawnShape.lineTo(30 - SHELL_X, SHELL_Z - 64);
+  lawnShape.lineTo(30 - SHELL_X, SHELL_Z - 44);
+  lawnShape.lineTo(14 - SHELL_X, SHELL_Z - 44);
+  lawnShape.closePath();
+  const pit = new THREE.Path();
+  const pitPts = clamFanOutline(T_GRASS_HOLE, SHELL_X, SHELL_Z);
+  pitPts.forEach(([px, py], i) => (i ? pit.lineTo(px, py) : pit.moveTo(px, py)));
+  pit.closePath();
+  lawnShape.holes.push(pit);
+
+  const park = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(lawnShape, { depth: SHELL_GRASS, bevelEnabled: false }),
+    grassMaterial
+  );
+  // Rotating -90 deg about X stands the shape up and turns its extrusion into
+  // world +Y, so the slab ends up spanning y 0..SHELL_GRASS with the hole's
+  // inner wall showing as a cut face.
+  park.rotation.x = -Math.PI / 2;
+  park.position.set(SHELL_X, 0, SHELL_Z);
   park.receiveShadow = true;
   scene.add(park);
 
@@ -979,6 +1011,300 @@ function addPark(scene) {
   makeBench(scene, 28, 48, 0);
   makeBench(scene, 22, 62.5, 0);
   makeBench(scene, 22, 45.5, Math.PI);
+  // The bench at (22,62.5) sits a stride clear of the shell's pit lip.
+  return makeClamShell(scene, PARK_CLAM);
+}
+
+// Add a giant open scallop (pecten) shell near pond - like Botticelli's Birth of Venus
+//
+// A scallop is a ribbed fan hinged at its umbo - the pointed "nose" at the base
+// of the fan - and the two valves swing apart about that hinge. Each valve is a
+// patch of a surface of revolution (the polar sweep runs umbo -> margin) cut to
+// a ~200 degree fan, then corrugated by SHELL_RIBS flutes that radiate out of
+// the hinge and deepen toward the wavy edge, so the ribs are strongest exactly
+// where a pecten's are and vanish at the solid hinge. Both valves get real
+// thickness and a capped rim: a single sheet reads as a shell but goes
+// invisible edge-on, which is what made the old lip vanish from low angles.
+//
+// The valve is now squashed in Y (cfg.flat) and the lower one is squashed hard,
+// so instead of two hemispheres hinged on the lawn it is a shallow dish sunk
+// into the park with a tall fan leaning back behind it. Every dimension and the
+// ground's idea of where the floor is come out of clam.js, because the turf has
+// to be cut along this exact silhouette.
+
+// Mid-surface of one valve. t: 0 at the umbo -> 1 at the margin.
+// a: angle across the fan, -SHELL_SPAN..+SHELL_SPAN.
+// cup: +1 = a bowl whose cavity faces +Y, -1 = a dome (the upper valve).
+// flat: Y squash. The two valves carry different values, so the shell can be a
+// shallow dish at the bottom and a full sweep on top.
+function shellPoint(t, a, cfg, out) {
+  const phi = t * Math.PI * 0.5;
+  const flute = 0.5 * (1 + Math.cos((a * SHELL_RIBS * Math.PI) / SHELL_SPAN));
+  const sp = Math.sin(phi) * (1 + cfg.ribAmp * flute);
+  out[0] = cfg.size * sp * Math.sin(a);
+  out[1] = cfg.size * cfg.cup * (1 - Math.cos(phi)) * cfg.flat;
+  out[2] = cfg.size * sp * Math.cos(a) * SHELL_SQUASH;
+  return out;
+}
+
+function shellNormal(t, a, cfg, out) {
+  const e = 0.004;
+  const p0 = shellPoint(Math.max(0, t - e), a, cfg, [0, 0, 0]);
+  const p1 = shellPoint(Math.min(1, t + e), a, cfg, [0, 0, 0]);
+  // At the umbo every angle collapses onto one point, so the da tangent is
+  // zero there and the cross product would come back as a null vector. Sample
+  // it just inside the pole instead; the limit is the same normal everywhere.
+  const tc = t < 0.05 ? 0.05 : t;
+  const a0 = shellPoint(tc, Math.max(-SHELL_SPAN, a - e), cfg, [0, 0, 0]);
+  const a1 = shellPoint(tc, Math.min(SHELL_SPAN, a + e), cfg, [0, 0, 0]);
+  const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
+  const vx = a1[0] - a0[0], vy = a1[1] - a0[1], vz = a1[2] - a0[2];
+  const nx = vy * uz - vz * uy;
+  const ny = vz * ux - vx * uz;
+  const nz = vx * uy - vy * ux;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  out[0] = nx / len;
+  out[1] = ny / len;
+  out[2] = nz / len;
+  return out;
+}
+
+function shellValveGeometry(cfg) {
+  const segT = 20;
+  const segA = 120;
+  const rowLen = segA + 1;
+  const perLayer = (segT + 1) * rowLen;
+  const half = cfg.thickness * 0.5;
+  const pos = [];
+  const nrm = [];
+  const col = [];
+  const idx = [];
+  const p = [0, 0, 0];
+  const n = [0, 0, 0];
+  const inside = new THREE.Color(0xfff4e6);   // pearly interior
+  const outside = new THREE.Color(0xe4c193);  // tan exterior
+  const edge = new THREE.Color(0xf3e0b6);     // the cut rim
+  // The hinge is solid, so the two faces meet at the umbo instead of leaving a
+  // slot there for the ground to show through.
+  const offsetAt = (t) => half * Math.min(1, t / 0.14);
+  // Which layer faces the cavity flips with the sign of `cup` (a bowl and a
+  // dome curve opposite ways about the same pole), so don't hard-code a layer
+  // index: the cavity side is the one the surface turns away from, which is +n
+  // for a dome and -n for a bowl.
+  const innerLayer = cfg.cup > 0 ? 1 : 0;
+
+  for (let layer = 0; layer < 2; layer++) {
+    const sgn = layer === 0 ? 1 : -1;
+    const tint = layer === innerLayer ? inside : outside;
+    for (let i = 0; i <= segT; i++) {
+      const t = i / segT;
+      const d = offsetAt(t) * sgn;
+      for (let j = 0; j <= segA; j++) {
+        const a = (j / segA) * 2 * SHELL_SPAN - SHELL_SPAN;
+        shellPoint(t, a, cfg, p);
+        shellNormal(t, a, cfg, n);
+        pos.push(p[0] + n[0] * d, p[1] + n[1] * d, p[2] + n[2] * d);
+        nrm.push(n[0] * sgn, n[1] * sgn, n[2] * sgn);
+        col.push(tint.r, tint.g, tint.b);
+      }
+    }
+    const base = layer * perLayer;
+    for (let i = 0; i < segT; i++) {
+      for (let j = 0; j < segA; j++) {
+        const v0 = base + i * rowLen + j;
+        idx.push(v0, v0 + 1, v0 + rowLen + 1, v0, v0 + rowLen + 1, v0 + rowLen);
+      }
+    }
+  }
+
+  // Walk the patch border and bridge the two faces with a rim strip. Without it
+  // the margin is an open slot and the valve thins to nothing edge-on.
+  const rimBase = pos.length / 3;
+  const loop = [];
+  for (let i = 0; i <= segT; i++) loop.push([i, 0, 0]);
+  for (let j = 1; j <= segA; j++) loop.push([segT, j, 1]);
+  for (let i = segT - 1; i >= 0; i--) loop.push([i, segA, 0]);
+  for (let j = segA - 1; j >= 1; j--) loop.push([0, j, 0]);
+
+  const q = [0, 0, 0];
+  const e = 0.01;
+  for (const [i, j, along] of loop) {
+    const t = i / segT;
+    const a = (j / segA) * 2 * SHELL_SPAN - SHELL_SPAN;
+    shellPoint(t, a, cfg, p);
+    shellNormal(t, a, cfg, n);
+    // Tangent along the rim, so the cut face normal is perpendicular to both
+    // the rim and the valve surface.
+    let tx, ty, tz;
+    if (along) {
+      shellPoint(t, Math.min(SHELL_SPAN, a + e), cfg, q);
+      const q0 = shellPoint(t, Math.max(-SHELL_SPAN, a - e), cfg, [0, 0, 0]);
+      tx = q[0] - q0[0];
+      ty = q[1] - q0[1];
+      tz = q[2] - q0[2];
+    } else {
+      shellPoint(Math.min(1, t + e), a, cfg, q);
+      const q0 = shellPoint(Math.max(0, t - e), a, cfg, [0, 0, 0]);
+      tx = q[0] - q0[0];
+      ty = q[1] - q0[1];
+      tz = q[2] - q0[2];
+    }
+    let rx = ty * n[2] - tz * n[1];
+    let ry = tz * n[0] - tx * n[2];
+    let rz = tx * n[1] - ty * n[0];
+    const len = Math.hypot(rx, ry, rz) || 1;
+    rx /= len;
+    ry /= len;
+    rz /= len;
+    const d = offsetAt(t);
+    pos.push(p[0] + n[0] * d, p[1] + n[1] * d, p[2] + n[2] * d);
+    pos.push(p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d);
+    nrm.push(rx, ry, rz, rx, ry, rz);
+    col.push(edge.r, edge.g, edge.b, edge.r, edge.g, edge.b);
+  }
+  for (let k = 0; k < loop.length; k++) {
+    const k2 = (k + 1) % loop.length;
+    const v0 = rimBase + k * 2;
+    const v2 = rimBase + k2 * 2;
+    idx.push(v0, v0 + 1, v2 + 1, v0, v2 + 1, v2);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+// Builds the scallop for a `createClamSite` from clam.js. The site carries the
+// position, the hinge height and the ground height it is bedded into, so the
+// same builder produces the park shell and the beach shell and both are
+// guaranteed to line up with the hole cut in their ground.
+export function makeClamShell(scene, site = PARK_CLAM) {
+  const { x, z, umboY, surfaceY, open, shut } = site;
+  const g = new THREE.Group();
+  const shellMat = new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.6, metalness: 0.04,
+    side: THREE.DoubleSide,
+  });
+
+  // park-spine runs along the park's east side, so face the opening that way:
+  // the fan opens east and you drive straight west into the bowl off the road.
+  const yaw = new THREE.Group();
+  yaw.rotation.y = site.yaw;
+  g.add(yaw);
+
+  // The lower valve is squashed to a shallow dish and the umbo is dropped half
+  // a unit under the lawn, so the dish sits down inside its own hole in the
+  // turf. The upper valve keeps nearly its full sweep and leans away to the
+  // west, which is the classic open-scallop silhouette and leaves the whole
+  // mouth of the bowl facing the road.
+  const lowerCfg = { size: site.size, flat: site.flat, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: 1 };
+  const upperCfg = { size: site.upperSize, flat: site.upperFlat, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: -1 };
+  const lower = new THREE.Mesh(shellValveGeometry(lowerCfg), shellMat);
+  const upper = new THREE.Mesh(shellValveGeometry(upperCfg), shellMat);
+  // Both valves hinge on the umbo, so the open/close is a single rotation of
+  // the upper valve about X.
+  const swing = new THREE.Group();
+  swing.rotation.x = open;
+  swing.add(upper);
+  yaw.add(lower, swing);
+
+  const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12), shellMat);
+  hinge.scale.set(1, 0.7, 1.3);
+  yaw.add(hinge);
+
+  for (const mesh of [lower, upper, hinge]) {
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+  }
+
+  scene.add(g);
+  // Seat the umbo, not the bounding box: the lawn hole in addPark() is cut to
+  // the lower valve's own silhouette at T_GRASS_HOLE, so the shell has to hang
+  // off the same datum the turf does or the dish floats or sinks.
+  g.position.set(x, umboY, z);
+
+  // ===== Pearls =====
+  // Ringed around the shell on the lawn rather than sitting in the bowl - the
+  // bowl is the mouth of the portal now and has to stay clear to drive into.
+  const pearlMat = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff, roughness: 0.1, metalness: 0.05,
+    clearcoat: 1, clearcoatRoughness: 0.12,
+    iridescence: 1, iridescenceIOR: 1.9, iridescenceThicknessRange: [180, 760],
+    emissive: 0x5c2f5e, emissiveIntensity: 0.3,
+  });
+  const pearlSpots = [
+    [4.4, -1.1], [4.2, 1.9], [1.6, 3.7], [-2.4, 2.9], [-4.1, 0.3], [-3.2, -2.1],
+  ];
+  const pearls = pearlSpots.map(([dx, dz], i) => {
+    const r = 0.17 + ((i * 37) % 11) * 0.01;
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 14), pearlMat);
+    // Seat each pearl on whatever the ground under it is doing - the park's lawn
+    // is flat, the beach's dunes are not.
+    const gy = (site.groundYAt || (() => surfaceY))(x + dx, z + dz);
+    m.position.set(x + dx, gy + r * 0.82, z + dz);
+    m.castShadow = true;
+    scene.add(m);
+    return { mesh: m, base: m.position.y, phase: i * 1.04, spin: 0.24 + (i % 3) * 0.09 };
+  });
+
+  let clock = 0;
+  const shell = {
+    group: g,
+    site,
+    x, z,
+    angle: open,
+    target: open,
+    closing: false,
+    shut: false,
+    // Snap shut. Called by main.js the moment the car is down in the bowl.
+    close() {
+      if (this.closing || this.shut) return;
+      this.closing = true;
+      this.target = shut;
+    },
+    // Back to the open pose, for arriving back from the beach.
+    reopen() {
+      this.closing = false;
+      this.shut = false;
+      this.angle = open;
+      this.target = open;
+      swing.rotation.x = open;
+    },
+    // Returns true on the one frame the valves finish meeting.
+    update(dt) {
+      clock += dt;
+      if (this.angle !== this.target) {
+        const d = this.target - this.angle;
+        const step = Math.sign(d) * Math.min(Math.abs(d), 1.52 * dt);
+        this.angle += step;
+        swing.rotation.x = this.angle;
+      }
+      for (const p of pearls) {
+        p.mesh.position.y = p.base + Math.sin(clock * 1.25 + p.phase) * 0.11;
+        p.mesh.rotation.y += p.spin * dt;
+      }
+      // The pearls light up as the valves come together.
+      const near = Math.abs(this.angle - shut) / (shut - open);
+      pearlMat.emissiveIntensity = 0.3 + near * 1.5;
+      if (!this.shut && this.closing && this.angle >= shut) {
+        this.shut = true;
+        return true;
+      }
+      return false;
+    },
+  };
+
+  if (typeof window !== 'undefined') {
+    // Several shells can be live at once (the park's and the beach's), so keep a
+    // list rather than letting the last one built silently steal the handle.
+    window.__CLAM_SHELLS = (window.__CLAM_SHELLS || []).concat(shell);
+    if (!window.__CLAM_SHELL) window.__CLAM_SHELL = shell;
+  }
+  return shell;
 }
 
 // ===== Parking lot (southwest) =====
@@ -1456,6 +1782,24 @@ export function addProps(scene) {
   makeStopSign(scene, 0, 12.8, 0);
   makeStopSign(scene, 0, -12.8, Math.PI);
 
+  // The lamp-post rows. The x = -17 row runs along the front of the two suburban
+  // houses, and two of its posts stood square in the middle of a garage mouth:
+  // the brown-roofed house's OPEN BAY — the way into the house — at z -70, and the
+  // grey-roofed house's shut roller door at z -42. Nothing mechanical was wrong (a
+  // lamp post is knockable, not a collider, so it never blocked the trigger), but
+  // a streetlight planted in the driving line of a garage reads as a mistake.
+  //
+  // So the row SKIPS the two house frontages, and each skipped post is replaced on
+  // the grass verge instead. The frontage bounds are declared here rather than
+  // imported, because props.js knows nothing about buildings; they are copied from
+  // the LAYOUT entries in cityBuildings.js and suburbanGarages.test.mjs re-derives
+  // them, so a building that moves cannot quietly leave the light behind.
+  const HOUSE_FRONTAGES = [
+    { name: 'houseStandard open bay', z0: -73.5, z1: -67.0 },    // brown roof, the way in
+    { name: 'houseGarage roller door', z0: -47.25, z1: -39.25 },  // grey roof, now shut
+  ];
+  const onAFrontage = (z) => HOUSE_FRONTAGES.some((f) => z > f.z0 && z < f.z1);
+
   for (let x = -70; x <= 70; x += 14) {
     // Keep this row open around the portal hill.
     if (x < 40 || x > 72) makeLampPost(scene, x, 17);
@@ -1463,8 +1807,15 @@ export function addProps(scene) {
   }
   for (let z = -70; z <= 70; z += 14) {
     makeLampPost(scene, 17, z);
-    makeLampPost(scene, -17, z);
+    if (!onAFrontage(z)) makeLampPost(scene, -17, z);
   }
+  // The two replacements. x = -14.5 is the middle of the grass verge between the
+  // houses' front faces (x -17.5) and the arterial-ns kerb (x -12), which is where
+  // a streetlight actually belongs; each z is by a front door rather than over a
+  // garage, and clear of both garage bands and both door paths. The bay does not
+  // lose its light — it has its own beckoning lamp inside it.
+  makeLampPost(scene, -14.5, -62.5);
+  makeLampPost(scene, -14.5, -51.0);
 
   // Fire hydrants, all on grass verges. Every one is checked against the ROADS
   // table in cityRoads.js by the city audit, so none of them stands in tarmac.
@@ -1494,7 +1845,7 @@ export function addProps(scene) {
   makeFenceLine(scene, 14, 64, 30, 64, 8);
   makeFenceLine(scene, 30, 64, 30, 44, 10);
 
-  addPark(scene);
+  const clamShell = addPark(scene);
   addParkingLot(scene);
   addMarketStalls(scene);
   addVillageCharm(scene, fountains);
@@ -1502,7 +1853,7 @@ export function addProps(scene) {
   const { colliders: mineColliders } = makeMineShaftEntrance(scene);
   const mineGems = excavateDescendingAdit(scene);
 
-  return { trafficLights, fountains, mineColliders, mineGems };
+  return { trafficLights, fountains, mineColliders, mineGems, clamShell };
 }
 
 // ========================================================================

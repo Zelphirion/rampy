@@ -1,5 +1,10 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { addKnockable } from './physics.js';
+import {
+  GLASS_TOWER_COLS as towerCols, GLASS_TOWER_ROWS as towerRows,
+  GLASS_Z0 as Z0, GLASS_Z1 as Z1,
+  GHOST_ROUTES, GHOST_RECHARGE, routeWalker, ghostTouches, laneBlocked,
+} from './glasscityGhosts.js';
 
 // ===== The Glass City (north of the world) =====
 // A grid of silent, monolithic skyscrapers made of coloured translucent glass,
@@ -11,9 +16,11 @@ import { addKnockable } from './physics.js';
 // Built for the old, larger surface map; since the map shrank to its wrapped
 // bounds it stands in the UNDERWORLD instead (see underground.js), whose
 // cavern floor is big enough to hold it unchanged.
-
-const Z0 = 132;
-const Z1 = 173;
+//
+// The grid itself (tower columns, tower rows, the city footprint, the street
+// lanes and the ghost routes) lives in glasscityGhosts.js, so the patrol maths
+// can be tested without three.js and the two files cannot disagree about where
+// a street is.
 
 // ---- Materials ----
 const glassColors = [0xc85a7a, 0x4a7fd4, 0x7a5ac8, 0x3fae8f, 0xd49a3f, 0xcf6fd4];
@@ -27,12 +34,12 @@ const marbleMat = new THREE.MeshStandardMaterial({ color: 0xe6e2d8, roughness: 0
 // ---- Layout: tower grid ----
 // Wide, drivable streets between the towers: columns 20 apart (corridor
 // ~12 wide) and rows 18 apart (corridor ~10 wide), so the car can thread
-// through the city without getting stuck.
-const towerCols = [];
-for (let x = -126; x <= 134; x += 20) towerCols.push(x);
-const towerRows = [134, 152, 170];
+// through the city without getting stuck. The column and row lists now come
+// from glasscityGhosts.js.
 
-// Towers removed to make room for the balloon plaza.
+// Towers removed to make room for the balloon plaza, and the three tableaux.
+// The ghost patrols below run down these same corridors, so both are derived
+// from one source rather than re-typed as bare numbers.
 function towerSkipped(x, z) {
   if (z === 152 && (x === 34 || x === 54)) return true;
   return false;
@@ -330,8 +337,74 @@ function redBandMat() {
   return new THREE.MeshStandardMaterial({ color: 0xb84040, roughness: 0.6 });
 }
 
+// ===== The street ghosts =====
+//
+// Two ghosts drift the glass streets on fixed square loops. They never chase and
+// never steer toward the car - the whole point is that you can see them coming
+// and choose whether to be hit - so the route is a constant, not a function of
+// the player. Run into one and it picks you up and drops you at the foot of the
+// candy waterfall, way back out in the cavern.
+//
+// The routes, the speed, the touch radius and the route arithmetic all live in
+// glasscityGhosts.js; this file owns the meshes.
+
+// One ghost: a translucent, floating body with a trailing skirt of afterimages.
+function makeGhost(scene, x, z, tint) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({
+    color: tint, emissive: tint, emissiveIntensity: 0.85,
+    transparent: true, opacity: 0.55, roughness: 0.3, depthWrite: false,
+  });
+  const body = new THREE.Mesh(new THREE.SphereGeometry(1.5, 18, 14), mat);
+  body.position.y = 2.2;
+  body.scale.set(1, 1.25, 1);
+  g.add(body);
+  // The trailing skirt: a stack of shrinking rings fading downward.
+  const skirtMat = new THREE.MeshStandardMaterial({
+    color: tint, emissive: tint, emissiveIntensity: 0.5,
+    transparent: true, opacity: 0.22, roughness: 0.4, depthWrite: false,
+  });
+  for (let i = 0; i < 5; i++) {
+    const r = new THREE.Mesh(new THREE.TorusGeometry(1.5 - i * 0.22, 0.1, 6, 18), skirtMat);
+    r.rotation.x = Math.PI / 2;
+    r.position.y = 1.6 - i * 0.42;
+    r.userData.phase = i * 0.7;
+    g.add(r);
+  }
+  // Two eyes so it reads as a face rather than a lamp.
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0b0d16 });
+  for (const ex of [-0.55, 0.55]) {
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), eyeMat);
+    e.position.set(ex, 2.5, 1.25);
+    g.add(e);
+  }
+  const halo = new THREE.PointLight(tint, 1.6, 26, 2);
+  halo.position.y = 2.2;
+  g.add(halo);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  return g;
+}
+
+// A ghost on a fixed route. The route walking itself lives in
+// glasscityGhosts.js (routeWalker) because it is pure maths worth testing on
+// its own; all this does is bolt a mesh to it.
+function makeGhostPatrol(scene, legs, tint, phase) {
+  const ghost = makeGhost(scene, legs[0][0], legs[0][1], tint);
+  const walker = routeWalker(legs, phase);
+  return {
+    group: ghost,
+    get leg() { return walker.leg; },
+    get recharge() { return walker.recharge; },
+    set recharge(v) { walker.recharge = v; },
+    get phase() { return walker.phase; },
+    step: (dt) => walker.step(dt),
+  };
+}
+
 export function addGlassCity(scene, opts = {}) {
   const onCrystalPop = typeof opts.onCrystalPop === 'function' ? opts.onCrystalPop : null;
+  const onGhostRide = typeof opts.onGhostRide === 'function' ? opts.onGhostRide : null;
   makeCityFloor(scene);
 
   const colliders = [];
@@ -398,6 +471,23 @@ export function addGlassCity(scene, opts = {}) {
   scene.add(spire);
   colliders.push({ x: spireX, z: spireZ, halfW: 2.6, halfD: 2.6, h: 20 });
 
+  // ---- Street ghosts ----
+  // Two square loops, each built from street lanes and each skirting the
+  // tableau shops. The routes are chosen so no corner lands on a shop: the west
+  // ghost runs between the columns either side of the tableau at (-16, 143) on
+  // the z=143 lane, the east ghost keeps to the far side of the plaza.
+  const ghosts = [];
+  for (const r of GHOST_ROUTES) {
+    // A route that would clip a shop is dropped rather than silently repaired:
+    // the routes in glasscityGhosts.js are chosen by hand, and this is the guard
+    // that they stay correct if the tower grid is ever respaced.
+    if (r.legs.some(([x, z]) => laneBlocked(x, z))) {
+      console.warn(`glasscity: a ghost route lands on a tableau shop; route dropped`);
+      continue;
+    }
+    ghosts.push(makeGhostPatrol(scene, r.legs, r.tint, r.phase));
+  }
+
   // ---- Crystal clusters along the streets ----
   // (removed — the street crystal clusters were deleted at the player's
   // request; only the citadel spire above remains.)
@@ -436,6 +526,36 @@ export function addGlassCity(scene, opts = {}) {
     tableauA.update(delta, clockT, player);
     tableauB.update(delta, clockT, player);
     clockT += delta;
+    // The ghosts walk their fixed loops. Touching one is the pickup - it never
+    // homes in, so the only way to get caught is to drive into it, and the
+    // recharge keeps a single pass from triggering twice on the way out.
+    for (const g of ghosts) {
+      const mv = g.step(delta);
+      const grp = g.group;
+      if (mv) {
+        grp.position.x = mv.x;
+        grp.position.z = mv.z;
+        // Ease the heading toward the leg direction so corners read as a drift.
+        const cur = grp.rotation.y;
+        let diff = ((mv.heading - cur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        grp.rotation.y = cur + diff * Math.min(1, delta * 3.2);
+      }
+      // The hover and the skirt ripple never stop, even while recharging: a
+      // ghost parked dead still would read as a dropped prop.
+      grp.position.y = Math.sin(clockT * 1.6 + g.phase) * 0.35;
+      for (const r of grp.children) {
+        if (r.userData.phase === undefined) continue;
+        r.scale.setScalar(1 + Math.sin(clockT * 3.4 + r.userData.phase) * 0.12);
+      }
+      if (g.recharge > 0 || !onGhostRide) continue;
+      if (ghostTouches(grp.position.x, grp.position.z, player.x, player.z, player.y)) {
+        g.recharge = GHOST_RECHARGE;
+        // Fade the ghost out and back in with the recharge rather than popping.
+        grp.visible = false;
+        setTimeout(() => { grp.visible = true; }, GHOST_RECHARGE * 1000 * 0.7);
+        onGhostRide({ x: grp.position.x, z: grp.position.z });
+      }
+    }
     // The plaza balloons bob and rotate slowly; drive over one and it pops.
     for (const b of blueBalloons) {
       if (b.alive) {
@@ -494,5 +614,5 @@ export function addGlassCity(scene, opts = {}) {
     }
   }
   let clockT = 0;
-  return { colliders, update, balloons: blueBalloons, spire };
+  return { colliders, update, balloons: blueBalloons, spire, ghosts };
 }

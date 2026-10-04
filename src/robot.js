@@ -248,6 +248,18 @@ export function addRobot(scene) {
     playerCaptured: false,
     bumperCaptured: false,
     update,
+    isAboutToEat: () => {
+      // About to eat within ~3 seconds before actually eating
+      if (st.mode === 'pickup') {
+        const timeRemaining = (REACH_T + LIFT_T) - st.timer;
+        if (timeRemaining > 0 && timeRemaining < 3) return true;
+      }
+      if (st.mode === 'seek' && st.target) {
+        const timeToReach = st.target.d / SEEK_SPEED;
+        if (timeToReach < 3 && st.target.d > PICKUP_RANGE * 0.5) return true;
+      }
+      return false;
+    },
   };
 
   // ===== Robot state machine =====
