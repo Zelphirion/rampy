@@ -253,15 +253,17 @@
 
       .browser-panel {
         position: fixed;
-        top: 76px;
-        bottom: 92px;
-        width: 330px;
-        max-width: 42vw;
+        top: 74px;
+        left: 20px;
+        right: 20px;
+        bottom: 20px;
+        width: auto;
+        max-width: none;
         display: none;
         flex-direction: column;
-        gap: 10px;
-        padding: 14px;
-        border-radius: 16px;
+        gap: 12px;
+        padding: 20px;
+        border-radius: 18px;
         background: rgba(6, 11, 22, 0.82);
         border: 1px solid rgba(255, 255, 255, 0.14);
         backdrop-filter: blur(6px);
@@ -272,10 +274,9 @@
         font-family: Arial, sans-serif;
         -webkit-overflow-scrolling: touch;
       }
-      /* The levels list is a column; the object browser keeps the grid in the
-         middle with the category row on top and the pager pinned at the bottom. */
-      #levels-panel { left: 20px; }
-      #objects-panel { right: 20px; }
+      /* Both screens take the whole showroom: the levels list is a column, the
+         object browser keeps the grid in the middle with the category row on top
+         and the pager pinned at the bottom. */
       body.tab-levels #levels-panel { display: flex; }
       body.tab-objects #objects-panel { display: flex; }
 
@@ -536,16 +537,37 @@
       .pager-btn:hover:not(:disabled) { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
       .pager-btn:disabled { opacity: 0.3; cursor: default; }
 
-      /* The detail card: title, blurb, where it lives, and the way there. */
+      /* The object on the disc gets its OWN full-screen layer, completely apart
+         from the browser panel. Two reasons: (a) you see the grid or the object,
+         never both — the body.object-open rule below simply removes the panel, so
+         nothing from it can linger beside the model; and (b) the panel carries a
+         backdrop-filter, and a filter on an ancestor turns into the containing
+         block of any position:fixed child — so a card living inside the panel
+         would be trapped inside its box instead of floating under the object.
+         The layer is a window of clicks: the whole disc is visible and inert,
+         and only the card at the bottom catches the controls. */
+      #obj-view {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: none;
+        align-items: flex-end;
+        justify-content: center;
+        padding-bottom: 26px;
+        pointer-events: none;
+      }
+      body.object-open #obj-view { display: flex; }
       #obj-detail {
-        flex: 0 0 auto;
-        border-radius: 12px;
-        border: 1px solid rgba(126, 249, 255, 0.28);
-        background: rgba(10, 20, 38, 0.9);
-        padding: 11px 12px;
         display: none;
         flex-direction: column;
         gap: 8px;
+        width: min(560px, calc(100vw - 32px));
+        pointer-events: auto;
+        border-radius: 12px;
+        border: 1px solid rgba(126, 249, 255, 0.28);
+        background: rgba(10, 20, 38, 0.92);
+        padding: 11px 12px;
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.65);
       }
       #obj-detail.open { display: flex; }
       #obj-detail .od-title {
@@ -589,15 +611,37 @@
         color: #fff;
       }
       .od-btn.primary:hover { background: rgba(55, 110, 185, 0.95); }
+      /* The little black back-to-the-grid control, and the two square arrows. */
+      .od-btn.square,
+      .od-btn.black {
+        flex: 0 0 auto;
+        width: 46px;
+        text-align: center;
+        font-size: 15px;
+        letter-spacing: 0;
+      }
+      .od-btn.black {
+        background: #04060b;
+        border-color: rgba(126, 249, 255, 0.5);
+        color: #7ef9ff;
+      }
+      .od-btn.black:hover { background: #0b1018; border-color: #7ef9ff; }
+
+      /* Grid and object are mutually exclusive: opening an object removes the
+          whole browser panel, leaving the disc full screen. */
+      body.object-open #objects-panel { display: none !important; }
+      #obj-detail .od-actions { justify-content: center; }
 
       /* Narrow screens: the panels take the full width and sit above the pager
          buttons, which the gear modal hides on these tabs anyway. */
       @media (max-width: 720px) {
         .browser-panel {
-          left: 12px;
-          right: 12px;
-          width: auto;
-          max-width: none;
+          top: 64px;
+          left: 10px;
+          right: 10px;
+          bottom: 10px;
+          padding: 14px;
+          border-radius: 14px;
         }
       }
 
@@ -798,13 +842,14 @@
     <div id="car-hint"></div>
 
     <!-- Showroom tabs: PLAYER swaps your ride, CHASE swaps the car that chases
-         you, LEVELS teleports you, OBJECTS browses everything the game is made
-         of. Only visible while the showroom is up. -->
+         you, LEVELS teleports you. OBJECTS is deliberately not a tab — it is a
+         screen inside Levels, reached from each level's own Objects button, so
+         the catalogue is always about a specific place. Only visible while the
+         showroom is up. -->
     <div id="picker-tabs">
       <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
       <button id="tab-chase" class="picker-tab" type="button" title="Choose the car that chases you">&nbsp;Chase&nbsp;</button>
       <button id="tab-levels" class="picker-tab" type="button" title="Go to another level">&nbsp;Levels&nbsp;</button>
-      <button id="tab-objects" class="picker-tab" type="button" title="Browse the objects">&nbsp;Objects&nbsp;</button>
     </div>
 
     <!-- Levels: one button per level. Tapping one drops you there. -->
@@ -815,8 +860,7 @@
     </div>
 
     <!-- Objects: a category row, a row of page numbers, a 3x3 grid of nine at a
-         time (each tile spinning its own little model), a pager, and the detail
-         card for whichever one is open on the spinning stage. -->
+         time (each tile spinning its own little model), and a pager. -->
     <div id="objects-panel" class="browser-panel">
       <div class="browser-title">Objects</div>
       <div class="browser-blurb" id="obj-cat-blurb"></div>
@@ -834,12 +878,26 @@
         <div id="obj-range"></div>
         <button id="obj-next" class="pager-btn" type="button" title="Next nine objects" aria-label="Next nine objects">&rarr;</button>
       </div>
+    </div>
+
+    <!-- The object on the spinning disc. Lives OUTSIDE #objects-panel so it can
+         be its own full-screen layer under the model, and so the panel can be
+         removed entirely while it is up — grid and object never share the
+         screen. -->
+    <div id="obj-view">
       <div id="obj-detail">
         <div class="od-title" id="od-title"></div>
         <div class="od-blurb" id="od-blurb"></div>
         <div class="od-where" id="od-where"></div>
+        <!-- Row one: step to the neighbouring object, or bail back to the grid.
+             The close control is a small black square rather than a labelled
+             button so it stays out of the way of the thing being looked at. -->
         <div class="od-actions">
-          <button id="od-close" class="od-btn" type="button">Close</button>
+          <button id="od-prev" class="od-btn square" type="button" title="Previous object" aria-label="Previous object">&larr;</button>
+          <button id="od-close" class="od-btn black" type="button" title="Back to the grid" aria-label="Back to the grid">&#10005;</button>
+          <button id="od-next" class="od-btn square" type="button" title="Next object" aria-label="Next object">&rarr;</button>
+        </div>
+        <div class="od-actions">
           <button id="od-go" class="od-btn primary" type="button">View in context</button>
         </div>
       </div>
@@ -860,6 +918,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1791123300000"></script>
+    <script type="module" src="./src/main.js?v=1791559690123"></script>
   </body>
 </html>

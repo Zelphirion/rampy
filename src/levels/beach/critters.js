@@ -145,7 +145,7 @@ const SPEED_FLEE = 9.0;
 const SPEED_STALK = 2.2;
 const SPEED_CHASE = 6.0;
 
-function makeCrab(x, z, homeRock) {
+export function makeCrab(x, z, homeRock) {
   const g = new THREE.Group();
   const shell = mat(0xc4512c);
   const pale = mat(0xe8b48a);
@@ -511,7 +511,7 @@ const MERMAID_H = animalSize('mermaid');
 // lying flat like a dropped plank.
 const SWIM_TILT = 0.52;
 
-function makeMermaid(tailHex, finHex, hairHex) {
+export function makeMermaid(tailHex, finHex, hairHex) {
   const g = new THREE.Group();
   const roll = new THREE.Group();
   const pitch = new THREE.Group();

@@ -10,14 +10,13 @@
 //    minimap number pasted in would drop you on the wrong side of the map. (See
 //    AGENTS.md for the conversion; nothing in this file needs it.)
 //
-// 2. NOTHING HERE IS THE REAL MESH. Every builder returns a small, self-
-//    contained model with its own materials and its own geometry, sized to sit
-//    comfortably on the showroom stage. That is deliberate: pulling the actual
-//    world geometry out of five level files would mean holding references to
-//    meshes that are parented into scenes the browser has never seen, and a
-//    "preview" that visibly breaks when you leave the tab is worse than one that
-//    is simply a small model of the same thing. The names, the shapes and the
-//    proportions are the same; the geometry is not.
+// 2. BUILDERS ARE THE REAL GEOMETRY. Every `build` is a zero-arg factory that
+//    delegates to the very builder the level uses - nothing here is a hand-made
+//    mini model. The game modules expose pure `build*`/`create*`/`make*`
+//    factories (geometry only, no world registration) precisely so the browser
+//    can construct the true object; the side effects that are part of the world
+//    (knockables, blinker lights) are suppressed for previews so the standing
+//    copy stays at its world spot. X/Z are REAL world positions.
 //
 // Every object is `{ name, build, x, z }`:
 //   - `name`  the label under the tile and in the object title (also the value
@@ -29,6 +28,23 @@
 // the URL as ?cat=, so they must stay stable.
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { buildCityBuilding, frontYard, kerbMailbox, newspaperRack } from '../cityBuildings.js';
+import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js';
+import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js';
+import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';
+import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js';
+import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js';
+import { makeCrab, makeMermaid } from '../levels/beach/critters.js';
+import { buildCoralHead } from '../levels/beach/reefs.js';
+import { createGulls } from '../levels/beach/seagulls.js';
+import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
+import {
+  MAT, bed, sofa, table, chair, wardrobe, counterRun, tub, toilet, sinkUnit,
+  fridge, rug, ceilingLight, tableLamp,
+  buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
+  buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
+  HOUSE, ROOMS, FIREPLACE,
+} from '../levels/house/index.js';
 
 // ===== Primitives =====
 // Small wrappers so each object below is a list of shapes rather than a wall of
@@ -146,7 +162,13 @@ function blockBuilding(name, o) {
   return g;
 }
 
+// `build` is either a zero-arg factory or the name of one of the city's LAYOUT
+// buildings (which builds the real thing via buildCityBuilding).
 function obj(name, x, z, build) {
+  if (typeof build === 'string') {
+    const id = build;
+    return { name, x, z, build: () => buildCityBuilding(id) };
+  }
   return { name, x, z, build };
 }
 
@@ -290,7 +312,7 @@ export const LEVELS = [
   { id: 'city', label: 'City', blurb: 'The town: shops, a school, the fire station.' },
   { id: 'underground', label: 'Underground', blurb: 'The neon cavern under the world, and the Glass City.' },
   { id: 'ramp', label: 'Rampworld', blurb: 'The rolling hills, the velodrome, the wheel of death.' },
-  { id: 'house', label: 'Rampworld House', blurb: 'Every room of the house, one category at a time.' },
+  { id: 'house', label: 'House', blurb: 'Every room of the house, one category at a time.' },
   { id: 'beach', label: 'Beach', blurb: 'The cove: the campfire, the palms, the reefs.' },
 ];
 
@@ -304,176 +326,25 @@ function cityCategories() {
     {
       id: 'shops', name: 'Shops & Civic', blurb: 'The middle of town.',
       objects: [
-        obj('Bodega', -22.5, 19.6, () => {
-          const g = blockBuilding('Bodega', {
-            w: 11, h: 8.5, d: 10, wall: 0xc9a06a, trim: 0xe8dcc0, band: 0x9c3b2e,
-            glass: 0xffe9b0, sign: 0xd8451f, door: 0x2f6b4a, glow: 1.0,
-          });
-          // The awning over the door, and crates out front.
-          box(g, 7, 0.2, 1.8, 0x9c3b2e, 0, 3.7, 5.6, { rx: 0.22 });
-          box(g, 1.4, 1.2, 1.4, 0x8a6b46, -3.4, 0.6, 6.0);
-          box(g, 1.1, 0.9, 1.1, 0x7a5c3c, -2.1, 0.45, 6.4);
-          return g;
-        }),
-        obj('School', 34.5, 27, () => {
-          const g = blockBuilding('School', {
-            w: 20, h: 11, d: 13, wall: 0xb4643c, trim: 0xe4d6c0, band: 0x8c4a2c,
-            glass: 0xfff2cc, sign: 0x2f5fa8, glow: 0.5,
-          });
-          // Clock tower on the roof.
-          box(g, 4, 6, 4, 0x9c5a34, -6, 14, 0);
-          box(g, 4.4, 0.5, 4.4, 0xe4d6c0, -6, 17.2, 0);
-          cone(g, 2.6, 3.4, 0x2f3a4a, -6, 19, 0);
-          const face = cyl(g, 1.3, 1.3, 0.3, 0xf5f0e0, -6, 15, 2.1, { rx: Math.PI / 2 });
-          face.rotation.x = Math.PI / 2;
-          box(g, 0.14, 1.0, 0.1, 0x2b2b2b, -6, 15.5, 2.3);
-          box(g, 0.7, 0.14, 0.1, 0x2b2b2b, -6, 15, 2.3);
-          // Flagpole.
-          cyl(g, 0.1, 0.1, 6, 0xd8d8d8, 8, 3, 0);
-          box(g, 1.6, 1.0, 0.08, 0xc03a3a, 8.8, 5.4, 0);
-          return g;
-        }),
-        obj('Library', 40, 54, () => {
-          const g = blockBuilding('Library', {
-            w: 15, h: 14, d: 14, wall: 0xd9cdb4, trim: 0xf2ece0, band: 0x8a7a5c,
-            glass: 0xe8f4ff, door: 0x6b4a2c, glow: 0.4,
-          });
-          // Six big columns down the front.
-          for (let i = 0; i < 6; i++) cyl(g, 0.55, 0.62, 9, 0xf2ece0, -6 + i * 2.4, 4.5, 7.4);
-          box(g, 16, 1.2, 2.2, 0xf2ece0, 0, 9.6, 7.4);
-          // Pediment.
-          cone(g, 8.2, 3.2, 0xe6dcc6, 0, 11.6, 0, { seg: 4, rz: Math.PI / 4 });
-          return g;
-        }),
-        obj('City Hall', -49.5, 92, () => {
-          const g = blockBuilding('City Hall', {
-            w: 17, h: 12, d: 12, wall: 0xe6e0cf, trim: 0xfffdf5, band: 0x9a927e,
-            glass: 0xfff6d8, door: 0x4a5f3a, glow: 0.5,
-          });
-          // Dome on a drum.
-          cyl(g, 3.4, 3.6, 2.2, 0xf2ecdd, 0, 13.4, 0);
-          const dome = ball(g, 3.6, 0xb08d4a, 0, 16, 0, { sy: 0.85 });
-          dome.material.metalness = 0.4;
-          cyl(g, 0.14, 0.14, 2.4, 0xd8b45a, 0, 18.6, 0);
-          ball(g, 0.4, 0xd8b45a, 0, 19.9, 0);
-          return g;
-        }),
-        obj('Bank', -24, 92, () => {
-          const g = blockBuilding('Bank', {
-            w: 14, h: 10, d: 12, wall: 0xded6c4, trim: 0xf6f2e6, band: 0xb0a68e,
-            glass: 0xe0f0ff, door: 0x2a3f5a, glow: 0.4,
-          });
-          // Four fat columns and a pediment, the classic bank front.
-          for (let i = 0; i < 4; i++) cyl(g, 0.8, 0.9, 8, 0xf6f2e6, -5 + i * 3.4, 4, 6.6);
-          box(g, 15, 1.3, 2.4, 0xf6f2e6, 0, 8.7, 6.6);
-          cone(g, 7.4, 2.8, 0xece4d2, 0, 10.6, 0, { seg: 4, rz: Math.PI / 4 });
-          return g;
-        }),
-        obj('Hospital', 26, 95, () => {
-          const g = blockBuilding('Hospital', {
-            w: 18, h: 16, d: 14, wall: 0xf0f2f4, trim: 0xd8dee4, band: 0xb0c0cc,
-            glass: 0xdcf2ff, door: 0x4a90c8, glow: 0.6,
-          });
-          // The big red cross on the tower face.
-          box(g, 14, 2.6, 0.3, 0xded6c4, 0, 8.5, 7.1);
-          box(g, 2.6, 2.6, 0.3, 0xd8323c, 0, 12, 7.2, { emissive: 0xd8323c, emissiveIntensity: 0.7 });
-          box(g, 2.6, 2.6, 0.3, 0xd8323c, 0, 12, 7.25);
-          box(g, 1.0, 6.4, 0.3, 0xd8323c, 0, 12, 7.2, { emissive: 0xd8323c, emissiveIntensity: 0.7 });
-          box(g, 6.4, 1.0, 0.3, 0xd8323c, 0, 12, 7.2);
-          return g;
-        }),
-        obj('Fire Station', 64, -39.5, () => {
-          const g = blockBuilding('Fire Station', {
-            w: 14, h: 8, d: 11, wall: 0xc4382f, trim: 0xf0e8dc, band: 0x8f2620,
-            glass: 0xffe0b0, door: 0x8f2620, glow: 0.8,
-          });
-          // Two tall engine-bay doors.
-          for (let i = 0; i < 2; i++) {
-            box(g, 4.4, 5.0, 0.3, 0x2a2a2a, -3.4 + i * 6.8, 2.5, 5.6);
-            for (let b = 0; b < 4; b++) box(g, 4.2, 0.1, 0.34, 0x8a8a8a, -3.4 + i * 6.8, 1.0 + b * 1.2, 5.65);
-          }
-          // The hose-drying tower.
-          cyl(g, 1.4, 1.6, 9, 0xc4382f, 5.4, 12.5, -2.5);
-          cyl(g, 1.7, 1.7, 0.4, 0xf0e8dc, 5.4, 17.2, -2.5);
-          // Warning light.
-          ball(g, 0.4, 0xff3020, -5, 9.2, 5.4, { emissive: 0xff3020, emissiveIntensity: 2.0 });
-          return g;
-        }),
-        obj('Gas Station', 44, -42, () => {
-          const g = group('Gas Station');
-          // The shop.
-          box(g, 9, 5, 7, 0xf0ead8, -4, 2.5, 0);
-          box(g, 9.6, 0.4, 7.6, 0xd8451f, -4, 5.2, 0);
-          box(g, 6, 2.2, 0.3, 0x9fd8ff, -4, 3.0, 3.6, { emissive: 0x9fd8ff, emissiveIntensity: 0.5 });
-          // The canopy on two posts.
-          box(g, 12, 0.7, 9, 0xf0ead8, 5, 5.0, 0);
-          box(g, 12.4, 0.3, 9.4, 0xd8451f, 5, 5.45, 0);
-          for (const pz of [-3.2, 3.2]) {
-            cyl(g, 0.35, 0.4, 4.8, 0xc8ccd4, 1.5, 2.4, pz);
-            cyl(g, 0.35, 0.4, 4.8, 0xc8ccd4, 8.5, 2.4, pz);
-          }
-          // Two pumps.
-          for (const px of [3.5, 7]) {
-            box(g, 0.9, 1.9, 0.6, 0xd8d8d8, px, 1.0, 0);
-            box(g, 1.0, 0.6, 0.7, 0xd8451f, px, 2.1, 0);
-          }
-          // The price pylon.
-          box(g, 1.2, 7, 0.5, 0xf0ead8, -8.5, 3.5, -3.0);
-          box(g, 1.0, 3.2, 0.3, 0x1a1a1a, -8.5, 6.2, -3.0, { emissive: 0xff8a2a, emissiveIntensity: 0.8 });
-          return g;
-        }),
+        obj('Bodega', -22.5, 19.6, 'bodega'),
+        obj('School', 34.5, 27, 'school'),
+        obj('Library', 40, 54, 'library'),
+        obj('City Hall', -49.5, 92, 'cityHall'),
+        obj('Bank', -24, 92, 'bank'),
+        obj('Hospital', 26, 95, 'hospital'),
+        obj('Fire Station', 64, -39.5, 'fireStation'),
+        obj('Gas Station', 44, -42, 'gasStation'),
       ],
     },
     {
       id: 'homes', name: 'Homes & Yards', blurb: 'Where people live.',
       objects: [
-        obj('Apartment Block', -58, -22, () => {
-          const g = blockBuilding('Apartment Block', {
-            w: 16, h: 22, d: 13, wall: 0xc09070, trim: 0xe8d8c0, band: 0x8a5a44,
-            glass: 0xffe0a0, door: 0x5a4632, glow: 0.7,
-          });
-          // Balconies stacked up two faces.
-          for (let r = 0; r < 6; r++) {
-            box(g, 16.6, 0.25, 1.5, 0xe8d8c0, 0, 4 + r * 3.2, 7.2);
-            box(g, 1.5, 0.25, 13.6, 0xe8d8c0, 8.4, 4 + r * 32, 0);
-          }
-          return g;
-        }),
-        obj('Suburban House', -22, -68, () => {
-          const g = group('Suburban House');
-          box(g, 11, 5, 9, 0xe8d8c0, 0, 2.5, 0);
-          // Hipped roof in two slopes.
-          const roof = box(g, 12, 0.7, 10, 0x8a4a3a, 0, 5.4, 0, { rz: 0.0 });
-          cone(g, 8.0, 3.4, 0x8a4a3a, 0, 6.6, 0, { seg: 4, rz: Math.PI / 4, sy: 0.6 });
-          box(g, 1.2, 3.2, 1.2, 0x9a5a48, 3.5, 7.6, -2);
-          box(g, 2.0, 2.4, 0.3, 0xbfe0ff, -3, 3.0, 4.6, { emissive: 0xbfe0ff, emissiveIntensity: 0.5 });
-          box(g, 1.4, 2.6, 0.3, 0x5a4632, 1.5, 1.3, 4.6);
-          // Shrubs.
-          ball(g, 1.0, 0x4a7a3a, -4.5, 0.9, 5.2, { sy: 0.8 });
-          ball(g, 0.8, 0x4a7a3a, 4.0, 0.8, 5.0, { sy: 0.8 });
-          return g;
-        }),
-        obj('House Garage', -22, -49, () => {
-          const g = group('House Garage');
-          box(g, 9, 4.5, 8, 0xdad0bc, 0, 2.25, 0);
-          box(g, 9.6, 0.5, 8.6, 0x6a6a6a, 0, 4.7, 0);
-          // The roller door, in four slats.
-          for (let i = 0; i < 4; i++) box(g, 6.4, 0.7, 0.3, 0xc0c8d0, 0, 0.5 + i * 0.8, 4.1);
-          box(g, 7.0, 0.4, 0.5, 0x8a929a, 0, 4.2, 4.2);
-          // The little lamp over it.
-          ball(g, 0.28, 0xffe0a0, 0, 4.4, 4.5, { emissive: 0xffe0a0, emissiveIntensity: 1.6 });
-          return g;
-        }),
-        obj('Front Lawn Set', -22, -62, () => {
+        obj('Apartment Block', -58, -22, 'apartments'),
+        obj('Suburban House', -22, -68, 'houseStandard'),
+        obj('House Garage', -22, -49, 'houseGarage'),
+        obj('Front Lawn Set', -22, -67, () => {
           const g = group('Front Lawn Set');
-          plane(g, 12, 8, 0x5a8a44, 0, 0.02, 0);
-          // Hedge, mailbox, a tree.
-          box(g, 12, 1.0, 0.7, 0x3f6b33, 0, 0.5, -3.6);
-          cyl(g, 0.1, 0.1, 1.2, 0x6a4a2c, 4.5, 0.6, 3.4);
-          box(g, 0.5, 0.4, 0.9, 0x3a5a8a, 4.5, 1.3, 3.4);
-          cyl(g, 0.35, 0.5, 2.4, 0x6a4a2c, -3.5, 1.2, 2.6);
-          ball(g, 1.9, 0x4a7a3a, -3.5, 3.4, 2.6, { sy: 0.9 });
-          ball(g, 1.3, 0x5a8a44, -3.2, 4.4, 2.8, { sy: 0.9 });
+          frontYard(g, 11, 10);
           return g;
         }),
       ],
@@ -481,99 +352,23 @@ function cityCategories() {
     {
       id: 'street', name: 'Street Furniture', blurb: 'The ordinary town clutter.',
       objects: [
-        obj('Street Lamp', 6, -20, () => {
-          const g = group('Street Lamp');
-          cyl(g, 0.5, 0.7, 0.4, 0x4a4a4a, 0, 0.2, 0);
-          cyl(g, 0.16, 0.2, 6.4, 0x3a4048, 0, 3.4, 0);
-          box(g, 1.4, 0.16, 0.16, 0x3a4048, 0.6, 6.6, 0);
-          box(g, 0.9, 0.3, 0.5, 0xf0e8d0, 1.2, 6.4, 0, { emissive: 0xffe0a0, emissiveIntensity: 1.8 });
-          return g;
-        }),
-        obj('Traffic Light', 11, 11, () => {
-          const g = group('Traffic Light');
-          cyl(g, 0.45, 0.6, 0.4, 0x4a4a4a, 0, 0.2, 0);
-          cyl(g, 0.18, 0.22, 5.4, 0x2f3438, 0, 2.9, 0);
-          box(g, 0.7, 1.9, 0.6, 0x24282c, 0, 5.9, 0);
-          const cols = [0xff3b30, 0xffcc00, 0x34c759];
-          for (let i = 0; i < 3; i++) {
-            ball(g, 0.2, cols[i], 0, 6.6 - i * 0.6, 0.33, { emissive: cols[i], emissiveIntensity: i === 2 ? 1.8 : 0.15 });
-          }
-          box(g, 0.7, 0.16, 0.7, 0x24282c, 0, 5.0, 0);
-          return g;
-        }),
-        obj('Fire Hydrant', -12, 8, () => {
-          const g = group('Fire Hydrant');
-          cyl(g, 0.34, 0.4, 0.9, 0xd8323c, 0, 0.45, 0);
-          ball(g, 0.34, 0xd8323c, 0, 0.95, 0, { sy: 0.7 });
-          cyl(g, 0.1, 0.12, 0.3, 0x9a2020, 0, 1.2, 0);
-          cyl(g, 0.12, 0.12, 0.5, 0xb02a2a, 0, 0.6, 0, { rz: Math.PI / 2 });
-          cyl(g, 0.3, 0.34, 0.16, 0x8a1a1a, 0, 0.08, 0);
-          return g;
-        }),
-        obj('Bench', -8, 24, () => {
-          const g = group('Bench');
-          for (const sx of [-1.2, 1.2]) {
-            box(g, 0.2, 0.6, 0.7, 0x3a4048, sx, 0.3, 0);
-            box(g, 0.16, 1.1, 0.16, 0x3a4048, sx, 0.95, -0.3, { rz: 0.2 });
-          }
-          for (let i = 0; i < 3; i++) box(g, 3.0, 0.12, 0.24, 0x8a5a34, 0, 0.62, -0.24 + i * 0.26);
-          for (let i = 0; i < 3; i++) box(g, 3.0, 0.12, 0.2, 0x8a5a34, 0, 1.0 + i * 0.26, -0.34, { rx: 0.18 });
-          return g;
-        }),
-        obj('Mailbox', 16, 30, () => {
+        obj('Street Lamp', -14.5, -51.0, () => buildLampPost(-14.5, -51.0)),
+        obj('Traffic Light', 13.5, 13.5, () => buildTrafficLight(13.5, 13.5)),
+        obj('Fire Hydrant', -46, 14, () => buildFireHydrant(-46, 14)),
+        obj('Bench', 16, 60, () => buildBench(16, 60, 0)),
+        obj('Mailbox', -12.5, -54.25, () => {
           const g = group('Mailbox');
-          cyl(g, 0.08, 0.1, 1.1, 0x6a6a6a, 0, 0.55, 0);
-          box(g, 0.1, 0.1, 0.6, 0x6a6a6a, 0, 1.1, 0.3);
-          box(g, 0.6, 0.5, 1.1, 0x2a5fa8, 0, 1.3, 0.6);
-          const lid = cyl(g, 0.3, 0.3, 0.6, 0x2a5fa8, 0, 1.55, 0.6, { rx: Math.PI / 2 });
-          lid.scale.set(1, 1, 1);
-          box(g, 0.5, 0.12, 0.06, 0x1a3f78, 0, 1.5, 1.16);
+          kerbMailbox(g, 0, 0);
           return g;
         }),
-        obj('Parking Meter', 14, 6, () => {
-          const g = group('Parking Meter');
-          cyl(g, 0.22, 0.28, 0.16, 0x4a4a4a, 0, 0.08, 0);
-          cyl(g, 0.09, 0.1, 1.3, 0x555a60, 0, 0.75, 0);
-          box(g, 0.4, 0.6, 0.3, 0x6a7078, 0, 1.6, 0);
-          box(g, 0.28, 0.2, 0.06, 0xbfe0ff, 0, 1.72, 0.17, { emissive: 0x9fd8ff, emissiveIntensity: 0.6 });
-          return g;
-        }),
-        obj('Newspaper Box', -14, 20, () => {
+        obj('Parking Meter', -47, -32, () => buildParkingMeter(-47, -32, Math.atan2(32, 47))),
+        obj('Newspaper Box', -25.9, 13.7, () => {
           const g = group('Newspaper Box');
-          box(g, 1.0, 1.4, 0.7, 0x2a6a4a, 0, 0.7, 0);
-          box(g, 0.8, 0.5, 0.1, 0x101418, 0, 1.05, 0.37);
-          box(g, 0.5, 0.2, 0.06, 0xf0e8d0, 0, 1.05, 0.42, { emissive: 0xf0e8d0, emissiveIntensity: 0.3 });
-          box(g, 1.2, 0.1, 0.9, 0x1e4a34, 0, 1.45, 0);
+          newspaperRack(g, 0, 0);
           return g;
         }),
-        obj('Phone Booth', 30, 40, () => {
-          const g = group('Phone Booth');
-          box(g, 1.4, 0.15, 1.4, 0x2a3038, 0, 0.08, 0);
-          for (const [sx, sz] of [[-0.65, -0.65], [0.65, -0.65], [-0.65, 0.65], [0.65, 0.65]]) {
-            box(g, 0.14, 2.4, 0.14, 0x2a3038, sx, 1.2, sz);
-          }
-          box(g, 1.5, 0.2, 1.5, 0x2a3038, 0, 2.5, 0);
-          box(g, 1.36, 2.0, 0.1, 0x9fd8ff, 0, 1.3, -0.66, { opacity: 0.5, emissive: 0x9fd8ff, emissiveIntensity: 0.3 });
-          box(g, 1.2, 0.4, 0.06, 0xf0e8d0, 0, 2.2, 0.7, { emissive: 0xf0e8d0, emissiveIntensity: 0.5 });
-          return g;
-        }),
-        obj('Road Barrel', 4, -46, () => {
-          const g = group('Road Barrel');
-          cyl(g, 0.5, 0.62, 1.5, 0xe86a1e, 0, 0.75, 0);
-          cyl(g, 0.54, 0.54, 0.24, 0xf0f0f0, 0, 0.95, 0);
-          cyl(g, 0.58, 0.58, 0.18, 0xf0f0f0, 0, 0.45, 0);
-          cyl(g, 0.56, 0.56, 0.1, 0x2a2a2a, 0, 1.54, 0);
-          return g;
-        }),
-        obj('City Tree', 20, 8, () => {
-          const g = group('City Tree');
-          plane(g, 3.4, 3.4, 0x4a5a3a, 0, 0.02, 0);
-          cyl(g, 0.22, 0.4, 3.0, 0x5a3f28, 0, 1.5, 0);
-          ball(g, 1.7, 0x3f7a3a, 0, 4.0, 0, { sy: 0.85 });
-          ball(g, 1.2, 0x4a8a44, 0.7, 4.6, 0.4, { sy: 0.9 });
-          ball(g, 1.1, 0x4a8a44, -0.8, 4.4, -0.5, { sy: 0.9 });
-          return g;
-        }),
+        obj('Phone Booth', -27, 20, () => buildPhoneBooth(-27, 20, 0)),
+        obj('City Tree', 24, -74, () => buildTree(24, -74)),
       ],
     },
   ];
@@ -589,80 +384,29 @@ function houseCategories() {
     {
       id: 'living', name: 'Living Room', blurb: 'The long west room. The fireplace is on the far wall.',
       objects: [
-        obj('Fireplace', -85.5, 8, () => {
+        obj('Fireplace', FIREPLACE.x, FIREPLACE.z, () => {
           const g = group('Fireplace');
-          box(g, 5, 18, 5, 0x8a7a6a, -2, 9, -9.5);
-          box(g, 5, 18, 5, 0x8a7a6a, -2, 9, 9.5);
-          box(g, 5, 6, 14, 0x8a7a6a, -2, 15, 0);
-          box(g, 1, 12, 14, 0xd8d0c4, 0.5, 6, 0);
-          box(g, 7, 1.4, 26, 0x4a3020, -1.5, 19, 0);
-          // Coals and two logs, then the flame.
-          for (let i = 0; i < 9; i++) ball(g, 0.5, 0x2a1a12, 0.5, 0.2 + ((i * 3) % 2) * 0.2, -4 + (i / 8) * 8, { flat: true });
-          for (let i = 0; i < 2; i++) cyl(g, 0.6, 0.6, 8, 0x5a3f28, 0, 2 + i * 1.1, -1 + i * 2, { rx: Math.PI / 2 });
-          for (let i = 0; i < 7; i++) {
-            const a = (i / 7) * Math.PI * 2;
-            cone(g, 1.1, 4.4, 0xff8a1e, 1 + Math.cos(a) * 1.5, 3.6, Math.sin(a) * 3.4,
-              { emissive: 0xff7a10, emissiveIntensity: 2.4, opacity: 0.9 });
-          }
-          box(g, 14, 0.14, 18, 0x8a7a6a, 5.5, 0.07, 0);
+          buildFireplace(g, []);
           return g;
         }),
-        obj('Sofa', -60, 2, () => {
+        obj('Sofa', -72, 24, () => {
           const g = group('Sofa');
-          box(g, 9, 1.6, 4.0, 0x6a4a5a, 0, 0.9, 0);
-          box(g, 9, 1.8, 1.0, 0x7a5a6a, 0, 1.5, -1.5);
-          box(g, 1.2, 2.4, 4.0, 0x7a5a6a, -3.9, 1.3, 0);
-          box(g, 1.2, 2.4, 4.0, 0x7a5a6a, 3.9, 1.3, 0);
-          for (const sx of [-4.2, 4.2]) for (const sz of [-1.7, 1.7]) cyl(g, 0.14, 0.14, 0.4, 0x4a3020, sx, 0.2, sz);
-          box(g, 2.4, 0.4, 2.4, 0x8a6a7a, -1.2, 1.9, 0.4, { rx: 0.1 });
+          sofa(g, -72, 24, -Math.PI / 2);
           return g;
         }),
-        obj('Armchair', -50, 12, () => {
-          const g = group('Armchair');
-          box(g, 3.2, 1.4, 3.0, 0x4a5a6a, 0, 0.9, 0);
-          box(g, 3.2, 2.2, 0.9, 0x5a6a7a, 0, 1.6, -1.05);
-          box(g, 0.8, 1.8, 3.0, 0x5a6a7a, -1.2, 1.4, 0);
-          box(g, 0.8, 1.8, 3.0, 0x5a6a7a, 1.2, 1.4, 0);
-          for (const sx of [-1.3, 1.3]) for (const sz of [-1.2, 1.2]) cyl(g, 0.12, 0.12, 0.35, 0x4a3020, sx, 0.17, sz);
-          return g;
-        }),
-        obj('Coffee Table', -55, 12, () => {
+        obj('Coffee Table', -50, 14, () => {
           const g = group('Coffee Table');
-          box(g, 5.0, 0.24, 3.0, 0x8a6a44, 0, 1.3, 0);
-          box(g, 4.4, 0.16, 2.4, 0x6a4a2c, 0, 1.05, 0);
-          for (const sx of [-2.1, 2.1]) for (const sz of [-1.2, 1.2]) cyl(g, 0.14, 0.16, 1.2, 0x6a4a2c, sx, 0.6, sz);
-          // A mug and a magazine on top.
-          cyl(g, 0.22, 0.2, 0.3, 0xf0f0f0, 1.2, 1.57, 0.4);
-          box(g, 0.9, 0.06, 0.7, 0xd8451f, -1.0, 1.45, -0.3, { rz: 0.06 });
+          table(g, -50, 14, 20, 15, 2.2, 0, MAT.woodDark);
           return g;
         }),
-        obj('Bookcase', -30, -17.5, () => {
+        obj('Bookcase', -42, -16, () => {
           const g = group('Bookcase');
-          box(g, 6.0, 11.0, 1.4, 0x5a3f28, 0, 5.5, 0);
-          box(g, 5.4, 10.4, 0.2, 0x3a2a1c, 0, 5.6, 0.75);
-          // Four shelves of books, in a repeating colour run.
-          const cols = [0xa63a3a, 0x3a6aa6, 0x3a8a5a, 0xc8a83a, 0x8a3aa6];
-          for (let s = 0; s < 4; s++) {
-            box(g, 5.4, 0.16, 1.2, 0x4a3020, 0, 1.6 + s * 2.6, 0.5);
-            for (let i = 0; i < 16; i++) {
-              box(g, 0.22, 1.5 + ((i * 3) % 3) * 0.2, 0.9, cols[(i + s) % cols.length],
-                -2.5 + i * 0.33, 2.4 + s * 2.6, 0.5);
-            }
-          }
+          buildBookcase(g, -42, -16);
           return g;
         }),
-        obj('Standing Lamp', -34, 4, () => {
-          const g = group('Standing Lamp');
-          cyl(g, 0.5, 0.6, 0.16, 0x3a3038, 0, 0.08, 0);
-          cyl(g, 0.09, 0.11, 6.2, 0x6a5a48, 0, 3.2, 0);
-          cone(g, 1.3, 1.8, 0xf0e4c4, 0, 7.1, 0, { emissive: 0xffe0a0, emissiveIntensity: 1.4, opacity: 0.95 });
-          return g;
-        }),
-        obj('Area Rug', -60, 12, () => {
+        obj('Area Rug', -50, 16, () => {
           const g = group('Area Rug');
-          plane(g, 16, 10, 0x8a4a3a, 0, 0.03, 0);
-          plane(g, 13, 7.4, 0xc8a06a, 0, 0.04, 0);
-          plane(g, 10, 5.0, 0x6a3a5a, 0, 0.05, 0);
+          rug(g, -50, 16, 74, 50, MAT.rugLiving);
           return g;
         }),
       ],
@@ -670,58 +414,25 @@ function houseCategories() {
     {
       id: 'kitchen', name: 'Kitchen', blurb: 'Counters down two walls and a table in the middle.',
       objects: [
-        obj('Counter Run', -30, 92, () => {
+        obj('Counter Run', -22, 92, () => {
           const g = group('Counter Run');
-          box(g, 22, 3.0, 2.6, 0xd8d0c4, 0, 1.5, 0);
-          box(g, 22.4, 0.24, 2.9, 0x3a3a3a, 0, 3.1, 0);
-          // Doors and drawers.
-          for (let i = 0; i < 8; i++) box(g, 2.4, 2.2, 0.12, 0xc0b8ac, -9.5 + i * 2.7, 1.4, 1.36);
-          for (let i = 0; i < 4; i++) box(g, 0.16, 0.5, 0.14, 0x8a8a8a, -9.5 + i * 2.7 * 2 + 1.35, 1.9, 1.44);
-          // The sink and a tap.
-          box(g, 3.4, 0.3, 1.8, 0xc0c8d0, 4, 3.2, 0);
-          cyl(g, 0.1, 0.1, 1.0, 0xc0c8d0, 4, 3.6, -0.6);
-          box(g, 0.1, 0.1, 0.7, 0xc0c8d0, 4, 4.0, -0.3);
+          counterRun(g, -22, 92.45, 20, 0, 'x', false);
+          return g;
+        }),
+        obj('Cupboard', ROOMS.kitchen.x0 + 3.1, 54, () => {
+          const g = group('Cupboard');
+          counterRun(g, ROOMS.kitchen.x0 + 3.1, 54, 12, 0, 'z', false);
           return g;
         }),
         obj('Fridge', -40, 92, () => {
           const g = group('Fridge');
-          box(g, 3.2, 7.0, 2.8, 0xe8e8e8, 0, 3.5, 0);
-          box(g, 3.3, 0.14, 2.9, 0xc0c0c0, 0, 4.4, 0);
-          box(g, 0.14, 1.8, 0.16, 0x9a9a9a, 1.3, 5.6, 1.45);
-          box(g, 0.14, 1.2, 0.16, 0x9a9a9a, 1.3, 2.6, 1.45);
-          box(g, 1.2, 1.0, 0.06, 0xf0e8d0, -0.6, 5.4, 1.42, { emissive: 0xff5533, emissiveIntensity: 0.4 });
+          fridge(g, -40.5, 90.5, Math.PI);
           return g;
         }),
-        obj('Kitchen Table', -20, 70, () => {
+        obj('Kitchen Table', -19, 64, () => {
           const g = group('Kitchen Table');
-          box(g, 9.0, 0.3, 5.0, 0xc0a878, 0, 3.0, 0);
-          box(g, 8.4, 0.2, 4.4, 0xa08858, 0, 2.6, 0);
-          for (const [sx, sz] of [[-3.8, -2.0], [3.8, -2.0], [-3.8, 2.0], [3.8, 2.0]]) {
-            box(g, 0.4, 2.9, 0.4, 0xa08858, sx, 1.45, sz);
-          }
-          // Four chairs, two a side.
-          for (const [cx, cz, ry] of [[-2.6, -3.4, 0], [0, -3.4, 0], [-2.6, 3.4, Math.PI], [0, 3.4, Math.PI]]) {
-            const ch = group('chair');
-            box(ch, 1.5, 0.16, 1.5, 0xa08858, 0, 1.5, 0);
-            box(ch, 1.5, 2.0, 0.16, 0xa08858, 0, 2.5, -0.7);
-            for (const [lx, lz] of [[-0.6, -0.6], [0.6, -0.6], [-0.6, 0.6], [0.6, 0.6]]) {
-              box(ch, 0.16, 1.5, 0.16, 0x8a7048, lx, 0.75, lz);
-            }
-            ch.position.set(cx, 0, cz);
-            ch.rotation.y = ry;
-            g.add(ch);
-          }
-          return g;
-        }),
-        obj('Cupboard', -12, 92, () => {
-          const g = group('Cupboard');
-          box(g, 5.0, 8.0, 2.4, 0xc0b090, 0, 4, 0);
-          box(g, 4.6, 7.4, 0.16, 0xa89070, 0, 4.1, 1.26);
-          for (let i = 0; i < 3; i++) {
-            box(g, 4.6, 0.14, 0.2, 0x8a7050, 0, 2.4 + i * 2.4, 1.3);
-            cyl(g, 0.12, 0.12, 0.5, 0xc0c0c0, -0.7, 2.4 + i * 2.4, 1.36, { rz: Math.PI / 2 });
-            cyl(g, 0.12, 0.12, 0.5, 0xc0c0c0, 0.7, 2.4 + i * 2.4, 1.36, { rz: Math.PI / 2 });
-          }
+          table(g, -19, 64, 20, 16, 4.6, 0, MAT.woodPale);
+          for (let i = 0; i < 3; i++) chair(g, -26 + i * 7, 53, 0);
           return g;
         }),
       ],
@@ -729,52 +440,23 @@ function houseCategories() {
     {
       id: 'dining', name: 'Dining Room', blurb: 'A long table and a good lamp.',
       objects: [
-        obj('Dining Table', 28, 70, () => {
+        obj('Dining Table', 27, 70, () => {
           const g = group('Dining Table');
-          box(g, 14.0, 0.36, 5.4, 0x6a4a2c, 0, 3.0, 0);
-          box(g, 13.0, 0.24, 4.6, 0x5a3f24, 0, 2.6, 0);
-          for (const sx of [-5.6, 5.6]) box(g, 1.0, 2.9, 4.4, 0x5a3f24, sx, 1.45, 0);
-          // Six chairs, three a side.
-          for (let i = 0; i < 3; i++) {
-            for (const sz of [-3.5, 3.5]) {
-              const ch = group('chair');
-              box(ch, 1.6, 0.16, 1.6, 0x5a3f24, 0, 1.6, 0);
-              box(ch, 1.6, 2.2, 0.16, 0x5a3f24, 0, 2.7, -0.72);
-              for (const [lx, lz] of [[-0.62, -0.62], [0.62, -0.62], [-0.62, 0.62], [0.62, 0.62]]) {
-                box(ch, 0.18, 1.6, 0.18, 0x4a3320, lx, 0.8, lz);
-              }
-              ch.position.set(-4.6 + i * 4.6, 0, sz);
-              ch.rotation.y = sz > 0 ? Math.PI : 0;
-              g.add(ch);
-            }
+          table(g, 27, 70, 24, 16, 4.4, 0, MAT.wood);
+          for (const s of [-1, 1]) {
+            for (let i = 0; i < 2; i++) chair(g, 27 + s * 14, 62 + i * 8, s > 0 ? -Math.PI / 2 : Math.PI / 2);
           }
-          // A fruit bowl in the middle.
-          cyl(g, 1.4, 0.8, 0.5, 0xd8c8a0, 0, 3.4, 0);
-          for (let i = 0; i < 5; i++) ball(g, 0.35, i % 2 ? 0xd8451f : 0xe0b02a, (i - 2) * 0.5, 3.7, ((i * 3) % 2) * 0.5);
+          for (let i = 0; i < 2; i++) chair(g, 21 + i * 12, 82, Math.PI);
           return g;
         }),
-        obj('Sideboard', 48, 92, () => {
+        obj('Sideboard', 45.5, 87, () => {
           const g = group('Sideboard');
-          box(g, 8.0, 4.0, 2.2, 0x5a3f24, 0, 2.0, 0);
-          box(g, 8.4, 0.24, 2.5, 0x4a3320, 0, 4.1, 0);
-          for (let i = 0; i < 3; i++) {
-            box(g, 2.3, 2.6, 0.14, 0x4a3320, -2.6 + i * 2.6, 1.9, 1.16);
-            box(g, 0.14, 0.5, 0.16, 0xc0a860, -2.6 + i * 2.6, 2.6, 1.24);
-          }
-          cyl(g, 0.9, 1.1, 0.7, 0x3a6a4a, -2.4, 4.6, 0);
-          ball(g, 0.5, 0x4a8a5a, -2.4, 5.4, 0);
-          ball(g, 0.4, 0x5a9a6a, -1.7, 5.2, 0.3);
+          buildSideboard(g, 45.5, 87);
           return g;
         }),
-        obj('Chandelier', 28, 70, () => {
+        obj('Chandelier', 27, 70, () => {
           const g = group('Chandelier');
-          cyl(g, 0.05, 0.05, 3.0, 0xc0a860, 0, 1.5, 0);
-          cyl(g, 1.5, 0.4, 0.5, 0xc0a860, 0, 4.0, 0);
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2;
-            ball(g, 0.28, 0xfff0c0, Math.cos(a) * 1.5, 4.4, Math.sin(a) * 1.5,
-              { emissive: 0xffd06a, emissiveIntensity: 1.6 });
-          }
+          ceilingLight(g, [], 27, 70, 9, 30, 60);
           return g;
         }),
       ],
@@ -784,38 +466,17 @@ function houseCategories() {
       objects: [
         obj('Front Door', 90, 68, () => {
           const g = group('Front Door');
-          box(g, 0.6, 12.0, 20.0, 0xd8cdb8, 0, 6, 0);
-          box(g, 0.4, 10.0, 16.0, 0x6a4a2c, -0.2, 5, 0);
-          box(g, 0.5, 0.5, 17.0, 0x4a3320, -0.2, 9.6, 0);
-          // Deadbolt, hasp and padlock: it is shut, and that is the point of it.
-          cyl(g, 0.3, 0.3, 0.4, 0xc0c0c0, -0.45, 6.5, 4.0, { rz: Math.PI / 2 });
-          box(g, 0.3, 1.0, 1.6, 0x9aa0a8, -0.4, 4.2, -5.0);
-          box(g, 0.5, 0.9, 0.7, 0xc8ccd0, -0.6, 3.6, -5.0);
-          ball(g, 0.22, 0x8a8a8a, -0.85, 3.4, -5.0);
+          buildFrontDoor(g, HOUSE.wall);
           return g;
         }),
-        obj('Hall Table', 70, 92, () => {
+        obj('Hall Table', 83, 70, () => {
           const g = group('Hall Table');
-          box(g, 4.0, 0.2, 1.8, 0x6a4a2c, 0, 2.4, 0);
-          box(g, 3.6, 0.3, 1.4, 0x5a3f24, 0, 2.1, 0);
-          for (const sx of [-1.6, 1.6]) box(g, 0.24, 2.3, 1.4, 0x5a3f24, sx, 1.15, 0);
-          cyl(g, 0.5, 0.7, 0.9, 0x3a6a7a, -1.0, 3.0, 0);
-          for (let i = 0; i < 4; i++) ball(g, 0.3, 0x4a8a5a, -1.3 + i * 0.2, 3.9, (i % 2) * 0.3);
-          cyl(g, 0.3, 0.35, 0.5, 0xf0f0f0, 1.2, 2.8, 0.2);
+          table(g, 83, 70, 8, 30, 3.4, 0, MAT.wood);
           return g;
         }),
-        obj('Coat Rack', 60, 50, () => {
+        obj('Coat Rack', 68, 53, () => {
           const g = group('Coat Rack');
-          cyl(g, 0.5, 0.6, 0.2, 0x5a3f24, 0, 0.1, 0);
-          cyl(g, 0.14, 0.16, 5.0, 0x5a3f24, 0, 2.5, 0);
-          for (let i = 0; i < 4; i++) {
-            const a = (i / 4) * Math.PI * 2;
-            cyl(g, 0.08, 0.08, 0.6, 0x5a3f24, Math.cos(a) * 0.4, 4.7, Math.sin(a) * 0.4, { rz: Math.cos(a) * 0.8, rx: Math.sin(a) * 0.8 });
-          }
-          // Two coats hanging.
-          for (const [ca, col] of [[0.6, 0x3a5a8a], [3.4, 0x8a3a3a]]) {
-            box(g, 1.2, 3.0, 0.5, col, Math.cos(ca) * 0.9, 2.9, Math.sin(ca) * 0.9);
-          }
+          buildCoatRack(g, 68, 53);
           return g;
         }),
       ],
@@ -823,52 +484,25 @@ function houseCategories() {
     {
       id: 'bedrooms', name: 'Bedrooms', blurb: 'Two beds either side of the walk-in.',
       objects: [
-        obj('Bed', -66, -50, () => {
+        obj('Bed', -68, -58, () => {
           const g = group('Bed');
-          box(g, 8.0, 1.4, 10.0, 0x5a3f24, 0, 0.7, 0);
-          box(g, 8.6, 1.2, 10.6, 0xf0ece4, 0, 1.7, 0);
-          box(g, 8.8, 3.0, 0.6, 0x4a3320, 0, 2.4, -5.2);
-          box(g, 7.4, 0.6, 2.4, 0xf0ece4, 0, 2.5, -3.4);
-          box(g, 7.8, 0.3, 6.0, 0x6a8ab4, 0, 2.4, 1.4);
+          bed(g, -68, -58, 16, 22, 0, MAT.quilt);
           return g;
         }),
-        obj('Bedroom Desk', -80, -50, () => {
-          const g = group('Bedroom Desk');
-          box(g, 6.0, 0.24, 3.0, 0x8a6a44, 0, 3.0, 0);
-          box(g, 1.6, 2.6, 2.6, 0x7a5a38, 2.0, 1.3, 0);
-          for (let i = 0; i < 3; i++) box(g, 1.4, 0.7, 0.14, 0x6a4a2c, 2.0, 0.6 + i * 0.9, 1.36);
-          cyl(g, 0.5, 0.5, 0.1, 0x2a3038, -1.2, 3.2, 0, { rx: -0.4 });
-          cyl(g, 0.1, 0.14, 0.6, 0x2a3038, -1.2, 2.9, 0.4);
-          box(g, 1.2, 0.1, 1.0, 0xf0e8d0, 1.0, 3.15, 0.4);
-          return g;
-        }),
-        obj('Bedroom Chair', -70, -44, () => {
-          const g = group('Bedroom Chair');
-          box(g, 1.8, 0.2, 1.8, 0x8a6a44, 0, 1.6, 0);
-          box(g, 1.8, 2.4, 0.2, 0x8a6a44, 0, 2.8, -0.8);
-          for (const [lx, lz] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]]) {
-            box(g, 0.18, 1.6, 0.18, 0x7a5a38, lx, 0.8, lz);
-          }
-          return g;
-        }),
-        obj('Wardrobe', -86, -70, () => {
+        obj('Wardrobe', -85.5, -70, () => {
           const g = group('Wardrobe');
-          box(g, 7.0, 12.0, 2.6, 0x6a4a2c, 0, 6, 0);
-          for (const sx of [-1.7, 1.7]) {
-            box(g, 3.2, 11.0, 0.16, 0x5a3f24, sx, 6, 1.36);
-            cyl(g, 0.1, 0.1, 0.8, 0xc0a860, sx * 0.3, 6, 1.46);
-          }
-          box(g, 7.4, 0.5, 2.9, 0x5a3f24, 0, 12.2, 0);
+          wardrobe(g, -85.5, -70, 12, Math.PI / 2);
           return g;
         }),
-        obj('Nightstand', -58, -55, () => {
-          const g = group('Nightstand');
-          box(g, 2.2, 3.0, 2.0, 0x6a4a2c, 0, 1.5, 0);
-          for (let i = 0; i < 2; i++) {
-            box(g, 1.8, 1.0, 0.14, 0x5a3f24, 0, 0.9 + i * 1.4, 1.06);
-            box(g, 0.5, 0.16, 0.18, 0xc0a860, 0, 0.9 + i * 1.4, 1.16);
-          }
-          cyl(g, 0.4, 0.5, 0.7, 0xf0e8d0, 0, 3.4, 0, { emissive: 0xffe0a0, emissiveIntensity: 1.2 });
+        obj('Bedroom Desk', -66, -34, () => {
+          const g = group('Bedroom Desk');
+          table(g, -66, -34, 10, 16, 3.2, 0, MAT.wood);
+          tableLamp(g, [], -70, 3.2, -34, 14);
+          return g;
+        }),
+        obj('Bedroom Chair', 30, -35, () => {
+          const g = group('Bedroom Chair');
+          chair(g, 30, -35, Math.PI);
           return g;
         }),
       ],
@@ -876,36 +510,24 @@ function houseCategories() {
     {
       id: 'bathroom', name: 'Bathroom', blurb: 'Tub, sink, and a mirror.',
       objects: [
-        obj('Bathtub', 80, 8, () => {
+        obj('Bathtub', 74.5, 30, () => {
           const g = group('Bathtub');
-          box(g, 4.0, 2.6, 9.0, 0xf0f0ec, 0, 1.3, 0);
-          box(g, 3.2, 2.2, 8.0, 0xd8e4ec, 0, 1.5, 0);
-          cyl(g, 0.12, 0.12, 1.2, 0xc0c8d0, 0, 3.0, -4.0);
-          box(g, 0.12, 0.12, 0.8, 0xc0c8d0, 0, 3.5, -3.6);
-          for (const sz of [-3.4, 0, 3.4]) cyl(g, 0.09, 0.09, 0.6, 0xa8b0b8, 1.6, 3.0, sz);
+          tub(g, 74.5, 30, Math.PI / 2);
           return g;
         }),
-        obj('Sink', 60, -10, () => {
+        obj('Sink', 87, 4, () => {
           const g = group('Sink');
-          cyl(g, 0.4, 0.45, 3.2, 0x6a4a2c, 0, 1.6, 0);
-          cyl(g, 1.4, 0.9, 0.9, 0xf0f0ec, 0, 3.6, 0);
-          cyl(g, 1.1, 0.7, 0.5, 0xd8e4ec, 0, 3.9, 0);
-          cyl(g, 0.1, 0.1, 0.7, 0xc0c8d0, 0, 4.3, -0.7);
-          box(g, 0.1, 0.1, 0.5, 0xc0c8d0, 0, 4.6, -0.5);
+          sinkUnit(g, 87, 4, -Math.PI / 2);
           return g;
         }),
         obj('Mirror', 66, -10, () => {
           const g = group('Mirror');
-          box(g, 4.0, 6.0, 0.3, 0x8a6a44, 0, 4.5, 0);
-          box(g, 3.4, 5.4, 0.16, 0xd8ecf4, 0, 4.5, 0.2, { metalness: 0.7, roughness: 0.06 });
+          buildWallMirror(g, 66, -10);
           return g;
         }),
-        obj('Toilet', 86, -12, () => {
+        obj('Toilet', 87, -13, () => {
           const g = group('Toilet');
-          cyl(g, 1.2, 1.0, 3.0, 0xf0f0ec, 0, 1.5, -0.8);
-          cyl(g, 1.4, 1.1, 0.9, 0xf0f0ec, 0, 0.9, 0.6);
-          cyl(g, 1.25, 1.0, 0.24, 0xd8e4ec, 0, 1.45, 0.6);
-          box(g, 1.9, 1.0, 0.7, 0xf0f0ec, 0, 3.4, -1.4);
+          toilet(g, 87, -13, Math.PI);
           return g;
         }),
       ],
@@ -913,86 +535,31 @@ function houseCategories() {
     {
       id: 'garage', name: 'Dark Garage', blurb: 'Pitch dark, and the only way out.',
       objects: [
-        obj('Workbench', -70, 88, () => {
+        obj('Workbench', -66, 52, () => {
           const g = group('Workbench');
-          box(g, 10.0, 0.4, 3.0, 0x8a6a44, 0, 3.0, 0);
-          box(g, 9.4, 0.3, 2.6, 0x6a4a2c, 0, 2.5, 0);
-          for (const sx of [-4.2, 4.2]) {
-            box(g, 0.4, 3.0, 0.4, 0x6a4a2c, sx, 1.5, -1.1);
-            box(g, 0.4, 3.0, 0.4, 0x6a4a2c, sx, 1.5, 1.1);
-          }
-          // A vice and a scatter of tools on the top.
-          box(g, 0.9, 0.6, 0.6, 0x4a4a4a, -3.0, 3.5, 0);
-          box(g, 1.6, 0.3, 0.4, 0x8a9098, -3.0, 3.4, 0.5);
-          for (let i = 0; i < 4; i++) box(g, 0.16, 0.1, 1.2, 0x9aa0a8, 1.0 + i * 0.4, 3.25, 0.4);
-          // Pegboard behind, hung with spanners.
-          box(g, 9.0, 4.0, 0.2, 0x7a6a52, 0, 5.4, -1.6);
-          for (let i = 0; i < 8; i++) box(g, 0.3, 1.0, 0.1, 0xb0b6bc, -3.4 + i * 0.95, 5.6, -1.48);
+          buildWorkbench(g, -66, 52);
           return g;
         }),
-        obj('Tool Chest', -84, 84, () => {
-          const g = group('Tool Chest');
-          box(g, 4.0, 5.0, 2.2, 0xc03a2a, 0, 2.5, 0);
-          for (let i = 0; i < 5; i++) {
-            box(g, 3.6, 0.7, 0.14, 0xa02a1a, 0, 0.8 + i * 0.9, 1.16);
-            box(g, 1.4, 0.16, 0.18, 0xc8ccd0, 0, 0.8 + i * 0.9, 1.26);
-          }
-          for (const sx of [-1.6, 1.6]) for (const sz of [-0.8, 0.8]) cyl(g, 0.22, 0.22, 0.3, 0x2a2a2a, sx, 0.15, sz, { rx: Math.PI / 2 });
-          return g;
-        }),
-        obj('Car Jack', -60, 60, () => {
-          const g = group('Car Jack');
-          box(g, 3.4, 0.5, 1.2, 0x2a3a4a, 0, 0.4, 0);
-          box(g, 1.6, 0.9, 1.0, 0x3a4a5a, 0, 1.0, 0, { rz: 0.3 });
-          cyl(g, 0.1, 0.1, 1.6, 0xc0c8d0, 1.2, 1.0, 0, { rz: 0.6 });
-          box(g, 0.6, 0.16, 0.16, 0xc0c8d0, 1.9, 1.4, 0);
-          for (const sz of [-0.7, 0.7]) for (const sx of [-1.4, 1.4]) cyl(g, 0.4, 0.4, 0.3, 0x2a2a2a, sx, 0.2, sz, { rx: Math.PI / 2 });
-          return g;
-        }),
-        obj('Paint Cans', -50, 50, () => {
-          const g = group('Paint Cans');
-          const cols = [0x3a6aa6, 0xa63a3a, 0x3a8a5a, 0xc8a83a];
-          cols.forEach((c, i) => {
-            cyl(g, 1.0, 1.0, 1.8, 0xd0d0d0, (i % 2) * 2.4, 0.9, Math.floor(i / 2) * 2.4);
-            cyl(g, 1.02, 1.02, 0.2, c, (i % 2) * 2.4, 1.7, Math.floor(i / 2) * 2.4);
-          });
-          return g;
-        }),
-        obj('Tyre Stack', -84, 60, () => {
+        obj('Tyre Stack', -54, 53, () => {
           const g = group('Tyre Stack');
-          for (let i = 0; i < 4; i++) {
-            const t = cyl(g, 1.6, 1.6, 0.9, 0x1a1a1a, 0, 0.5 + i * 0.95, 0);
-            t.material = mat(0x1a1a1a, { roughness: 0.95 });
-          }
-          cyl(g, 0.7, 0.7, 0.2, 0x8a8a8a, 0, 0.9, 0);
+          buildTyreStack(g, -54, 53);
           return g;
         }),
       ],
     },
     // The rides. Every one of these is a shape you can pick from the gear menu
     // and drive, which is why they are here rather than filed under traffic: the
-    // point of browsing them is to see what you are allowed to get into.
+    // point of browsing them is to see what you are allowed to get into. Each
+    // build is the REAL garage vehicle from cars.js.
     {
       id: 'rides', name: 'Rides', blurb: 'Everything you can climb into and drive.',
       objects: [
-        obj('Fire Truck', 45, 0, () => vehicle(0xc8202a, {
-          cab: [-1.9, 1.5], box: [1.1, 1.9], ladder: true, lightbar: true, nozzle: true,
-        })),
-        obj('Taco Truck', -22, 6, () => vehicle(0xd8451f, {
-          cab: [-1.9, 1.45], box: [1.1, 1.85], hatch: true, sign: true, awning: true,
-        })),
-        obj('Monster Truck', 0, 0, () => vehicle(0x7b2fbf, {
-          cab: [-1.3, 1.3], box: [1.1, 1.0], wheels: 1.15, lift: 0.55,
-        })),
-        obj('Steamroller', 0, 0, () => vehicle(0xf2b705, {
-          cab: [-1.5, 1.7], box: [1.0, 1.2], roller: true,
-        })),
-        obj('School Bus', 0, 0, () => vehicle(0xf5a623, {
-          cab: [-2.3, 1.5], box: [1.2, 1.8], long: true, windows: true,
-        })),
-        obj('Indy 500', 0, 0, () => vehicle(0x1f5af5, {
-          cab: [-0.4, 0.75], openWheel: true, spoiler: true,
-        })),
+        obj('Fire Truck', 45, 0, () => createFiretruck()),
+        obj('Taco Truck', -22, 6, () => createTacoTruck()),
+        obj('Monster Truck', 0, 0, () => createMonsterTruck()),
+        obj('Steamroller', 0, 0, () => createSteamroller()),
+        obj('School Bus', 0, 0, () => createSchoolBus()),
+        obj('Indy 500', 0, 0, () => createIndyCar()),
       ],
     },
   ];
@@ -1215,254 +782,84 @@ function undergroundCategories() {
     {
       id: 'glasscity', name: 'The Glass City', blurb: 'The neon towers on the far north strip.',
       objects: [
-        obj('Glass Tower', 0, 152, () => {
+        obj('Glass Tower', -126, 152, () => {
           const g = group('Glass Tower');
-          const h = 20;
-          box(g, 7, h, 7, 0x7fd0ff, 0, h / 2, 0, { opacity: 0.55, metalness: 0.2, roughness: 0.1 });
-          box(g, 4.6, h - 2, 4.6, 0x9fe4ff, 0, h / 2, 0, { emissive: 0x2f8fe0, emissiveIntensity: 1.2, opacity: 0.7 });
-          box(g, 7.6, 0.8, 7.6, 0xbfe8ff, 0, h + 0.4, 0, { emissive: 0x2f8fe0, emissiveIntensity: 0.8 });
-          for (let i = 1; i < 5; i++) box(g, 7.4, 0.2, 7.4, 0xdff2ff, 0, i * 4, 0, { emissive: 0x2f8fe0, emissiveIntensity: 0.6 });
+          makeTower(g, -126, 152, 7, 24, 1);
           return g;
         }),
         obj('Citadel Spire', 4, 152, () => {
           const g = group('Citadel Spire');
-          const spire = new THREE.Mesh(new THREE.OctahedronGeometry(2.6), mat(0xbfe8ff, { emissive: 0x2f8fe0, emissiveIntensity: 1.6 }));
-          spire.scale.set(1, 4.4, 1);
-          spire.position.y = 11.5;
-          g.add(spire);
-          cyl(g, 2.6, 3.4, 1.2, 0x9fe4ff, 0, 0.6, 0, { emissive: 0x2f8fe0, emissiveIntensity: 0.7 });
-          const halo = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.14, 8, 32), mat(0x7fd0ff, { emissive: 0x7fd0ff, emissiveIntensity: 2.0 }));
-          halo.rotation.x = Math.PI / 2;
-          halo.position.y = 1.4;
-          g.add(halo);
+          makeCitadelSpire(g, 4, 152);
           return g;
         }),
-        obj('Balloon Plaza', 34, 154, () => {
+        obj('Balloon Plaza', 44, 154, () => {
           const g = group('Balloon Plaza');
-          box(g, 34, 0.25, 22, 0xe6e2d8, 0, 0.12, 0);
-          for (let i = 0; i < 7; i++) {
-            const a = (i / 7) * Math.PI * 2;
-            const x = Math.cos(a) * 11, z = Math.sin(a) * 8;
-            const col = [0x3a8ad8, 0xd84a8a, 0xd8a83a, 0x3ad88a][i % 4];
-            const b = ball(g, 2.6, col, x, 5.0, z, { sy: 1.25, emissive: col, emissiveIntensity: 0.35 });
-            cyl(g, 0.08, 0.08, 3.0, 0xf0f0f0, x, 1.6, z);
-            void b;
-          }
+          makeOrchardPlaza(g, 44, 154);
           return g;
         }),
-        obj('Tableau Dancers', -96, 143, () => {
-          const g = group('Tableau Dancers');
-          box(g, 7, 0.4, 7, 0x3a4a6a, 0, 0.2, 0);
-          box(g, 6.4, 6.0, 0.3, 0x7fc0ff, 0, 3.2, -3.2, { emissive: 0x2f6fbf, emissiveIntensity: 0.7, opacity: 0.6 });
-          for (let i = 0; i < 3; i++) {
-            const x = -2 + i * 2;
-            cyl(g, 0.5, 0.4, 3.0, 0xd8c0a8, x, 1.8, 0);
-            ball(g, 0.45, 0xe8d0b8, x, 3.6, 0);
-            box(g, 1.6, 0.2, 0.4, 0xd84a8a, x, 2.6, 0.6, { rx: 0.5 });
-            cyl(g, 0.16, 0.16, 2.2, 0xe8d0b8, x - 0.5, 4.4, 0.6, { rz: 0.8 });
-            cyl(g, 0.16, 0.16, 2.2, 0xe8d0b8, x + 0.5, 4.4, 0.6, { rz: -0.8 });
-          }
+        obj('Tableau Shop', -96, 143, () => {
+          const g = group('Tableau Shop');
+          makeTableauShop(g, -96, 143, 0x4a7fd4, [0xe8d3a0, 0xb0c4e8, 0xe8a0b4]);
           return g;
         }),
         // Named by their colour, and they have to be: `?objects=<name>` identifies an
         // object by its name, so two ghosts both called "Street Ghost" would make
         // the back button and a refresh ambiguous about which one you were
         // looking at.
-        obj('Red Street Ghost', 0, 152, () => buildGhostFigure(0xff4d4d)),
-        obj('Green Street Ghost', -60, 152, () => buildGhostFigure(0x4dff9c)),
+        obj('Blue Street Ghost', -36, 143, () => {
+          const g = group('Blue Street Ghost');
+          makeGhost(g, -36, 143, 0x9fd8ff);
+          return g;
+        }),
+        obj('Pink Street Ghost', 44, 143, () => {
+          const g = group('Pink Street Ghost');
+          makeGhost(g, 44, 143, 0xffb0e0);
+          return g;
+        }),
       ],
     },
   ];
 }
 
-// The two street ghosts, as they appear in the Glass City: a dome, a scalloped
-// skirt and two big eyes. Shared by the catalogue and (in its own colours) by
-// the real ones in the level.
-function buildGhostFigure(color) {
-  const g = group('Street Ghost');
-  const body = mat(color, { emissive: color, emissiveIntensity: 0.9, opacity: 0.85 });
-  const head = ball(g, 2.0, color, 0, 3.0, 0, { sy: 1.05, emissive: color, emissiveIntensity: 0.9, opacity: 0.85 });
-  head.material = body;
-  // The scalloped skirt: five lobes around the bottom.
-  for (let i = 0; i < 5; i++) {
-    const a = (i / 5) * Math.PI * 2;
-    ball(g, 1.5, color, Math.cos(a) * 1.5, 0.9, Math.sin(a) * 1.5, { sy: 0.8, emissive: color, emissiveIntensity: 0.9, opacity: 0.85 });
-  }
-  // Two eyes and a mouth.
-  for (const sx of [-0.72, 0.72]) {
-    const e = ball(g, 0.52, 0xffffff, sx, 3.5, 1.75);
-    e.material = mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.6 });
-    ball(g, 0.24, 0x101018, sx, 3.45, 2.1);
-  }
-  box(g, 1.3, 0.34, 0.2, 0x101018, 0, 2.2, 1.9);
-  return g;
-}
-
 // ===== RAMPWORLD =====
 
 function rampCategories() {
+  // The velodrome, the skatepark and the bumpy-object field are pure terrain
+  // (height functions in rampworld/index.js), and the half-pipe / quarter-pipe /
+  // fun-box ramps are terrain too. They are not objects you can stand next to, so
+  // they are not in the browser. Everything that IS a real machine delegates to
+  // the rampworld builders, which are given a throwaway Group as their scene and
+  // a flat height function so they build exactly what the world builds.
+  const fresh = () => new THREE.Group();
+  const flat = () => 0;
   return [
     {
       id: 'course', name: 'The Course', blurb: 'The hills and the big set pieces.',
       objects: [
-        obj('Velodrome Bowl', -48, 5, () => {
-          const g = group('Velodrome Bowl');
-          // A banked oval: a torus squashed flat and banked round its rim.
-          const bowl = new THREE.Mesh(new THREE.TorusGeometry(34, 7, 16, 64), mat(0x9c6b38, { roughness: 0.9 }));
-          bowl.rotation.x = Math.PI / 2;
-          bowl.scale.set(1, 1, 0.62);
-          bowl.position.y = 2.6;
-          bowl.castShadow = true;
-          g.add(bowl);
-          const lip = new THREE.Mesh(new THREE.TorusGeometry(41, 0.8, 8, 72), mat(0x6a4a2c, { roughness: 0.85 }));
-          lip.rotation.x = Math.PI / 2;
-          lip.scale.set(1, 1, 0.62);
-          lip.position.y = 8.6;
-          g.add(lip);
-          // The flat infield.
-          plane(g, 74, 46, 0xb8895a, 0, 0.05, 0);
-          return g;
-        }),
         obj('Wheel of Death', 35, -5, () => {
-          const g = group('Wheel of Death');
-          const rim = new THREE.Mesh(new THREE.TorusGeometry(9.5, 0.5, 10, 48), mat(0xc03a2a, { roughness: 0.6 }));
-          g.add(rim);
-          for (let i = 0; i < 8; i++) {
-            const a = (i / 8) * Math.PI * 2;
-            cyl(g, 0.22, 0.22, 19, 0xd8d8d8, 0, 0, 0).rotation.z = 0;
-            const spoke = cyl(g, 0.22, 0.22, 19, 0xd8d8d8, 0, 0, 0);
-            spoke.rotation.z = a;
-            g.add(spoke);
-          }
-          // Four paddles on the rim, the bits that fling you.
-          for (let i = 0; i < 4; i++) {
-            const a = (i / 4) * Math.PI * 2 + 0.4;
-            box(g, 2.6, 0.8, 1.6, 0xf0a020, Math.cos(a) * 9.5, Math.sin(a) * 9.5, 0, { rz: a + Math.PI / 2 });
-          }
-          // The A-frame legs.
-          for (const sx of [-4, 4]) {
-            box(g, 0.7, 14.0, 0.7, 0x8a8a92, sx, 0, -6, { rx: 0.3 });
-            box(g, 0.7, 14.0, 0.7, 0x8a8a92, sx, 0, 6, { rx: -0.3 });
-          }
-          g.rotation.x = -Math.PI / 2;
-          const inner = group('inner');
-          g.add(inner);
-          return g;
+          const s = fresh();
+          createWheelOfDeath(s, 35, -5, flat);
+          return s;
         }),
         obj('Trebuchet', -50, 70, () => {
-          const g = group('Trebuchet');
-          // Base frame.
-          for (const sz of [-3, 3]) {
-            box(g, 1.0, 12.0, 1.0, 0x6a4a2c, -4, 6, sz, { rx: 0.28 });
-            box(g, 1.0, 12.0, 1.0, 0x6a4a2c, 4, 6, sz, { rx: -0.28 });
-          }
-          box(g, 12.0, 1.0, 8.0, 0x5a3f24, 0, 0.5, 0);
-          // The throwing arm, cocked back over the top.
-          box(g, 0.7, 15.0, 0.7, 0x4a3320, 0, 12.0, 0, { rz: 0.7 });
-          box(g, 2.6, 2.0, 2.6, 0x8a8a92, -6.0, 16.5, 0);
-          // The sling and its stone.
-          box(g, 0.14, 7.0, 0.14, 0xd8c8a0, -6.5, 19.5, 0, { rz: 0.4 });
-          box(g, 0.14, 7.0, 0.14, 0xd8c8a0, -6.5, 19.5, 0, { rz: -0.4 });
-          ball(g, 1.6, 0x8a8a92, -7.6, 22.5, 0, { flat: true });
-          return g;
+          const s = fresh();
+          createTrebuchet(s, -50, 70, flat);
+          return s;
         }),
         obj('Giant Boulder', 78, 42, () => {
-          const g = group('Giant Boulder');
-          const b = ball(g, 6.0, 0x7a7068, 0, 6.0, 0, { flat: true, seg: 16 });
-          b.rotation.set(0.4, 0.9, 0.2);
-          for (let i = 0; i < 7; i++) {
-            const a = i * 1.7;
-            ball(g, 1.6, 0x6a6058, Math.cos(a) * 4.4, 6 + Math.sin(i) * 2.4, Math.sin(a) * 4.4, { flat: true });
-          }
-          return g;
+          const s = fresh();
+          createRollingBoulder(s, 78, 42, flat);
+          return s;
         }),
         obj('Hammer Gauntlet', 0, 70, () => {
-          const g = group('Hammer Gauntlet');
-          for (const sz of [-6, 6]) {
-            box(g, 1.4, 9.0, 1.4, 0x8a8a92, 0, 4.5, sz);
-            box(g, 2.6, 0.6, 2.6, 0x5a5a62, 0, 0.3, sz);
-          }
-          box(g, 2.0, 2.0, 14.0, 0x6a6a72, 0, 9.0, 0);
-          // The swinging head itself.
-          box(g, 3.0, 3.0, 8.0, 0xc03a2a, 0, 6.0, 0);
-          for (const sz of [-3.2, 3.2]) box(g, 2.4, 2.4, 1.6, 0x8a2a1a, 0, 6.0, sz);
-          return g;
+          const s = fresh();
+          buildHammers(s, flat);
+          return s;
         }),
-        obj('Vortex Cloud', 0, 45, () => {
-          const g = group('Vortex Cloud');
-          for (let i = 0; i < 7; i++) {
-            const a = (i / 7) * Math.PI * 2;
-            const r = 10 - i * 1.0;
-            ball(g, 4.0 + (i % 3), 0xd8e4f0, Math.cos(a) * r, 12 + i * 1.2, Math.sin(a) * r, { sy: 0.7, opacity: 0.85 });
-          }
-          cyl(g, 6.0, 1.0, 8.0, 0xbfd0e0, 0, 6.0, 0, { opacity: 0.6 });
-          return g;
-        }),
-      ],
-    },
-    {
-      id: 'park', name: 'Ramps & Park', blurb: 'The skatepark furniture.',
-      objects: [
-        obj('Half Pipe', 10, -30, () => {
-          const g = group('Half Pipe');
-          // Two facing quarter-pipes, drawn as extruded L shapes.
-          for (const sx of [-9, 9]) {
-            const s = new THREE.Shape();
-            s.moveTo(0, 0); s.lineTo(0, 8); s.lineTo(-8, 0); s.closePath();
-            const geo = new THREE.ExtrudeGeometry(s, { depth: 16, bevelEnabled: false });
-            geo.translate(sx, 0, -8);
-            const m = new THREE.Mesh(geo, mat(0x4a6a8a, { roughness: 0.8 }));
-            m.castShadow = true;
-            g.add(m);
-            box(g, 0.6, 0.6, 16, 0xd8d8d8, sx - Math.sign(sx) * 8, 8, 0);
-          }
-          plane(g, 10, 16, 0x6a5a4a, 0, 0.05, 0);
-          return g;
-        }),
-        obj('Fun Box', -20, -50, () => {
-          const g = group('Fun Box');
-          box(g, 10, 4.0, 8.0, 0x8a6a44, 0, 2.0, 0);
-          box(g, 10.4, 0.4, 8.4, 0x6a4a2c, 0, 4.2, 0);
-          // The rail across the top.
-          cyl(g, 0.14, 0.14, 12.0, 0xc0c8d0, 0, 5.4, 0, { rz: Math.PI / 2 });
-          for (const sx of [-5.4, 5.4]) box(g, 0.24, 1.4, 0.24, 0xc0c8d0, sx, 4.9, 0);
-          // A bank off one end.
-          box(g, 5.0, 0.5, 8.0, 0x8a6a44, 7.5, 1.2, 0, { rz: -0.4 });
-          return g;
-        }),
-        obj('Quarter Pipe', 30, -60, () => {
-          const g = group('Quarter Pipe');
-          const s = new THREE.Shape();
-          s.moveTo(0, 0); s.lineTo(0, 9); s.lineTo(-9, 0); s.closePath();
-          const geo = new THREE.ExtrudeGeometry(s, { depth: 14, bevelEnabled: false });
-          geo.translate(0, 0, -7);
-          const m = new THREE.Mesh(geo, mat(0x5a7a9a, { roughness: 0.8 }));
-          m.castShadow = true;
-          g.add(m);
-          box(g, 0.7, 0.7, 14, 0xd8d8d8, -9, 9, 0);
-          return g;
-        }),
-        obj('Bumpy Object', -40, -20, () => {
-          const g = group('Bumpy Object');
-          // The humps: half-spheres in a loose field.
-          const pts = [[0, 0], [7, 3], [-6, 5], [4, -7], [-5, -6], [12, -3], [-12, 2]];
-          for (const [x, z] of pts) {
-            const b = ball(g, 4.0, 0x9c6b38, x, 0, z, { sy: 0.6, flat: true });
-            b.castShadow = true;
-          }
-          plane(g, 40, 30, 0xb8895a, 0, 0.05, 0);
-          return g;
-        }),
-        obj('Skate Bowl', -60, 20, () => {
-          const g = group('Skate Bowl');
-          const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), mat(0xc0a878, { roughness: 0.85 }));
-          bowl.scale.set(1, 0.5, 1);
-          g.add(bowl);
-          const lip = new THREE.Mesh(new THREE.TorusGeometry(14, 0.5, 8, 48), mat(0x8a6a44));
-          lip.rotation.x = Math.PI / 2;
-          lip.position.y = 0.1;
-          g.add(lip);
-          return g;
+        obj('Vortex Cloud', 40, 40, () => {
+          const s = fresh();
+          createVortex(s, 40, 40, flat);
+          return s;
         }),
       ],
     },
@@ -1476,308 +873,35 @@ function beachCategories() {
     {
       id: 'camp', name: 'The Camp', blurb: 'The fire, and the way home.',
       objects: [
-        obj('Campfire', -14, 22, () => {
-          const g = group('Campfire');
-          plane(g, 7.0, 7.0, 0x3b2f26, 0, 0.03, 0);
-          for (let i = 0; i < 12; i++) {
-            const a = (i / 12) * Math.PI * 2;
-            const r = 2.55;
-            const s = 0.52 + ((i * 5) % 4) * 0.09;
-            const st = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), mat(0x8d8b84, { roughness: 0.95, flat: true }));
-            st.position.set(Math.cos(a) * r, s * 0.62, Math.sin(a) * r);
-            st.scale.y = 0.8;
-            st.castShadow = true;
-            g.add(st);
-          }
-          for (let i = 0; i < 3; i++) {
-            const a = (i / 3) * Math.PI * 2 + 0.5;
-            cyl(g, 0.19, 0.24, 3.1, 0x6b4a2c, Math.cos(a) * 1.0, 1.25, Math.sin(a) * 1.0,
-              { rx: Math.sin(a) * 0.72, rz: -Math.cos(a) * 0.72 });
-          }
-          for (let i = 0; i < 11; i++) {
-            const a = i * 2.4, r = 0.35 + ((i * 7) % 5) * 0.22;
-            const c = new THREE.Mesh(new THREE.IcosahedronGeometry(0.2 + ((i * 3) % 3) * 0.07, 0), mat(0x241c18, { roughness: 1, flat: true }));
-            c.position.set(Math.cos(a) * r, 0.16, Math.sin(a) * r);
-            g.add(c);
-          }
-          for (let i = 0; i < 8; i++) {
-            const a = (i / 8) * Math.PI * 2;
-            cone(g, 0.5, 2.5, 0xff8a1e, Math.cos(a) * 0.5, 1.35, Math.sin(a) * 0.5,
-              { emissive: 0xff7a10, emissiveIntensity: 2.4, opacity: 0.9 });
-            cone(g, 0.28, 1.5, 0xffe9a8, Math.cos(a) * 0.3, 0.85, Math.sin(a) * 0.3,
-              { emissive: 0xffd05a, emissiveIntensity: 3.0, opacity: 0.95 });
-          }
-          for (const [sx, sz] of [[-16.4, 27.6], [-11.6, 27.6]]) {
-            const seat = new THREE.Mesh(new THREE.DodecahedronGeometry(1.05, 0), mat(0x8d8b84, { roughness: 0.95, flat: true }));
-            seat.position.set(sx - (-14), 0.42, sz - 22);
-            seat.scale.set(1.3, 0.55, 1.05);
-            g.add(seat);
-          }
-          return g;
-        }),
-        obj('Giant Scallop', 22, 26, () => {
-          const g = group('Giant Scallop');
-          // The lower valve, bedded in the sand.
-          const lower = new THREE.Mesh(new THREE.SphereGeometry(14, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xf0e4d0, { roughness: 0.6 }));
-          lower.scale.set(1, 0.4, 1);
-          lower.position.y = 0.4;
-          g.add(lower);
-          // The ribs.
-          for (let i = 0; i < 11; i++) {
-            const a = -Math.PI * 0.92 + (i / 10) * Math.PI * 0.84;
-            const r = new THREE.Mesh(new THREE.TorusGeometry(13.6, 0.28, 6, 24, Math.PI * 0.5), mat(0xd8c8ac, { roughness: 0.7 }));
-            r.rotation.set(-Math.PI / 2, 0, a);
-            r.position.y = 0.5;
-            r.scale.set(1, 0.4, 1);
-            g.add(r);
-          }
-          // The upper valve, thrown open.
-          const upper = new THREE.Mesh(new THREE.SphereGeometry(14, 40, 20, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xfaeedc, { roughness: 0.55 }));
-          upper.scale.set(1, 0.34, 1);
-          upper.position.set(0, 6.0, -3.0);
-          upper.rotation.x = -1.15;
-          g.add(upper);
-          for (let i = 0; i < 11; i++) {
-            const a = -Math.PI * 0.92 + (i / 10) * Math.PI * 0.84;
-            const r = new THREE.Mesh(new THREE.TorusGeometry(13.6, 0.26, 6, 24, Math.PI * 0.5), mat(0xe0d0b4, { roughness: 0.65 }));
-            r.rotation.set(-Math.PI / 2, 0, a);
-            r.position.set(0, 6.0, -3.0);
-            r.rotation.x = -1.15 - Math.PI / 2;
-            r.scale.set(1, 0.34, 1);
-            g.add(r);
-          }
-          // The pearl in the dish.
-          ball(g, 2.2, 0xfdf6e8, 0, 2.4, 1.0, { metalness: 0.3, roughness: 0.15 });
-          return g;
-        }),
-        obj('Beach Boat', 60, -60, () => {
-          const g = group('Beach Boat');
-          const hull = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 2.2, 12, 24, 1, true), mat(0xf0e4d0, { roughness: 0.7 }));
-          hull.scale.set(1, 1, 0.55);
-          hull.position.y = 1.6;
-          g.add(hull);
-          box(g, 6.4, 0.4, 2.2, 0x8a6a44, 0, 0.4, 0);
-          for (const sx of [-1.6, 1.6]) {
-            box(g, 0.3, 8.0, 0.3, 0x8a6a44, sx, 4.4, 0);
-          }
-          box(g, 4.0, 0.3, 2.6, 0x8a6a44, 0, 8.2, 0);
-          // A furled sail.
-          cyl(g, 0.5, 0.4, 4.0, 0xe8dcc0, 0, 6.2, 0, { rx: 0.2 });
-          return g;
-        }),
+        obj('Campfire', -14, 22, () => makeCampfire(0).group),
+        obj('Giant Scallop', 22, 26, () => makeClamShell(new THREE.Group(), BEACH_SHELL).group),
+        obj('Beach Boat', BOAT_SPOT.x, BOAT_SPOT.z, () => buildBoat()),
       ],
     },
     {
       id: 'shore', name: 'Shore & Cliffs', blurb: 'What the cove is made of.',
       objects: [
-        obj('Palm Tree', 30, 30, () => {
-          const g = group('Palm Tree');
-          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, 14, 10), mat(0x8a6a44, { roughness: 0.95 }));
-          trunk.position.set(0, 7, 0);
-          trunk.rotation.z = 0.16;
-          g.add(trunk);
-          for (let i = 0; i < 5; i++) {
-            trunk.position.y = 7;
-            void i;
-          }
-          for (let i = 0; i < 7; i++) {
-            const a = (i / 7) * Math.PI * 2;
-            const frond = box(g, 0.9, 0.16, 9.0, 0x3f7a3a, Math.cos(a) * 4.0, 13.6, Math.sin(a) * 4.0, { ry: -a, rx: 0.3 });
-            frond.castShadow = true;
-          }
-          for (let i = 0; i < 4; i++) {
-            ball(g, 0.7, 0x8a6a2a, Math.cos(i * 1.6) * 1.2, 13.0, Math.sin(i * 1.6) * 1.2);
-          }
-          return g;
-        }),
+        obj('Palm Tree', -36, 34, () => makePalm(-36, 34, 1.05, -0.74).group),
         obj('Beach Rock', 12, 30, () => {
           const g = group('Beach Rock');
-          const b = new THREE.Mesh(new THREE.DodecahedronGeometry(2.4, 0), mat(0x8a8880, { roughness: 1, flat: true }));
-          b.scale.set(1.2, 0.8, 1);
-          b.position.y = 1.4;
-          b.castShadow = true;
-          b.receiveShadow = true;
-          g.add(b);
-          for (let i = 0; i < 3; i++) {
-            const s = new THREE.Mesh(new THREE.DodecahedronGeometry(0.7 + i * 0.2, 0), mat(0x7a7870, { roughness: 1, flat: true }));
-            s.position.set(Math.cos(i * 2.1) * 1.8, 0.5, Math.sin(i * 2.1) * 1.8);
-            g.add(s);
-          }
+          g.add(makeRock(12, 30, 1.15, 2));
           return g;
         }),
-        obj('Coral Head', 20, -30, () => {
+        obj('Coral Head', -38, -22, () => {
           const g = group('Coral Head');
-          const base = new THREE.Mesh(new THREE.DodecahedronGeometry(3.0, 0), mat(0x6a5a4a, { roughness: 1, flat: true }));
-          base.scale.set(1.3, 0.6, 1.1);
-          base.position.y = 0.9;
-          g.add(base);
-          const cols = [0xd84a8a, 0x4ad8c8, 0xd8c84a, 0x8a4ad8];
-          for (let i = 0; i < 9; i++) {
-            const a = i * 1.3, r = 0.6 + (i % 3) * 0.9;
-            const br = cyl(g, 0.28, 0.42, 2.0 + (i % 4) * 0.7, cols[i % 4],
-              Math.cos(a) * r, 1.6 + (i % 3) * 0.6, Math.sin(a) * r,
-              { rz: Math.cos(a) * 0.4, rx: Math.sin(a) * 0.4 });
-            br.castShadow = true;
-            ball(g, 0.36, cols[(i + 1) % 4], Math.cos(a) * r * 1.4, 2.8 + (i % 4) * 0.7, Math.sin(a) * r * 1.4);
-          }
+          g.add(buildCoralHead(0));
           return g;
         }),
-        obj('Cliff Stack', -70, 80, () => {
-          const g = group('Cliff Stack');
-          for (let i = 0; i < 4; i++) {
-            const b = new THREE.Mesh(new THREE.DodecahedronGeometry(5.0 - i * 0.7, 0), mat(i % 2 ? 0x9a9080 : 0x8a8070, { roughness: 1, flat: true }));
-            b.position.set(Math.sin(i * 1.7) * 2.2, 2.0 + i * 4.2, Math.cos(i * 1.7) * 2.0);
-            b.scale.set(1.2, 0.7, 1.1);
-            b.castShadow = true;
-            g.add(b);
-          }
-          return g;
-        }),
-        obj('Washed-Up Shell', -14, 30, () => {
-          const g = group('Washed-Up Shell');
-          const s = new THREE.Mesh(new THREE.SphereGeometry(1.6, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), mat(0xfaf0e0, { roughness: 0.5 }));
-          s.scale.set(1, 0.45, 1.15);
-          s.position.y = 0.1;
-          g.add(s);
-          for (let i = 0; i < 9; i++) {
-            const a = -Math.PI * 0.9 + (i / 8) * Math.PI * 0.8;
-            const r = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.07, 6, 18, Math.PI * 0.5), mat(0xe8d8c0, { roughness: 0.6 }));
-            r.rotation.set(-Math.PI / 2, 0, a);
-            r.scale.set(1, 0.45, 1.15);
-            r.position.y = 0.12;
-            g.add(r);
-          }
-          return g;
-        }),
-        obj('Starfish', -20, 26, () => {
-          const g = group('Starfish');
-          for (let i = 0; i < 5; i++) {
-            const a = (i / 5) * Math.PI * 2;
-            const arm = cone(g, 0.5, 2.2, 0xe08a3a, Math.cos(a) * 0.9, 0.2, Math.sin(a) * 0.9, { rx: Math.PI / 2, ry: -a });
-            arm.rotation.set(Math.PI / 2, -a, 0);
-          }
-          ball(g, 0.7, 0xf0a050, 0, 0.25, 0, { sy: 0.5 });
-          return g;
-        }),
+        obj('Washed-Up Shell', -14, 30, () => makeBeachShell(-14, 30, 1.4, 0.7)),
       ],
     },
     {
       id: 'wildlife', name: 'Wildlife', blurb: 'What lives down here.',
       objects: [
-        obj('Beach Crab', -14, 20, () => {
-          const g = group('Beach Crab');
-          const shell = ball(g, 1.5, 0xd9502f, 0, 0.72, 0, { sx: 1.15, sy: 0.5, sz: 0.82 });
-          shell.castShadow = true;
-          ball(g, 1.32, 0xf0b48a, 0, 0.5, 0, { sx: 1.14, sy: 0.34, sz: 0.8 });
-          for (const sz of [0.42, -0.42]) {
-            cyl(g, 0.08, 0.1, 0.5, 0xb03a1e, 1.02, 1.16, sz, { rz: -0.34 });
-            ball(g, 0.19, 0xffffff, 1.14, 1.42, sz);
-            ball(g, 0.1, 0x14100e, 1.28, 1.44, sz);
-          }
-          for (const sz of [1.35, -1.35]) {
-            const arm = group('claw');
-            arm.position.set(0.85, 0.78, sz);
-            const upper = cyl(g, 0.19, 0.16, 0.95, 0xb03a1e, 0, 0, 0, { rz: -1.05 });
-            upper.position.set(0.42, 0.08, 0);
-            arm.add(upper);
-            const palm = ball(g, 0.42, 0xe0603a, 0, 0, 0, { sx: 1.15, sy: 0.85, sz: 0.8 });
-            palm.position.set(1.05, 0.24, 0);
-            arm.add(palm);
-            for (const jy of [0.16, -0.16]) {
-              const jaw = group('jaw');
-              jaw.position.set(1.4, 0.24, 0);
-              const tip = cone(g, 0.15, 0.5, 0xe0603a, 0.22, 0, 0, { rz: -Math.PI / 2 });
-              jaw.add(tip);
-              arm.add(jaw);
-              void jy;
-            }
-            g.add(arm);
-          }
-          for (let i = 0; i < 8; i++) {
-            const sz = i < 4 ? 1 : -1, idx = i % 4;
-            const pivot = new THREE.Group();
-            pivot.position.set(0.6 - idx * 0.62, 0.66, sz * 1.12);
-            const thigh = cyl(g, 0.11, 0.09, 0.78, 0xb03a1e, 0, 0, 0, { rx: sz * 1.15 });
-            thigh.position.set(0, -0.1, sz * 0.32);
-            pivot.add(thigh);
-            const shin = cone(g, 0.09, 0.62, 0xb03a1e, 0, 0, 0);
-            shin.position.set(0, -0.5, sz * 0.62);
-            shin.rotation.x = sz * 0.5;
-            pivot.add(shin);
-            g.add(pivot);
-          }
-          return g;
-        }),
-        obj('Seagull', -40, 20, () => {
-          const g = group('Seagull');
-          const body = ball(g, 0.8, 0xf0f0ec, 0, 0, 0, { sx: 1.4, sy: 0.9, sz: 0.9 });
-          body.castShadow = true;
-          for (const sz of [0.7, -0.7]) {
-            const wing = box(g, 2.6, 0.12, 0.9, 0xf8f8f4, -0.2, 0.1, sz, { rz: 0.1 });
-            wing.castShadow = true;
-          }
-          ball(g, 0.45, 0xf8f8f4, 1.0, 0.5, 0);
-          cone(g, 0.2, 0.8, 0xe0a020, 1.5, 0.45, 0, { rz: -Math.PI / 2 });
-          box(g, 1.6, 0.1, 0.5, 0xf8f8f4, -1.4, 0.1, 0, { rz: 0.3 });
-          return g;
-        }),
-        obj('Mermaid', 60, -70, () => {
-          const g = group('Mermaid');
-          const body = new THREE.Mesh(new THREE.CapsuleGeometry(1.1, 4.0, 6, 14), mat(0xf0c8a8, { roughness: 0.8 }));
-          body.position.y = 6.0;
-          g.add(body);
-          ball(g, 1.0, 0xf0c8a8, 0, 9.2, 0);
-          // The hair, and the tail instead of legs.
-          ball(g, 1.2, 0x4a8a5a, 0, 9.4, -0.2, { sy: 1.0 });
-          const tail = new THREE.Mesh(new THREE.ConeGeometry(2.2, 7.0, 14), mat(0x3a7a6a, { roughness: 0.6 }));
-          tail.position.y = 1.6;
-          g.add(tail);
-          const fin = new THREE.Mesh(new THREE.CircleGeometry(3.2, 16, 0, Math.PI), mat(0x4a9a8a, { roughness: 0.6, opacity: 0.9 }));
-          fin.position.y = -1.4;
-          fin.rotation.x = -Math.PI / 2;
-          g.add(fin);
-          // Arms out along the body.
-          for (const sz of [1.2, -1.2]) cyl(g, 0.3, 0.24, 4.4, 0xf0c8a8, 0.4, 6.4, sz, { rz: -0.9 });
-          return g;
-        }),
-        obj('Clam', 20, 22, () => {
-          const g = group('Clam');
-          // A small bivalve half-buried in the sand: one valve bedded down, the
-          // other tipped up and open, ribs fanning the same way as the scallop.
-          const lower = new THREE.Mesh(
-            new THREE.SphereGeometry(3.0, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-            mat(0xd8c8ac, { roughness: 0.7 }));
-          lower.scale.set(1, 0.34, 1);
-          lower.position.y = 0.1;
-          lower.receiveShadow = true;
-          g.add(lower);
-          const upper = new THREE.Mesh(
-            new THREE.SphereGeometry(2.7, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2),
-            mat(0xe8dcc4, { roughness: 0.6 }));
-          upper.scale.set(1, 0.3, 1);
-          upper.position.set(0, 2.4, -0.7);
-          upper.rotation.x = -1.05;
-          upper.castShadow = true;
-          g.add(upper);
-          for (let i = 0; i < 9; i++) {
-            const a = -Math.PI * 0.9 + (i / 8) * Math.PI * 0.8;
-            for (const [px, py, pz, tilt] of [[0, 0.28, 0, 0], [0, 2.4, -0.7, -1.05]]) {
-              const rib = new THREE.Mesh(new THREE.TorusGeometry(2.85, 0.09, 5, 16, Math.PI * 0.5), mat(0xc8b89c, { roughness: 0.75 }));
-              rib.rotation.set(-Math.PI / 2 + tilt, 0, a);
-              rib.position.set(px, py, pz);
-              rib.scale.set(1, 0.32, 1);
-              g.add(rib);
-            }
-          }
-          // The soft body in the gap, and the wet sand ring around it.
-          ball(g, 1.7, 0xf2ddc0, 0, 0.5, 0.2, { sy: 0.4, sz: 1.1 });
-          const ring = new THREE.Mesh(new THREE.TorusGeometry(3.1, 0.22, 5, 20), mat(0xb9a184, { roughness: 0.95 }));
-          ring.rotation.x = -Math.PI / 2;
-          ring.position.y = -0.06;
-          ring.scale.set(1, 1, 0.7);
-          g.add(ring);
-          return g;
-        }),
+        obj('Beach Crab', 8.6, 28.4, () => makeCrab(8.6, 28.4, { x: 12, z: 30 }).group),
+        obj('Seagull', 60, 30, () => createGulls(0).group),
+        obj('Mermaid', 60, -70, () => makeMermaid(0x2f8f7a, 0x7fdcc0, 0xc4622f).group),
+        obj('Park Clam', 22, 60, () => makeClamShell(new THREE.Group()).group),
       ],
     },
   ];

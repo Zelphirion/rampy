@@ -194,7 +194,12 @@ test('the trigger is a small pocket in the middle of the bowl', () => {
 });
 
 test('the valves swing from open to a sealed shut', () => {
-  assert.ok(SHELL_OPEN > 1.5 && SHELL_OPEN < Math.PI, `open angle out of range: ${SHELL_OPEN}`);
+  // Both poses are past PI: the swing group only ever rotates positive, and
+  // open has the lid swung up over the hinge (standing, just back of vertical -
+  // past 3.825 the rim would hang forward over the mouth again) while shut
+  // carries it the long way round down onto the bowl.
+  assert.ok(SHELL_OPEN > Math.PI && SHELL_OPEN < 3.8,
+    `open angle out of range: ${SHELL_OPEN}`);
   // Shut is measured the long way round: the valve sweeps past vertical, so it
   // is past pi even though the swing group only ever rotates positive.
   assert.ok(SHELL_SHUT > SHELL_OPEN && SHELL_SHUT < 2 * Math.PI,
@@ -214,6 +219,33 @@ test('the valves swing from open to a sealed shut', () => {
   // block the mouth you drive into.
   const openOut = -UPPER_H * Math.sin(SHELL_OPEN) + UPPER_SIZE * Math.cos(SHELL_OPEN);
   assert.ok(openOut < 0, `open valve should lean back, not out: ${openOut.toFixed(2)}`);
+});
+
+test('the open lid stands up behind the hinge, not down over the mouth', () => {
+  // The mouth faces +X, so at the open pose the lid must be BOTH behind the
+  // hinge (-X) and above the umbo (+Y from SHELL_UMBO_Y). Either one on its own
+  // is not enough: forward means it hangs over the bowl you drive into, below
+  // means it is lying in the grass behind the shell.
+  const openOut = -UPPER_H * Math.sin(SHELL_OPEN) + UPPER_SIZE * Math.cos(SHELL_OPEN);
+  const openY = -UPPER_H * Math.cos(SHELL_OPEN) - UPPER_SIZE * Math.sin(SHELL_OPEN);
+  assert.ok(openOut < 0, `open rim lands x=${(SHELL_X + openOut).toFixed(2)}, over the mouth`);
+  assert.ok(openY > 0, `open rim sits under the umbo at y=${(SHELL_UMBO_Y + openY).toFixed(2)}`);
+  // The same check on the lid's hinge-height leading edge, 1.48 out along the
+  // bisector (SIZE * SQUASH, the reference point the bug report measured): at
+  // the old 2.95 pose it ended up behind the hinge but BELOW the umbo, sunk
+  // into the turf - the collapsed pose this fix exists to remove.
+  const tip = UPPER_SIZE * SHELL_SQUASH;
+  const tipOut = tip * Math.cos(SHELL_OPEN);
+  const tipY = -tip * Math.sin(SHELL_OPEN);
+  assert.ok(tipOut < 0,
+    `leading edge sticks out to x=${(SHELL_X + tipOut).toFixed(2)}, over the mouth`);
+  assert.ok(tipY > 0,
+    `leading edge is ${tipY.toFixed(2)} below the umbo - the lid is lying in the grass`);
+  // And it has to actually be standing: the lid's chord must clear 45 deg off
+  // the horizon. The old pose managed ~34 deg, which reads as fallen over
+  // rather than opened.
+  const elev = (Math.atan2(openY, -openOut) * 180) / Math.PI;
+  assert.ok(elev > 45, `open lid leans back only ${elev.toFixed(0)} deg above the horizon`);
 });
 
 test('the umbo is buried, and the dish really dips below the turf', () => {

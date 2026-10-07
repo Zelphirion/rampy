@@ -29,11 +29,14 @@ export const LOWER_H = LOWER_SIZE * LOWER_FLAT;
 export const UPPER_H = UPPER_SIZE * UPPER_FLAT;
 
 // Both valves hinge on the umbo, so the whole open/close animation is one
-// rotation of the upper valve about local X: 0 is shut (the upper valve is the
-// bottom valve mirrored back over it), PI is the flat-book open position, and
-// anything past it leans the upper valve away from the bowl. SHUT is set so the
-// upper margin finishes level with the lower one, clamped down on the bowl.
-export const SHELL_OPEN = 2.95;
+// rotation of the upper valve about local X. SHUT is set so the upper margin
+// finishes level with the lower one, clamped down on the bowl. Lowering the
+// angle swings the lid up off the bowl and back over the hinge: the rim passes
+// straight over the umbo at 3.825, and stopping beyond that would leave it
+// hanging forward over the mouth. OPEN therefore sits just under that line -
+// the lid stands upright, leaning back behind the umbo with its rim above it,
+// clear of the grass it used to lie down in.
+export const SHELL_OPEN = 3.6;
 export const SHELL_SHUT = 5.113;
 
 // Where the lower valve crosses each ground surface. Both holes are cut at

@@ -553,6 +553,196 @@ function tableLamp(g, lights, x, y, z, intensity = 14) {
   return L;
 }
 
+// The one-off pieces below (fireplace, front door, bookcase...) used to be
+// blocks of `box()` calls inside addHouse. They are lifted out here so the
+// object browser can construct the same piece without rebuilding the house,
+// and so there is still exactly one copy of each piece's geometry. Each is
+// authored exactly as it was inline: `g` is the caller's root group, and the
+// piece places itself at its real world spot.
+
+// The living room fireplace, with a real fire in it. Returns the controller
+// the world animates (`light`, `update`); the geometry hangs off `g`. The
+// `lights` list is optional so the object browser can construct the same fire
+// without a scene to publish the light to.
+function buildFireplace(g, lights) {
+  const fp = unit(g, 'fireplace', FIREPLACE.x, FIREPLACE.z);
+  fp.rotation.y = Math.PI; // Face into the room (east)
+  const H = FIREPLACE.hearth;
+  // Two jambs either side of the opening, the stone above it, the back of the
+  // recess, and the slab across the bottom of it. 24 deep in z, 18 tall.
+  box(fp, 5, 18, 5, 0, 9, -9.5, MAT.counter);
+  box(fp, 5, 18, 5, 0, 9, 9.5, MAT.counter);
+  box(fp, 5, 6, 14, 0, 15, 0, MAT.counter);          // over the opening
+  box(fp, 1, 12, 14, 1.5, 6, 0, MAT.porcelain);      // the back of the firebox
+  box(fp, 4, 0.7, 14, 0, 0.35, 0, MAT.counter);       // its floor
+  box(fp, 7, 1.4, 26, 0.5, 19, 0, MAT.woodDark);     // the mantel
+  // Soot up the back of the recess, so the firebox reads as a firebox.
+  box(fp, 0.2, 8, 11, 0.95, 4.5, 0, MAT.rubber, false);
+  // The stone apron on the floor in front of it — the bit you park on.
+  flat(g, H.x1 - H.x0, H.z1 - H.z0, (H.x0 + H.x1) / 2, 0.06, (H.z0 + H.z1) / 2, MAT.counter);
+  // A log basket beside it, because a fire that eats nothing is a hologram.
+  cyl(g, 2.1, 1.7, 3.2, H.x1 - 1.6, 1.6, H.z1 + 3.4, MAT.pot, 12);
+  for (let i = 0; i < 3; i++) {
+    cyl(fp, 0.5, 0.5, 3.6, 0.2, 1.6 + i * 0.9, 0, MAT.trunk, 8).rotation.z = Math.PI / 2 + (i - 1) * 0.3;
+  }
+  // The fire: a bed of coals with two logs lying across it, then flames.
+  const coals = [];
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    coals.push(sph(fp, 0.75 + (i % 3) * 0.22, 0.1 + ((i * 7) % 3) * 0.4, 1.05, -4.6 + t * 9.2, MAT.coal, false));
+  }
+  for (let i = 0; i < 2; i++) {
+    const log = cyl(fp, 0.62, 0.62, 8, 0, 2 + i * 1.1, -1 + i * 2, MAT.trunk, 10);
+    log.rotation.x = Math.PI / 2;
+    log.rotation.y = (i - 0.5) * 0.24;
+  }
+  // Flames: a ring of tall ones with a shorter, brighter core inside them.
+  const flames = [];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    const tall = cone(fp, 1.15, 4.4, 1 + Math.cos(a) * 1.5, 3.6, Math.sin(a) * 3.4, MAT.flame, 10, false);
+    const core = cone(fp, 0.7, 2.6, 1 + Math.cos(a) * 0.7, 2.6, Math.sin(a) * 1.6, MAT.flameCore, 10, false);
+    flames.push({ tall, core, a, h: 4.4 });
+  }
+  // The light of it, thrown out into the room and flickering.
+  const fireLight = new THREE.PointLight(0xff9436, 30, 40, 2);
+  fireLight.position.set(2.5, 4.5, 0);
+  fp.add(fireLight);
+  if (lights) lights.push(fireLight);
+  // The flicker is deterministic (a sum of three sines off the clock) so it
+  // looks the same on every machine, and so a test can drive it.
+  return {
+    light: fireLight,
+    unit: fp,
+    update(elapsed) {
+      const f = Math.sin(elapsed * 11) * 0.5 + Math.sin(elapsed * 17.3) * 0.3 + Math.sin(elapsed * 29.7) * 0.2;
+      fireLight.intensity = 26 + f * 9;
+      MAT.coal.emissiveIntensity = 2.1 + f * 0.35;
+      for (const fl of flames) {
+        // Each flame breathes on its own phase so they do not pulse in unison.
+        const p = Math.sin(elapsed * (7 + fl.a * 2.2)) * 0.5 + 0.5;
+        const s = 0.78 + p * 0.42 + f * 0.06;
+        fl.tall.scale.set(1 + p * 0.12, s, 1 + p * 0.12);
+        fl.tall.position.y = 1.4 + (fl.h * s) / 2;
+        fl.core.scale.set(1 + p * 0.16, 0.8 + p * 0.4, 1 + p * 0.16);
+      }
+    },
+  };
+}
+
+// The living room's big bookcase. 22 wide fits the gap between the two
+// bookcase-side doorways, and it stands against the wall's face rather than
+// its centre line, so its back edge is not inside the plaster.
+function buildBookcase(g, x, z) {
+  const bc = unit(g, 'bookcase', x, z);
+  box(bc, 22, 18, 3, 0, 9, 0, MAT.woodPale);
+  for (let s = 0; s < 3; s++) {
+    box(bc, 21, 0.5, 3.4, 0, 3.5 + s * 5.5, 0, MAT.wood, false);
+    for (let i = 0; i < 10; i++) {
+      box(bc, 1.5, 3.8, 2.4, -9 + i * 2, 5.4 + s * 5.5, 0,
+        [MAT.quilt, MAT.quilt2, MAT.wood, MAT.paper][i % 4], false);
+    }
+  }
+  return bc;
+}
+
+// The dining room sideboard on the east wall.
+function buildSideboard(g, x, z) {
+  const sb = unit(g, 'sideboard', x, z);
+  box(sb, 9, 9, 13, 0, 4.5, 0, MAT.woodPale);
+  box(sb, 9.6, 0.6, 13.6, 0, 9.3, 0, MAT.wood, false);
+  for (let i = 0; i < 2; i++) box(sb, 0.5, 4, 5, -4.8, 5, -3.5 + i * 7, MAT.woodDark, false);
+  return sb;
+}
+
+// The front door: SHUT, and locked. All decoration on the room side of a wall
+// that is already solid, plus the porch light and step that give it an outside.
+function buildFrontDoor(g, shellT) {
+  const f = FRONT_DOOR;
+  const dw = f.z1 - f.z0, dc = (f.z0 + f.z1) / 2;
+  // `face` is the room-side plane of the wall; everything hangs off that.
+  const face = f.at - shellT / 2;          // the inner face, at maxX
+  const leaf = face - 0.35;               // the door itself, proud of the plaster
+  // Architrave round the opening, then the panelled leaf. Four panels, which
+  // at this scale is what makes it read as a front door rather than a hatch.
+  box(g, 0.7, f.h + 1.6, dw + 2.4, face - 0.2, (f.h + 1.6) / 2, dc, MAT.trim);
+  box(g, 0.9, f.h, dw, leaf, f.h / 2, dc, MAT.door);
+  for (const s of [-1, 1]) {
+    box(g, 0.5, f.h + 1.2, 1.1, face - 0.3, (f.h + 1.2) / 2, dc + s * (dw / 2 + 0.4), MAT.trim, false);
+  }
+  for (let r = 0; r < 2; r++) {
+    for (let c2 = 0; c2 < 2; c2++) {
+      box(g, 0.4, f.h * 0.3, dw * 0.34, leaf - 0.35, f.h * (0.2 + r * 0.42), dc + (c2 - 0.5) * dw * 0.42,
+        MAT.doorDark, false);
+    }
+  }
+  // Fanlight over the door, glazed, so the light from outside stops there.
+  box(g, 0.5, 5, dw * 0.8, leaf, f.h + 2.6, dc, MAT.glass, false);
+  for (let i = 0; i < 4; i++) {
+    box(g, 0.55, 5, 0.45, leaf - 0.1, f.h + 2.6, dc - dw * 0.3 + i * (dw * 0.2), MAT.trim, false);
+  }
+  // ---- The hardware, which is the whole point ---------------------------
+  // A ring knocker high up, a letterbox, a knob, and then a row of things
+  // that all say the same message in different ways: this door does not open.
+  const knobX = leaf - 1.1;
+  sph(g, 0.9, knobX, 9, dc - dw / 2 + 2.6, MAT.metal);
+  box(g, 1.2, 2.4, 5.5, knobX, 9, dc + 2, MAT.metalDark, false);      // letterbox
+  box(g, 0.5, 0.5, 5.5, knobX - 0.5, 11.4, dc + 2, MAT.metal, false);
+  // Deadbolt: a big sliding bolt, thrown.
+  box(g, 0.9, 1.6, 2.6, knobX - 0.3, 6, dc - dw / 2 + 2.6, MAT.metal, false);
+  box(g, 0.6, 1.2, 1.4, knobX - 0.9, 6, dc - dw / 2 + 2.6, MAT.chrome, false);
+  // Hasp and staple with a padlock hanging shut through them.
+  box(g, 0.8, 1.2, 3.2, knobX - 0.3, 3.4, dc + dw / 2 - 2.6, MAT.metal, false);
+  box(g, 1.1, 3.2, 1.1, knobX - 0.7, 2.4, dc + dw / 2 - 2.6, MAT.lockRed, false);
+  // A security chain, drawn across the opening, permanently on.
+  for (let i = 0; i < 7; i++) {
+    box(g, 0.5, 0.5, 2.2, knobX - 0.4 - i * 0.35, 17.5 - i * 0.55,
+      dc - dw / 2 + 2.6 + i * 2.4, MAT.metal, false);
+  }
+  // Outside face: a porch light over the door and a step, so the door has an
+  // outside to be a door to.
+  box(g, 2.2, 2.2, 2.2, f.at + shellT / 2 + 1.1, f.h + 3, dc, MAT.metalDark, false);
+  sph(g, 0.7, f.at + shellT / 2 + 1.1, f.h + 1.7, dc, MAT.bulb, false);
+  box(g, 4, 1.2, dw + 5, f.at + shellT / 2 + 2, 0.6, dc, MAT.counter, false);
+  box(g, 6, 0.6, dw + 9, f.at + shellT / 2 + 4.5, 0.3, dc, MAT.concrete, false);
+}
+
+// The foyer's boot bench with the coat hooks on the wall above it and the
+// umbrella stand at the door end.
+function buildCoatRack(g, x, z) {
+  table(g, x, z, 20, 8, 2.6, 0, MAT.woodPale);
+  for (const s of [-1, 1]) box(g, 3, 4, 1, x + s * 7, 2, z, MAT.wood, false);
+  for (let i = 0; i < 4; i++) {
+    box(g, 2, 11, 3, x + 6 + i * 3, 11, z + 37, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2][i], false);
+  }
+  cyl(g, 0.5, 0.5, 10, x - 10, 5, z - 1, MAT.woodDark, 8, false);
+  cyl(g, 1.2, 1.2, 4, x - 10, 2, z - 1, MAT.metalDark, 10, false);
+}
+
+// A stack of three tyres in the dark garage.
+function buildTyreStack(g, x, z) {
+  for (let i = 0; i < 3; i++) cyl(g, 3.6, 3.6, 1.7, x, 0.9 + i * 1.7, z, MAT.rubber, 16, false);
+}
+
+// The garage's south workbench, with the shelf of tools above it and the tyre
+// stack and drum standing against it.
+function buildWorkbench(g, x, z) {
+  box(g, 20, 3, 5, x, 1.5, z, MAT.woodDark);
+  box(g, 21, 0.6, 6, x, 3.3, z, MAT.woodPale, false);
+  for (let i = 0; i < 4; i++) {
+    box(g, 3, 2, 3, x - 7 + i * 5, 4.6, z, i % 2 ? MAT.paper : MAT.woodDark, false);
+  }
+  buildTyreStack(g, x + 12, z + 1);
+  cyl(g, 2.6, 2.6, 6, x - 10, 3, z - 2, MAT.signAmber, 14, false);
+}
+
+// A wall mirror: the framed reflecting pane the house hangs on walls. The
+// dining room's mirror is the real one; the frame is the `vert` pane.
+function buildWallMirror(g, x, z) {
+  vert(g, 16, 12, x - 0.6, 15, z, -Math.PI / 2, MAT.mirror);
+  return g;
+}
+
 // ============================================================================
 // Outside — only ever seen through the windows, so it is a painted set rather
 // than a place you could drive in. A wide grass apron, a hedge line, a few
@@ -813,53 +1003,7 @@ export async function addHouse(parent, opts = {}) {
   // collider from the skirting to the ceiling. The only way out of this house
   // is the dark garage off the kitchen.
   {
-    const f = FRONT_DOOR;
-    const dw = f.z1 - f.z0, dc = (f.z0 + f.z1) / 2;
-    // `face` is the room-side plane of the wall; everything hangs off that.
-    const face = f.at - shellT / 2;          // the inner face, at maxX
-    const leaf = face - 0.35;               // the door itself, proud of the plaster
-    // Architrave round the opening, then the panelled leaf. Four panels, which
-    // at this scale is what makes it read as a front door rather than a hatch.
-    box(g, 0.7, f.h + 1.6, dw + 2.4, face - 0.2, (f.h + 1.6) / 2, dc, MAT.trim);
-    box(g, 0.9, f.h, dw, leaf, f.h / 2, dc, MAT.door);
-    for (const s of [-1, 1]) {
-      box(g, 0.5, f.h + 1.2, 1.1, face - 0.3, (f.h + 1.2) / 2, dc + s * (dw / 2 + 0.4), MAT.trim, false);
-    }
-    for (let r = 0; r < 2; r++) {
-      for (let c2 = 0; c2 < 2; c2++) {
-        box(g, 0.4, f.h * 0.3, dw * 0.34, leaf - 0.35, f.h * (0.2 + r * 0.42), dc + (c2 - 0.5) * dw * 0.42,
-          MAT.doorDark, false);
-      }
-    }
-    // Fanlight over the door, glazed, so the light from outside stops there.
-    box(g, 0.5, 5, dw * 0.8, leaf, f.h + 2.6, dc, MAT.glass, false);
-    for (let i = 0; i < 4; i++) {
-      box(g, 0.55, 5, 0.45, leaf - 0.1, f.h + 2.6, dc - dw * 0.3 + i * (dw * 0.2), MAT.trim, false);
-    }
-    // ---- The hardware, which is the whole point ---------------------------
-    // A ring knocker high up, a letterbox, a knob, and then a row of things
-    // that all say the same message in different ways: this door does not open.
-    const knobX = leaf - 1.1;
-    sph(g, 0.9, knobX, 9, dc - dw / 2 + 2.6, MAT.metal);
-    box(g, 1.2, 2.4, 5.5, knobX, 9, dc + 2, MAT.metalDark, false);      // letterbox
-    box(g, 0.5, 0.5, 5.5, knobX - 0.5, 11.4, dc + 2, MAT.metal, false);
-    // Deadbolt: a big sliding bolt, thrown.
-    box(g, 0.9, 1.6, 2.6, knobX - 0.3, 6, dc - dw / 2 + 2.6, MAT.metal, false);
-    box(g, 0.6, 1.2, 1.4, knobX - 0.9, 6, dc - dw / 2 + 2.6, MAT.chrome, false);
-    // Hasp and staple with a padlock hanging shut through them.
-    box(g, 0.8, 1.2, 3.2, knobX - 0.3, 3.4, dc + dw / 2 - 2.6, MAT.metal, false);
-    box(g, 1.1, 3.2, 1.1, knobX - 0.7, 2.4, dc + dw / 2 - 2.6, MAT.lockRed, false);
-    // A security chain, drawn across the opening, permanently on.
-    for (let i = 0; i < 7; i++) {
-      box(g, 0.5, 0.5, 2.2, knobX - 0.4 - i * 0.35, 17.5 - i * 0.55,
-        dc - dw / 2 + 2.6 + i * 2.4, MAT.metal, false);
-    }
-    // Outside face: a porch light over the door and a step, so the door has an
-    // outside to be a door to.
-    box(g, 2.2, 2.2, 2.2, f.at + shellT / 2 + 1.1, f.h + 3, dc, MAT.metalDark, false);
-    sph(g, 0.7, f.at + shellT / 2 + 1.1, f.h + 1.7, dc, MAT.bulb, false);
-    box(g, 4, 1.2, dw + 5, f.at + shellT / 2 + 2, 0.6, dc, MAT.counter, false);
-    box(g, 6, 0.6, dw + 9, f.at + shellT / 2 + 4.5, 0.3, dc, MAT.concrete, false);
+    buildFrontDoor(g, shellT);
   }
 
   await phase(0.5, 'the kitchen');
@@ -991,12 +1135,7 @@ export async function addHouse(parent, opts = {}) {
     // centred on z=60 stood straight across the middle of it. It also has to
     // clear that wall's inner face at x=50.5 — it is 9.8 wide with the doors on
     // the left, so x=45.5 is as far east as it goes.
-    {
-      const sb = unit(g, 'sideboard', 45.5, 87);
-      box(sb, 9, 9, 13, 0, 4.5, 0, MAT.woodPale);
-      box(sb, 9.6, 0.6, 13.6, 0, 9.3, 0, MAT.wood, false);
-      for (let i = 0; i < 2; i++) box(sb, 0.5, 4, 5, -4.8, 5, -3.5 + i * 7, MAT.woodDark, false);
-    }
+    buildSideboard(g, 45.5, 87);
     vert(g, 16, 12, r.x1 - 0.6, 15, 86, -Math.PI / 2, MAT.mirror);
     // A dresser/hutch on the west side, facing the cased opening — and clear of
     // it. The kitchen|dining opening is z 54..84, so this has to start at z=84.
@@ -1028,14 +1167,7 @@ export async function addHouse(parent, opts = {}) {
     table(g, 83, 70, 8, 30, 3.4, 0, MAT.wood);
     for (let i = 0; i < 3; i++) sph(g, 0.7, 83, 5, 60 + i * 10, MAT.quilt2, false);
     vert(g, 14, 12, r.x1 - 0.6, 16, 70, -Math.PI / 2, MAT.mirror);
-    // A boot bench, a coat rack with coats, and an umbrella stand.
-    table(g, 68, 53, 20, 8, 2.6, 0, MAT.woodPale);
-    for (const s of [-1, 1]) box(g, 3, 4, 1, 68 + s * 7, 2, 53, MAT.wood, false);
-    for (let i = 0; i < 4; i++) {
-      box(g, 2, 11, 3, 74 + i * 3, 11, 90, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2][i], false);
-    }
-    cyl(g, 0.5, 0.5, 10, 58, 5, 52, MAT.woodDark, 8, false);
-    cyl(g, 1.2, 1.2, 4, 58, 2, 52, MAT.metalDark, 10, false);
+    buildCoatRack(g, 68, 53);
     pottedPlant(g, 60, 87, 1.3);
     // A mat inside the door, and the house number on the wall.
     rug(g, 70, 66, 22, 18, MAT.rugHall);
@@ -1073,86 +1205,13 @@ export async function addHouse(parent, opts = {}) {
     // firebox is removed. That way the firebox is genuinely open towards the room
     // and the fire and its light actually come out of it, instead of glowing out
     // of the side of a solid block.
-    fireplace = (() => {
-      const fp = unit(g, 'fireplace', FIREPLACE.x, FIREPLACE.z);
-      fp.rotation.y = Math.PI; // Face into the room (east)
-      const H = FIREPLACE.hearth;
-      // Two jambs either side of the opening, the stone above it, the back of the
-      // recess, and the slab across the bottom of it. 24 deep in z, 18 tall.
-      box(fp, 5, 18, 5, 0, 9, -9.5, MAT.counter);
-      box(fp, 5, 18, 5, 0, 9, 9.5, MAT.counter);
-      box(fp, 5, 6, 14, 0, 15, 0, MAT.counter);          // over the opening
-      box(fp, 1, 12, 14, 1.5, 6, 0, MAT.porcelain);      // the back of the firebox
-      box(fp, 4, 0.7, 14, 0, 0.35, 0, MAT.counter);       // its floor
-      box(fp, 7, 1.4, 26, 0.5, 19, 0, MAT.woodDark);     // the mantel
-      // Soot up the back of the recess, so the firebox reads as a firebox.
-      box(fp, 0.2, 8, 11, 0.95, 4.5, 0, MAT.rubber, false);
-      // The stone apron on the floor in front of it — the bit you park on.
-      flat(g, H.x1 - H.x0, H.z1 - H.z0, (H.x0 + H.x1) / 2, 0.06, (H.z0 + H.z1) / 2, MAT.counter);
-      // A log basket beside it, because a fire that eats nothing is a hologram.
-      cyl(g, 2.1, 1.7, 3.2, H.x1 - 1.6, 1.6, H.z1 + 3.4, MAT.pot, 12);
-      for (let i = 0; i < 3; i++) {
-        cyl(fp, 0.5, 0.5, 3.6, 0.2, 1.6 + i * 0.9, 0, MAT.trunk, 8).rotation.z = Math.PI / 2 + (i - 1) * 0.3;
-      }
-      // The fire: a bed of coals with two logs lying across it, then flames.
-      const coals = [];
-      for (let i = 0; i < 9; i++) {
-        const t = i / 8;
-        coals.push(sph(fp, 0.75 + (i % 3) * 0.22, 0.1 + ((i * 7) % 3) * 0.4, 1.05, -4.6 + t * 9.2, MAT.coal, false));
-      }
-      for (let i = 0; i < 2; i++) {
-        const log = cyl(fp, 0.62, 0.62, 8, 0, 2 + i * 1.1, -1 + i * 2, MAT.trunk, 10);
-        log.rotation.x = Math.PI / 2;
-        log.rotation.y = (i - 0.5) * 0.24;
-      }
-      // Flames: a ring of tall ones with a shorter, brighter core inside them.
-      const flames = [];
-      for (let i = 0; i < 7; i++) {
-        const a = (i / 7) * Math.PI * 2;
-        const tall = cone(fp, 1.15, 4.4, 1 + Math.cos(a) * 1.5, 3.6, Math.sin(a) * 3.4, MAT.flame, 10, false);
-        const core = cone(fp, 0.7, 2.6, 1 + Math.cos(a) * 0.7, 2.6, Math.sin(a) * 1.6, MAT.flameCore, 10, false);
-        flames.push({ tall, core, a, h: 4.4 });
-      }
-      // The light of it, thrown out into the room and flickering.
-      const fireLight = new THREE.PointLight(0xff9436, 30, 40, 2);
-      fireLight.position.set(2.5, 4.5, 0);
-      fp.add(fireLight);
-      lights.push(fireLight);
-      // The flicker is deterministic (a sum of three sines off the clock) so it
-      // looks the same on every machine, and so a test can drive it.
-      return {
-        light: fireLight,
-        update(elapsed) {
-          const f = Math.sin(elapsed * 11) * 0.5 + Math.sin(elapsed * 17.3) * 0.3 + Math.sin(elapsed * 29.7) * 0.2;
-          fireLight.intensity = 26 + f * 9;
-          MAT.coal.emissiveIntensity = 2.1 + f * 0.35;
-          for (const fl of flames) {
-            // Each flame breathes on its own phase so they do not pulse in unison.
-            const p = Math.sin(elapsed * (7 + fl.a * 2.2)) * 0.5 + 0.5;
-            const s = 0.78 + p * 0.42 + f * 0.06;
-            fl.tall.scale.set(1 + p * 0.12, s, 1 + p * 0.12);
-            fl.tall.position.y = 1.4 + (fl.h * s) / 2;
-            fl.core.scale.set(1 + p * 0.16, 0.8 + p * 0.4, 1 + p * 0.16);
-          }
-        },
-      };
-    })();
+    fireplace = buildFireplace(g, lights);
     // Bookcase along the south wall. It was 40 long, which is longer than the
     // stretch of that wall between the two doorways — it ran across both of
     // them. 22 wide fits the gap between them with room to spare, and it stands
     // against the wall's FACE (z -18.5) rather than its centre line (z -20):
     // 3.4 deep centred on -17.5 put its back edge inside the plaster.
-    {
-      const bc = unit(g, 'bookcase', -42, -16);
-      box(bc, 22, 18, 3, 0, 9, 0, MAT.woodPale);
-      for (let s = 0; s < 3; s++) {
-        box(bc, 21, 0.5, 3.4, 0, 3.5 + s * 5.5, 0, MAT.wood, false);
-        for (let i = 0; i < 10; i++) {
-          box(bc, 1.5, 3.8, 2.4, -9 + i * 2, 5.4 + s * 5.5, 0,
-            [MAT.quilt, MAT.quilt2, MAT.wood, MAT.paper][i % 4], false);
-        }
-      }
-    }
+    buildBookcase(g, -42, -16);
     // A grand piano in the corner nobody sits in. Pulled in off both the solid
     // darkGarage|living wall at z=46 and the sofa to its east.
     {
@@ -1460,14 +1519,7 @@ export async function addHouse(parent, opts = {}) {
     // The workbenches, hard against the north and south walls.
     box(g, 14, 3, 4, -58, 1.5, 88.5, MAT.woodDark);
     box(g, 15, 0.6, 5, -58, 3.3, 88.5, MAT.woodPale, false);
-    box(g, 20, 3, 5, -66, 1.5, 52, MAT.woodDark);
-    box(g, 21, 0.6, 6, -66, 3.3, 52, MAT.woodPale, false);
-    for (let i = 0; i < 4; i++) {
-      box(g, 3, 2, 3, -73 + i * 5, 4.6, 52, i % 2 ? MAT.paper : MAT.woodDark, false);
-    }
-    // A stack of tyres, and a drum.
-    for (let i = 0; i < 3; i++) cyl(g, 3.6, 3.6, 1.7, -54, 0.9 + i * 1.7, 53, MAT.rubber, 16, false);
-    cyl(g, 2.6, 2.6, 6, -76, 3, 50, MAT.signAmber, 14, false);
+    buildWorkbench(g, -66, 52);
     // ---- The beckoning light ------------------------------------------------
     // A clamp lamp on a tripod at the BACK of the garage, aimed at the wall. It
     // is the whole reason you drive in there, and the only thing you can see
@@ -1581,3 +1633,17 @@ export async function addHouse(parent, opts = {}) {
     surfaces: (typeof window !== 'undefined' && window.__HOUSE_SURFACES) || [],
   };
 }
+
+// The object browser builds the house's furniture from these same builders, so
+// a preview is the real geometry rather than a miniature. The furniture helpers
+// take (g, x, z, ...) and place themselves at their real world spots; the
+// build* pieces above are the lifted one-off blocks (fireplace, front door...).
+export {
+  MAT,
+  bed, sofa, table, chair, wardrobe,
+  shelfRack, counterRun, tub, toilet, sinkUnit,
+  fridge, stove, tvUnit, rug, pottedPlant,
+  ceilingLight, tableLamp,
+  buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
+  buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
+};

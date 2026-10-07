@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addGlassCity } from '../../glasscity.js?v=1790707232562';
+import { addGlassCity } from '../../glasscity.js?v=1791396329761';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
@@ -443,6 +443,580 @@ export function tunnelPoint(s) {
     z: TUNNEL.cz + TUNNEL.R * Math.sin(th),
     y: TUNNEL.startY + (TUNNEL.endY - TUNNEL.startY) * easeSmooth(s),
   };
+}
+
+// ============================================================================
+// Factory-floor machines. Each is built on a throwaway parent so the object
+// browser can preview the REAL geometry (the same builder addUnderground
+// calls); anything animated keeps its sub-mesh refs on the returned object,
+// which the level's update() uses. Constants live here so the builder and the
+// level read the same numbers.
+// ============================================================================
+
+// ---- Giant conveyor lane (idea #33) — now part of the obstacle course ----
+// A long moving belt SITTING RIGHT ON the eastbound z=0 guide lane (x∈[41,107]).
+// The chevron texture scrolls to sell the motion; direction is +X here, but
+// dirX/dirZ keep it swappable.
+export const CONVEYOR = { cx: 74, cz: 0, len: 66, wid: 9, dirX: 1, dirZ: 0, speed: 6 };
+
+export function buildConveyorLane(g) {
+  const beltRepeatX = CONVEYOR.len / 6;   // one chevron pair every 6 world units
+  const beltTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 64; c.height = 64;
+    const g2 = c.getContext('2d');
+    g2.fillStyle = '#15151b';
+    g2.fillRect(0, 0, 64, 64);
+    g2.strokeStyle = '#37e0ff';
+    g2.lineWidth = 7;
+    g2.lineJoin = 'round';
+    for (let i = -1; i < 3; i++) {
+      const px = i * 32;
+      g2.beginPath();
+      g2.moveTo(px, 6);
+      g2.lineTo(px + 22, 32);
+      g2.lineTo(px, 58);
+      g2.stroke();
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(beltRepeatX, 1);
+    return t;
+  })();
+  const beltMat = new THREE.MeshStandardMaterial({
+    map: beltTex, emissive: 0x0a2a3a, emissiveIntensity: 0.7, roughness: 0.7, metalness: 0.15,
+  });
+  const belt = new THREE.Mesh(new THREE.PlaneGeometry(CONVEYOR.len, CONVEYOR.wid), beltMat);
+  belt.rotation.x = -Math.PI / 2;
+  belt.position.set(CONVEYOR.cx, 0.24, CONVEYOR.cz);
+  belt.receiveShadow = true;
+  g.add(belt);
+  const conFrameMat = new THREE.MeshStandardMaterial({ color: 0x2b2b34, roughness: 0.7, metalness: 0.5 });
+  const conFrame = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.3, CONVEYOR.wid + 1), conFrameMat);
+  conFrame.position.set(CONVEYOR.cx, 0.11, CONVEYOR.cz);
+  conFrame.receiveShadow = true;
+  g.add(conFrame);
+  for (const s of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.5, 0.3), makeGlowMat(NEON.amber));
+    rail.position.set(CONVEYOR.cx, 0.45, CONVEYOR.cz + s * (CONVEYOR.wid / 2 + 0.35));
+    g.add(rail);
+  }
+  // The motor-cylinder housing at the belt's downstream end was REMOVED
+  // (2026-09-22) at the user's request — the belt just scrolls off into the
+  // frame.
+  return { beltTex };
+}
+
+// ---- Giant steam press straddling the eastbound z=0 lane (belt middle) ----
+// Industrial gantry: two columns at z=±5.5 (just outside the belt rails), a
+// crossbeam on top, a neon anvil on the floor, and a massive steel head that
+// rides the columns up and down. The press sits in the MIDDLE of the conveyor
+// belt (x=74, the belt runs x∈[41,107]). The head cycles raised (rest) → quick
+// slam → hold flat on the anvil → rise. The press is NEVER a collider — with
+// the head up you just drive through.
+export const PRESS = { x: CONVEYOR.cx, z: 0, halfW: 5.5, halfD: 5.5, baseY: 8.2 };
+export const PRESS_UP_Y = 4.5, PRESS_DOWN_Y = 1.15;   // head bottom (y-0.95) meets the anvil
+
+export function buildSteamPress(g) {
+  const pressSteel = new THREE.MeshStandardMaterial({ color: 0x3a3238, roughness: 0.5, metalness: 0.7 });
+  const pressHeadMat = new THREE.MeshStandardMaterial({
+    color: 0x2c252d, roughness: 0.4, metalness: 0.8, emissive: 0x8a1f5c, emissiveIntensity: 0.35,
+  });
+  const pressGroup = new THREE.Group();
+  pressGroup.position.set(PRESS.x, 0, PRESS.z);
+  for (const s of [-1, 1]) {
+    const col = new THREE.Mesh(new THREE.BoxGeometry(1.1, PRESS.baseY, 1.1), pressSteel);
+    col.position.set(0, PRESS.baseY / 2, s * PRESS.halfD);
+    col.castShadow = true;
+    pressGroup.add(col);
+    const gl = new THREE.Mesh(new THREE.BoxGeometry(0.18, PRESS.baseY, 0.18), makeGlowMat(NEON.amber));
+    gl.position.set(-0.55, PRESS.baseY / 2, s * PRESS.halfD);
+    pressGroup.add(gl);
+  }
+  const cross = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, PRESS.halfD * 2 + 1.4), pressSteel);
+  cross.position.set(0, PRESS.baseY + 0.7, 0);
+  pressGroup.add(cross);
+  const warnLight = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 10), makeGlowMat(NEON.red).clone());
+  warnLight.position.set(0, PRESS.baseY + 1.5, 0);
+  pressGroup.add(warnLight);
+  const anvil = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.2, PRESS.halfD * 2), pressSteel);
+  anvil.position.set(0, 0.1, 0);
+  pressGroup.add(anvil);
+  const anvilGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.06, PRESS.halfD * 2), makeGlowMat(NEON.magenta));
+  anvilGlow.position.set(0, 0.2, 0);
+  pressGroup.add(anvilGlow);
+  const pressHead = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2, 1.9, PRESS.halfD * 2), pressHeadMat);
+  pressHead.position.set(0, PRESS_UP_Y, 0);
+  pressGroup.add(pressHead);
+  const headGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 - 0.4, 0.12, PRESS.halfD * 2 - 0.4), makeGlowMat(NEON.magenta));
+  headGlow.position.y = -0.95;
+  pressHead.add(headGlow);
+  g.add(pressGroup);
+  return { group: pressGroup, head: pressHead, warnLight };
+}
+
+// ---- Giant rotating disco ball you can hit ----
+// A big faceted mirror sphere hangs from the cavern ceiling OVER THE MIDDLE
+// of the first long straight — the eastbound z=37 lane (151 units long, from
+// the start bend to the x=134 column). A kicker ramp on the lane ahead
+// launches the car into it and you keep flying along the SAME straight, so
+// you land back on the path. It spins and carries a ring of colored point
+// lights that throw moving neon pools across the cavern floor: fly into it
+// and the ball swings on its cable like a pendulum, then settles with a
+// damped wobble (and spins a touch faster with every hit).
+export const DISCO = { x: 58, z: 37, topY: CEIL_Y, len: 21, r: 4, spin: 1.2, hitR: 6.5 };   // ball centre at y = topY - len = 9
+
+export function buildDisco(g) {
+  const pivot = new THREE.Group();
+  pivot.position.set(DISCO.x, DISCO.topY, DISCO.z);
+  g.add(pivot);
+  // Hanger cable running up to the ceiling.
+  const cable = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, DISCO.len, 8),
+    new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.7, metalness: 0.4 })
+  );
+  cable.position.set(0, -DISCO.len / 2, 0);
+  pivot.add(cable);
+  const ball = new THREE.Group();
+  ball.position.set(0, -DISCO.len, 0);
+  pivot.add(ball);
+  const spin = new THREE.Group();
+  ball.add(spin);
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(DISCO.r, 2),
+    new THREE.MeshStandardMaterial({ color: 0xdff2ff, metalness: 1, roughness: 0.12, flatShading: true, emissive: 0x22333f, emissiveIntensity: 0.35 })
+  );
+  core.castShadow = true;
+  spin.add(core);
+  // Scatter tiny mirrored facets over the sphere for the classic sparkle.
+  {
+    const facetGeo = new THREE.PlaneGeometry(0.42, 0.42);
+    const facetN = 150;
+    const facets = new THREE.InstancedMesh(
+      facetGeo,
+      new THREE.MeshStandardMaterial({ color: 0xeaf6ff, metalness: 1, roughness: 0.05, side: THREE.DoubleSide, emissive: 0xffffff, emissiveIntensity: 0.25 }),
+      facetN
+    );
+    const dummy = new THREE.Object3D();
+    const zAxis = new THREE.Vector3(0, 0, 1);
+    for (let i = 0; i < facetN; i++) {
+      // Fibonacci sphere for even coverage.
+      const t = (i + 0.5) / facetN;
+      const y = 1 - 2 * t;
+      const rad = Math.sqrt(Math.max(0, 1 - y * y));
+      const phi = i * 2.399963229728653;
+      const dir = new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad);
+      dummy.position.copy(dir).multiplyScalar(DISCO.r + 0.02);
+      dummy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+      dummy.updateMatrix();
+      facets.setMatrixAt(i, dummy.matrix);
+    }
+    facets.instanceMatrix.needsUpdate = true;
+    spin.add(facets);
+  }
+  // Ring of colored lights orbiting with the ball — the moving neon dots.
+  [NEON.magenta, NEON.cyan, NEON.amber, NEON.lime].forEach((c, i) => {
+    const L = new THREE.PointLight(c, 4.5, 40, 2);
+    const a = (i / 4) * Math.PI * 2;
+    L.position.set(Math.cos(a) * (DISCO.r + 0.6), 0, Math.sin(a) * (DISCO.r + 0.6));
+    spin.add(L);
+  });
+  return { pivot, spin, ball };
+}
+
+// ---- 3. Industrial magnet pit-stop (on the eastbound belt lane) -----------
+// A huge electromagnet hangs from the ceiling at (55,0), radius 9, right over
+// the eastbound conveyor belt lane (z=0, x 41..107) — clear of the machine
+// bridge at x=92 and the steam press beyond it. A timer runs ON 3.2s / OFF
+// 4.8s; while active (`magnet.active`) main.js yanks a near grounded car up
+// off the belt to `magnet.holdY`, spins its wheels and hangs it until the
+// field drops. A red coil + translucent beam read the state from across the
+// cavern.
+export const MAGNET = { x: 55, z: 0, r: 9, holdY: 27, on: 3.2, off: 4.8 };
+
+export function buildMagnet(g) {
+  const magnetSteel = new THREE.MeshStandardMaterial({ color: 0x4a4a55, roughness: 0.4, metalness: 0.9 });
+  const magGroup = new THREE.Group();
+  magGroup.position.set(MAGNET.x, 0, MAGNET.z);
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 1.2, 22), magnetSteel);
+  core.position.y = MAGNET.holdY;
+  core.castShadow = true;
+  magGroup.add(core);
+  // Coil clone — the update loop pulses emissiveIntensity on it each frame.
+  const coil = new THREE.Mesh(new THREE.TorusGeometry(2.9, 0.28, 12, 26), makeGlowMat(NEON.red).clone());
+  coil.rotation.x = Math.PI / 2;
+  coil.position.y = MAGNET.holdY - 0.15;
+  magGroup.add(coil);
+  // Translucent pull beam (faint when off, bright while active).
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 6.5, MAGNET.holdY, 20, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0xff5560, transparent: true, opacity: 0.06,
+      side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false,
+    })
+  );
+  beam.position.y = MAGNET.holdY / 2;
+  magGroup.add(beam);
+  const magLight = new THREE.PointLight(0xff4455, 0, 60, 2);
+  magLight.position.y = MAGNET.holdY - 3;
+  magGroup.add(magLight);
+  magGroup.userData = { beam, light: magLight, coil };
+  g.add(magGroup);
+  return magGroup;
+}
+
+// ---- 2. Taffy-puller machine (open-frame drive-through on the z=-30 lane) -
+// An OPEN-FRAME industrial taffy machine straddling the westbound z=-30 lane
+// at x=128 — you drive the car straight through it like a car wash. The old
+// glass box is gone: a gantry of steel uprights, top beams, cross ties and
+// mid rails frames the machine wide open on the east/west faces so every part
+// is visible from the lane and the car can rumble right through the middle.
+// Inside, two counter-rotating chrome hooks sweep across the lane (posts at
+// (128,-26) and (128,-34), one each side of the car's path), a train of
+// gears, pulleys and pistons churn, and an endless chain racetracks around
+// the whole unit right over/under the car as it passes through. A car under
+// a sweep gets hooked (main.js calls `taffy.hookedAt(x,z)` → trip the
+// carTaffyMode noodle-stretch). The arms NEVER become colliders — the hook
+// _grabs and stretches_ the car, it doesn't smash it.
+export const TAFFY = [
+  { x: 128, z: -26, armLen: 6, phase: 0,    tipAngle: 0.9,  angle: 0, cd: 0, snap: 0 },
+  { x: 128, z: -34, armLen: 6, phase: Math.PI, tipAngle: -0.9, angle: 0, cd: 0, snap: 0 },
+];
+
+export function buildTaffyPuller(g) {
+  const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8e2ea, metalness: 0.95, roughness: 0.18 });
+  const taffySteel = new THREE.MeshStandardMaterial({ color: 0x8a93a8, metalness: 0.85, roughness: 0.3 });
+  const taffyArms = [];
+  const taffyMotion = [];   // {kind, ref, speed, phase} spun in update()
+  // ---- Open-frame gantry: a steel cage over the two hook posts, wide open on
+  // ---- the east/west faces so the car drives straight through the machine.
+  // ---- Four corner uprights (straddling the westbound z=-30 lane around the
+  // ---- posts at z=-26/-34), top beams + cross ties, neon mid rails and a
+  // ---- glowing portal bar on each open end. Pure decor — no colliders, the
+  // ---- car plows through the frame like the car-wash whites.
+  {
+    const spanX = 8.6;       // east-west opening (x 123.7 … 132.3)
+    const spanZ = 8.2;       // north-south opening (z -34.1 … -25.9)
+    const upY = 6.6;         // upright + top-beam height
+    const posts = [[128 - spanX / 2, -25.9], [128 + spanX / 2, -25.9], [128 - spanX / 2, -34.1], [128 + spanX / 2, -34.1]];
+    for (const [px, pz] of posts) {
+      const upright = new THREE.Mesh(new THREE.BoxGeometry(0.5, upY, 0.5), taffySteel);
+      upright.position.set(px, upY / 2, pz);
+      upright.castShadow = true;
+      g.add(upright);
+    }
+    // Two long top beams running east-west over each side of the lane.
+    for (const pz of [-25.9, -34.1]) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(spanX + 0.6, 0.5, 0.5), taffySteel);
+      beam.position.set(128, upY, pz);
+      beam.castShadow = true;
+      g.add(beam);
+    }
+    // Two shorter cross ties connecting the top beams across the lane.
+    for (const px of [128 - spanX / 2, 128 + spanX / 2]) {
+      const tie = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, spanZ + 0.6), taffySteel);
+      tie.position.set(px, upY, -30);
+      tie.castShadow = true;
+      g.add(tie);
+    }
+    // Neon mid rails on the two open faces (car drives between them) + a
+    // glowing portal bar overhead on each end, like a wash-bay arch.
+    for (const pz of [-25.9, -34.1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(spanX - 0.4, 0.28, 0.28), makeGlowMat(NEON.cyan));
+      rail.position.set(128, 4.6, pz);
+      g.add(rail);
+    }
+    for (let k = 0; k < 2; k++) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, spanZ - 1.6), makeGlowMat(k ? NEON.magenta : NEON.amber));
+      bar.position.set(k ? 128 - spanX / 2 : 128 + spanX / 2, 5.4, -30);
+      g.add(bar);
+    }
+  }
+  // ---- Endless chain loop: links run around a vertical ring centred between
+  // ---- the two posts (the racetrack ellipse of the stretched-open machine),
+  // ---- at y≈3.1, so the belt visibly churns right over the passing car.
+  {
+    const CHAIN_N = 18;
+    const chainGeom = new THREE.BoxGeometry(0.22, 0.5, 0.34);
+    const chainMat = taffySteel;
+    for (let k = 0; k < CHAIN_N; k++) {
+      const link = new THREE.Mesh(chainGeom, chainMat);
+      link.castShadow = true;
+      g.add(link);
+      taffyMotion.push({ kind: 'chain', ref: link, speed: 1.6, phase: k / CHAIN_N });
+    }
+  }
+  for (const h of TAFFY) {
+    // Chrome post (floor → hip height) with a glowing base ring.
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 3.4, 14), chromeMat);
+    post.position.set(h.x, 1.7, h.z);
+    post.castShadow = true;
+    g.add(post);
+    const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.1, 8, 18),
+      makeGlowMat(NEON.amber));
+    baseRing.rotation.x = Math.PI / 2;
+    baseRing.position.set(h.x, 0.42, h.z);
+    g.add(baseRing);
+    // Big drive gear under the post — a heavy disc with 12 teeth, spinning.
+    {
+      const gear = new THREE.Group();
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.4, 18), taffySteel);
+      disc.castShadow = true;
+      gear.add(disc);
+      for (let k = 0; k < 12; k++) {
+        const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.42), taffySteel);
+        tooth.position.x = 1.22;
+        tooth.rotation.y = (k / 12) * Math.PI * 2;
+        const holder = new THREE.Group();
+        holder.add(tooth);
+        holder.rotation.y = (k / 12) * Math.PI * 2;
+        gear.add(holder);
+      }
+      gear.position.set(h.x, 0.95, h.z);
+      g.add(gear);
+      taffyMotion.push({ kind: 'spin', ref: gear, speed: 2.4, dir: h.z === -22 ? -1 : 1 });
+      // A small meshing pinion beside the gear, counter-rotating against it.
+      const pinion = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.42, 8), chromeMat);
+      pinion.position.set(h.x + 1.55, 0.95, h.z);
+      g.add(pinion);
+      taffyMotion.push({ kind: 'spin', ref: pinion, speed: -6.5, dir: h.z === -22 ? -1 : 1 });
+    }
+    // Overhead pulley: a grooved steel wheel on each post top, spinning fast.
+    {
+      const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.3, 14), chromeMat);
+      pulley.position.set(h.x, 3.9, h.z);
+      pulley.castShadow = true;
+      g.add(pulley);
+      const groove = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.08, 8, 18), makeGlowMat(NEON.cyan));
+      groove.rotation.x = Math.PI / 2;
+      groove.position.set(h.x, 3.9, h.z);
+      g.add(groove);
+      taffyMotion.push({ kind: 'pulley', ref: pulley, speed: 3.2, dir: h.z === -22 ? -1 : 1 });
+    }
+    // Sweeping arm: horizontal chrome rod pivoting about Y at the post top.
+    const armPivot = new THREE.Group();
+    armPivot.position.set(h.x, 3.0, h.z);
+    g.add(armPivot);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(h.armLen, 0.18, 0.18), chromeMat);
+    arm.position.set(h.armLen / 2, 0, 0);
+    arm.castShadow = true;
+    armPivot.add(arm);
+    // Hook claw at the far tip (an L-bend that reads as "pulls you out").
+    // Cloned from the glow cache because the sweep pulses its emissive per arm.
+    const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.8, 8),
+      makeGlowMat(NEON.magenta).clone());
+    claw.rotation.z = Math.PI / 2;
+    claw.position.set(h.armLen - 0.2, 0, 0);
+    armPivot.add(claw);
+    // A piston riding the arm's axle — bobs up/down as the arm sweeps, another
+    // visible moving part for people watching from the course.
+    const piston = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.6, 0.24), chromeMat);
+    piston.position.set(h.armLen * 0.35, 0.7, 0);
+    armPivot.add(piston);
+    taffyArms.push({ hook: h, armPivot, claw });
+  }
+  return { arms: taffyArms, motion: taffyMotion };
+}
+
+// ---- Grand ramp up to the second roof (NORTH side) ----
+// A wide wedge rising to the ceiling's drivable top (CEIL_TOP + 0.3 = 31.3) so
+// the car rolls onto the second roof. Guardrails track the slope; a black
+// techno fence stands on the west flank. The candy waterfall (gemstones) is a
+// separate pool slid down this surface by update().
+export const GRAND = {
+  x: 24,             // centre of the x-span
+  z: 65,             // centre of the z-span (z ∈ [48, 82])
+  len: 34,           // half the staircase footprint → twice as steep
+  width: 12,         // same width as the staircase
+  height: CEIL_Y + 1 + 0.3,   // CEIL_TOP + 0.3 = 31.3 (see note in addUnderground)
+  runX: 0,           // rises toward -Z (south) to meet the ceiling's north edge
+  runZ: -1,
+  boost: 0,          // no launch off the top — drive up and roll onto the roof
+};
+
+export function grandRampSurfaceY(pz) {
+  const s = (GRAND.z + GRAND.len / 2 - pz) / GRAND.len;   // 0 at base, 1 at top
+  return GRAND.height * s;
+}
+
+export function buildGrandRamp(g) {
+  const grandRampMat = new THREE.MeshStandardMaterial({ color: 0x453f52, roughness: 0.85 });
+  // The wedge (only the ramp surface; the guardrails are separate, below).
+  // Local frame: base→top along +X, up along +Y, across along +Z.
+  {
+    const rampGroup = new THREE.Group();
+    rampGroup.rotation.y = Math.atan2(-GRAND.runZ, GRAND.runX);
+    rampGroup.position.set(GRAND.x, 0, GRAND.z);
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(GRAND.len, 0);
+    shape.lineTo(GRAND.len, GRAND.height);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: GRAND.width, bevelEnabled: false });
+    geo.translate(-GRAND.len / 2, 0, -GRAND.width / 2);
+    const wedge = new THREE.Mesh(geo, grandRampMat);
+    wedge.castShadow = true;
+    wedge.receiveShadow = true;
+    rampGroup.add(wedge);
+    g.add(rampGroup);
+  }
+  // ---- Guardrails on the candy waterfall's sides (restored 2026-09-22) ----
+  // The grand ramp used to carry side rails with an invisible-wall collider so
+  // you couldn't drive off the edges; they were removed so you COULD. These
+  // bring back BOTH a visible rail AND the barrier. A dark-steel guardrail
+  // runs up each side of the waterfall, tilted to sit flush on the ramp's
+  // slope (45°-ish), topped with a glowing magenta cap and anchored by vertical
+  // posts. A chain of axis-aligned solid colliders along each rail keeps the
+  // car on the ramp while it climbs — each segment's `h` follows the ramp
+  // surface so the little car (which height-filters colliders) is blocked at
+  // every height, not just mid-slope. (The west-flank black techno fence at
+  // x=15 stays; THIS is the rail on the ramp's own edges, x=18 & x=30.)
+  const RAIL_H = 2.3;                 // rail height above the ramp surface
+  const RAIL_THICK = 0.3;             // rail body thickness across the edge
+  const GRAND_THETA = Math.atan2(GRAND.height, GRAND.len);
+  const railSteel = new THREE.MeshStandardMaterial({ color: 0x3a3440, metalness: 0.55, roughness: 0.45 });
+  const railMagenta = makeGlowMat(NEON.magenta);
+  const grandRailColliders = [];
+  // Length along the slope EXACTLY matching the ramp edge (no overhang, so the
+  // ends line up with the ramp's floor and roof lips, not dangle past them).
+  const railLen = GRAND.len / Math.cos(GRAND_THETA);
+  for (const edgeX of [GRAND.x - GRAND.width / 2, GRAND.x + GRAND.width / 2]) {
+    // Sloped rail body hugging the ramp surface along the edge. The box's long
+    // axis must lie ALONG the slope (high at the ceiling / z=48 end, low at
+    // the floor / z=82 end) — rotation.x = +THETA, which maps local +Z tip to
+    // (down + toward +Z) and the -Z tip up toward the ceiling. The center hangs
+    // on the surface's up-normal ((0, cos T, +sin T)) so the rail sits a true
+    // RAIL_H above the ramp all the way up instead of being canted the wrong
+    // way (high end sunk in the floor, low end poking through the roof).
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK, RAIL_H, railLen), railSteel);
+    rail.rotation.x = GRAND_THETA;
+    rail.position.set(
+      edgeX,
+      grandRampSurfaceY(GRAND.z) + (RAIL_H / 2) * Math.cos(GRAND_THETA),
+      GRAND.z
+    );
+    rail.castShadow = true;
+    g.add(rail);
+    // Glowing magenta cap riding the rail's top edge (same tilt as the rail).
+    const capH = (RAIL_H / 2 + 0.02) * Math.cos(GRAND_THETA);
+    const capZ = (RAIL_H / 2 + 0.02) * Math.sin(GRAND_THETA);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK + 0.06, 0.08, railLen), railMagenta);
+    cap.rotation.x = GRAND_THETA;
+    cap.position.set(edgeX, rail.position.y + capH, rail.position.z + capZ);
+    g.add(cap);
+    for (let z = 50; z <= 80; z += 5) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, RAIL_H, 0.18), railSteel);
+      post.position.set(edgeX, grandRampSurfaceY(z) + RAIL_H / 2, z);
+      g.add(post);
+    }
+    const RAIL_SEGS = 10;
+    const segLen = GRAND.len / RAIL_SEGS;
+    for (let k = 0; k < RAIL_SEGS; k++) {
+      const zc = (GRAND.z - GRAND.len / 2) + (k + 0.5) * segLen;
+      grandRailColliders.push({
+        x: edgeX, z: zc,
+        halfW: 0.6, halfD: segLen / 2 + 0.2,
+        h: grandRampSurfaceY(zc - segLen / 2),
+      });
+    }
+  }
+  // ---- Black techno fence on the west flank of the waterfall ----
+  const FZ = GRAND.z - GRAND.len / 2;                 // 48 — ramp's top end
+  const FLEN = GRAND.len;                             // 34 — spans the footprint
+  const FX = GRAND.x - GRAND.width / 2 - 3;           // 15 — the invisible wall's x
+  {
+    const FH = 2.4;        // fence height
+    const STEP = 5;        // post spacing
+    const blackTech = new THREE.MeshStandardMaterial({ color: 0x0a0a0e, roughness: 0.5, metalness: 0.45 });
+    const glowRail = makeGlowMat(NEON.magenta);
+    const ledMat = makeGlowMat(NEON.cyan);
+    const finMat = new THREE.MeshStandardMaterial({ color: 0x14141c, roughness: 0.6, metalness: 0.4 });
+    const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, FLEN), blackTech);
+    topRail.position.set(FX, FH, FZ + FLEN / 2);
+    g.add(topRail);
+    const glowCap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, FLEN), glowRail);
+    glowCap.position.set(FX, FH + 0.09, FZ + FLEN / 2);
+    g.add(glowCap);
+    const midRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, FLEN), blackTech);
+    midRail.position.set(FX, FH * 0.55, FZ + FLEN / 2);
+    g.add(midRail);
+    let prevPost = null;
+    for (let z = FZ; z <= FZ + FLEN + 0.01; z += STEP) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, FH, 0.14), blackTech);
+      post.position.set(FX, FH / 2, z);
+      g.add(post);
+      if (prevPost != null && z - prevPost > 0.5) {
+        const mid = (z + prevPost) / 2;
+        const span = z - prevPost - 0.4;
+        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.06, FH * 0.42, span), ledMat);
+        slat.position.set(FX, FH * 0.55, mid);
+        g.add(slat);
+      }
+      prevPost = z;
+    }
+    for (const end of [{ z: FZ, dir: 1 }, { z: FZ + FLEN, dir: -1 }]) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(3.4, FH * 0.55, 0.12), finMat);
+      const finY = FH * 0.35;
+      fin.position.set(FX - 1.6, finY, end.z + 0.4 * end.dir);
+      fin.rotation.z = 0.35 * end.dir;   // slight rake up/out
+      g.add(fin);
+      const finCap = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.06, 0.18), glowRail);
+      finCap.position.set(fin.position.x, finY, fin.position.z);
+      finCap.rotation.z = 0.35 * end.dir;
+      g.add(finCap);
+    }
+  }
+  const grandTopLight = new THREE.PointLight(NEON.magenta, 1.6, 70, 2);
+  grandTopLight.position.set(GRAND.x, 24, GRAND.z - GRAND.len / 2 + 4);
+  g.add(grandTopLight);
+  const grandBaseLight = new THREE.PointLight(NEON.cyan, 1.2, 60, 2);
+  grandBaseLight.position.set(GRAND.x, 6, GRAND.z + GRAND.len / 2 - 4);
+  g.add(grandBaseLight);
+  return { colliders: grandRailColliders };
+}
+
+// ---- Trampoline launch pads (idea #13) ----
+// Glowing bounce patches set into the cavern floor. Drive over one on the
+// ground and it punts the car straight up (main.js gives it a vy of 35 —
+// enough to clear the 31.3-high second roof) so it sails up through the
+// ceiling and lands on the colorful tiles: a floor→roof route that skips
+// the staircase and the grand ramp. A translucent light column marks the
+// launch line all the way up to the roof.
+export const TRAMPOLINES = [
+  { x: 128, z: -90, r: 3.4 },  // far SE corner, off every lane (clear of the x=134 column and the z=-30 run) — under the roof
+  { x: 18, z: 46, r: 3.4 },    // far NW, north of the z=37 lane and beneath the ceiling's north edge — off-course
+];
+
+export function buildTrampolinePad(g, x, z, r) {
+  const trampPadMat = new THREE.MeshStandardMaterial({ color: 0x203a2f, roughness: 0.6, metalness: 0.2 });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(r, r + 0.3, 0.5, 28), trampPadMat);
+  base.position.set(x, 0.25, z);
+  base.castShadow = true;
+  g.add(base);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(r - 0.15, 0.16, 10, 32), makeGlowMat(NEON.lime));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.set(x, 0.55, z);
+  g.add(ring);
+  // Woven bed: crossing glow bars so the disc reads as a sprung trampoline.
+  for (let i = 0; i < 4; i++) {
+    const bar = new THREE.Mesh(
+      new THREE.BoxGeometry(r * 1.7, 0.08, 0.24),
+      makeGlowMat(i % 2 ? NEON.cyan : NEON.lime)
+    );
+    bar.position.set(x, 0.52, z);
+    bar.rotation.y = (i / 4) * Math.PI;
+    g.add(bar);
+  }
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(r * 0.55, r * 0.75, CEIL_Y, 18, 1, true),
+    new THREE.MeshBasicMaterial({ color: NEON.lime, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false })
+  );
+  beam.position.set(x, CEIL_Y / 2, z);
+  g.add(beam);
+  const glow = new THREE.PointLight(NEON.lime, 3, 30, 2);
+  glow.position.set(x, 1.5, z);
+  g.add(glow);
+  return { x, z, r, base, ring, beam, glow, cd: 0, squash: 0 };
 }
 
 export async function addUnderground(parent, opts = {}) {
@@ -1130,59 +1704,9 @@ export async function addUnderground(parent, opts = {}) {
   await ugPhase(0.28, 'the course ramps');
 
   // ---- Giant conveyor lane (idea #33) — now part of the obstacle course ----
-  // A long moving belt SITTING RIGHT ON the eastbound z=0 guide lane
-  // (x∈[41,107]). The green guide dots lead the car up to it, the belt carries
-  // you across the machine shop, and the dots pick up on the far side. The belt
-  // now extends all the way UNDER the steam press at x=108 — if you do nothing,
-  // it carries you under the press head (the slam zone is |x−108| < 6.7 and the
-  // belt tips over at x=107) and you get stamped flat. The chevron texture
-  // scrolls to sell the motion; direction is +X here, but dirX/dirZ keep it
-  // swappable.
-  const CONVEYOR = { cx: 74, cz: 0, len: 66, wid: 9, dirX: 1, dirZ: 0, speed: 6 };
-  const beltRepeatX = CONVEYOR.len / 6;   // one chevron pair every 6 world units
-  const beltTex = (() => {
-    const c = document.createElement('canvas');
-    c.width = 64; c.height = 64;
-    const g = c.getContext('2d');
-    g.fillStyle = '#15151b';
-    g.fillRect(0, 0, 64, 64);
-    g.strokeStyle = '#37e0ff';
-    g.lineWidth = 7;
-    g.lineJoin = 'round';
-    for (let i = -1; i < 3; i++) {
-      const px = i * 32;
-      g.beginPath();
-      g.moveTo(px, 6);
-      g.lineTo(px + 22, 32);
-      g.lineTo(px, 58);
-      g.stroke();
-    }
-    const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(beltRepeatX, 1);
-    return t;
-  })();
-  const beltMat = new THREE.MeshStandardMaterial({
-    map: beltTex, emissive: 0x0a2a3a, emissiveIntensity: 0.7, roughness: 0.7, metalness: 0.15,
-  });
-  const belt = new THREE.Mesh(new THREE.PlaneGeometry(CONVEYOR.len, CONVEYOR.wid), beltMat);
-  belt.rotation.x = -Math.PI / 2;
-  belt.position.set(CONVEYOR.cx, 0.24, CONVEYOR.cz);
-  belt.receiveShadow = true;
-  parent.add(belt);
-  const conFrameMat = new THREE.MeshStandardMaterial({ color: 0x2b2b34, roughness: 0.7, metalness: 0.5 });
-  const conFrame = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.3, CONVEYOR.wid + 1), conFrameMat);
-  conFrame.position.set(CONVEYOR.cx, 0.11, CONVEYOR.cz);
-  conFrame.receiveShadow = true;
-  parent.add(conFrame);
-  for (const s of [-1, 1]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(CONVEYOR.len + 1, 0.5, 0.3), makeGlowMat(NEON.amber));
-    rail.position.set(CONVEYOR.cx, 0.45, CONVEYOR.cz + s * (CONVEYOR.wid / 2 + 0.35));
-    parent.add(rail);
-  }
-  // The motor-cylinder housing at the belt's downstream end was REMOVED
-  // (2026-09-22) at the user's request — the belt just scrolls off into the
-  // frame.
+  // (see buildConveyorLane; the belt texture returned here is what update()
+  // scrolls each frame)
+  const { beltTex } = buildConveyorLane(parent);
 
   // ---- Articulated robot picker beside the conveyor (2026-09-22) ----
   // One pick-and-place robot on the belt's SOUTH flank (on the belt's WEST
@@ -1544,52 +2068,15 @@ export async function addUnderground(parent, opts = {}) {
   ];
 
   // ---- Giant steam press straddling the eastbound z=0 lane (belt middle) ----
-  // Industrial gantry: two columns at z=±5.5 (just outside the belt rails), a
-  // crossbeam on top, a neon anvil on the floor, and a massive steel head that
-  // rides the columns up and down. The press sits in the MIDDLE of the
-  // conveyor belt (x=74, the belt runs x∈[41,107]) — if you do nothing, the
-  // belt carries you under the head into the slam zone (|x−74| < 6.7) right as
-  // it drops, and carries you OUT flat on the other side. The head cycles
-  // raised (rest) → quick slam → hold flat on the anvil → rise, flashing its
-  // warning light before each drop. If the car is under the head while it's
-  // down it gets pressed flat (steam carrier reads steamPress.slamActive and
-  // runs the normal flatten/bounce). The press is NEVER a collider — with the
-  // head up you just drive through.
-  const PRESS = { x: CONVEYOR.cx, z: 0, halfW: 5.5, halfD: 5.5, baseY: 8.2 };
-  const PRESS_UP_Y = 4.5, PRESS_DOWN_Y = 1.15;   // head bottom (y-0.95) meets the anvil
-  const pressSteel = new THREE.MeshStandardMaterial({ color: 0x3a3238, roughness: 0.5, metalness: 0.7 });
-  const pressHeadMat = new THREE.MeshStandardMaterial({ color: 0x2c252d, roughness: 0.4, metalness: 0.8, emissive: 0x8a1f5c, emissiveIntensity: 0.35 });
-  const pressGroup = new THREE.Group();
-  pressGroup.position.set(PRESS.x, 0, PRESS.z);
-  for (const s of [-1, 1]) {
-    const col = new THREE.Mesh(new THREE.BoxGeometry(1.1, PRESS.baseY, 1.1), pressSteel);
-    col.position.set(0, PRESS.baseY / 2, s * PRESS.halfD);
-    col.castShadow = true;
-    pressGroup.add(col);
-    const gl = new THREE.Mesh(new THREE.BoxGeometry(0.18, PRESS.baseY, 0.18), makeGlowMat(NEON.amber));
-    gl.position.set(-0.55, PRESS.baseY / 2, s * PRESS.halfD);
-    pressGroup.add(gl);
-  }
-  const cross = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, PRESS.halfD * 2 + 1.4), pressSteel);
-  cross.position.set(0, PRESS.baseY + 0.7, 0);
-  pressGroup.add(cross);
-  const warnLight = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 10), makeGlowMat(NEON.red).clone());
-  warnLight.position.set(0, PRESS.baseY + 1.5, 0);
-  pressGroup.add(warnLight);
-  const anvil = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.2, PRESS.halfD * 2), pressSteel);
-  anvil.position.set(0, 0.1, 0);
-  pressGroup.add(anvil);
-  const anvilGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 + 2, 0.06, PRESS.halfD * 2), makeGlowMat(NEON.magenta));
-  anvilGlow.position.set(0, 0.2, 0);
-  pressGroup.add(anvilGlow);
-  const pressHead = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2, 1.9, PRESS.halfD * 2), pressHeadMat);
-  pressHead.position.set(0, PRESS_UP_Y, 0);
-  pressGroup.add(pressHead);
-  const headGlow = new THREE.Mesh(new THREE.BoxGeometry(PRESS.halfW * 2 - 0.4, 0.12, PRESS.halfD * 2 - 0.4), makeGlowMat(NEON.magenta));
-  headGlow.position.y = -0.95;
-  pressHead.add(headGlow);
-  const pressed = { t: 0, phase: 'up', head: pressHead, warnLight, slamActive: false, hiss: false };
-  parent.add(pressGroup);
+  // (see buildSteamPress). The head cycles raised (rest) → quick slam → hold
+  // flat on the anvil → rise, flashing its warning light before each drop.
+  // `pressed.slamActive` is the flag main.js reads to flatten the car. The
+  // press is NEVER a collider — with the head up you just drive through.
+  const pressBuilt = buildSteamPress(parent);
+  const pressed = {
+    t: 0, phase: 'up', head: pressBuilt.head, warnLight: pressBuilt.warnLight,
+    slamActive: false, hiss: false,
+  };
   const steamPuffs = [];   // soft grey steam when the head is down
   let steamPuffTimer = 0;
 
@@ -2121,179 +2608,10 @@ export async function addUnderground(parent, opts = {}) {
   // knockable — lighter than traffic cars — so driving up the ramp means
   // plowing through a torrent of bouncing candy (except the big heavy ones,
   // which knock YOU back).
-  const GRAND = {
-    x: 24,             // centre of the x-span on the ceiling's north edge —
-                       // moved west (48) so the candy waterfall sits right at
-                       // the tunnel foot / return portal (≈(-55, 83)) and you
-                       // see it immediately after bursting out of the tube.
-    z: 65,             // centre of the z-span (z ∈ [48, 82])
-    len: 34,           // half the staircase footprint → twice as steep
-    width: 12,         // same width as the staircase
-    // Rises to the ceiling's drivable top. buildingTopAt reports a collider
-    // top as h + 0.3, so the ramp must top out at CEIL_TOP + 0.3 (31.3) —
-    // otherwise the car drives off the ramp's high edge a hair below the
-    // ceiling surface and the airborne landing tolerance (0.4) misses it,
-    // dumping the car back onto the cavern floor.
-    height: CEIL_TOP + 0.3,
-    runX: 0,           // rises toward -Z (south) to meet the ceiling's north edge
-    runZ: -1,
-    boost: 0,          // no launch off the top — drive up and roll onto the roof
-  };
-  const grandRampMat = new THREE.MeshStandardMaterial({ color: 0x453f52, roughness: 0.85 });
-  // The wedge (only the ramp surface; the guardrails are separate, below).
-  // Local frame: base→top along +X, up along +Y, across along +Z.
-  {
-    const rampGroup = new THREE.Group();
-    rampGroup.rotation.y = Math.atan2(-GRAND.runZ, GRAND.runX);
-    rampGroup.position.set(GRAND.x, 0, GRAND.z);
-    const shape = new THREE.Shape();
-    shape.moveTo(0, 0);
-    shape.lineTo(GRAND.len, 0);
-    shape.lineTo(GRAND.len, GRAND.height);
-    shape.closePath();
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: GRAND.width, bevelEnabled: false });
-    geo.translate(-GRAND.len / 2, 0, -GRAND.width / 2);
-    const wedge = new THREE.Mesh(geo, grandRampMat);
-    wedge.castShadow = true;
-    wedge.receiveShadow = true;
-    rampGroup.add(wedge);
-    parent.add(rampGroup);
-    ugRamps.push(GRAND);
-  }
-  // ---- Guardrails on the candy waterfall's sides (restored 2026-09-22) ----
-  // The grand ramp used to carry side rails with an invisible-wall collider so
-  // you couldn't drive off the edges; they were removed so you COULD. These
-  // bring back BOTH a visible rail AND the barrier. A dark-steel guardrail
-  // runs up each side of the waterfall, tilted to sit flush on the ramp's
-  // slope (45°-ish), topped with a glowing magenta cap and anchored by vertical
-  // posts. A chain of axis-aligned solid colliders along each rail keeps the
-  // car on the ramp while it climbs — each segment's `h` follows the ramp
-  // surface so the little car (which height-filters colliders) is blocked at
-  // every height, not just mid-slope. (The west-flank black techno fence at
-  // x=15 stays; THIS is the rail on the ramp's own edges, x=18 & x=30.)
-  const RAIL_H = 2.3;                 // rail height above the ramp surface
-  const RAIL_THICK = 0.3;             // rail body thickness across the edge
-  const GRAND_THETA = Math.atan2(GRAND.height, GRAND.len);
-  const railSteel = new THREE.MeshStandardMaterial({ color: 0x3a3440, metalness: 0.55, roughness: 0.45 });
-  const railMagenta = makeGlowMat(NEON.magenta);
-  const grandRailColliders = [];
-  // Length along the slope EXACTLY matching the ramp edge (no overhang, so the
-  // ends line up with the ramp's floor and roof lips, not dangle past them).
-  const railLen = GRAND.len / Math.cos(GRAND_THETA);
-  for (const edgeX of [GRAND.x - GRAND.width / 2, GRAND.x + GRAND.width / 2]) {
-    // Sloped rail body hugging the ramp surface along the edge. The box's long
-    // axis must lie ALONG the slope (high at the ceiling / z=48 end, low at
-    // the floor / z=82 end) — rotation.x = +THETA, which maps local +Z tip to
-    // (down + toward +Z) and the -Z tip up toward the ceiling. The center hangs
-    // on the surface's up-normal ((0, cos T, +sin T)) so the rail sits a true
-    // RAIL_H above the ramp all the way up instead of being canted the wrong
-    // way (high end sunk in the floor, low end poking through the roof).
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK, RAIL_H, railLen), railSteel);
-    rail.rotation.x = GRAND_THETA;
-    rail.position.set(
-      edgeX,
-      grandRampSurfaceY(GRAND.z) + (RAIL_H / 2) * Math.cos(GRAND_THETA),
-      GRAND.z
-    );
-    rail.castShadow = true;
-    parent.add(rail);
-    // Glowing magenta cap riding the rail's top edge (same tilt as the rail).
-    const capH = (RAIL_H / 2 + 0.02) * Math.cos(GRAND_THETA);
-    const capZ = (RAIL_H / 2 + 0.02) * Math.sin(GRAND_THETA);
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(RAIL_THICK + 0.06, 0.08, railLen), railMagenta);
-    cap.rotation.x = GRAND_THETA;
-    cap.position.set(edgeX, rail.position.y + capH, rail.position.z + capZ);
-    parent.add(cap);
-    // Vertical posts standing on the surface, echoing the sloped rail.
-    for (let z = 50; z <= 80; z += 5) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, RAIL_H, 0.18), railSteel);
-      post.position.set(edgeX, grandRampSurfaceY(z) + RAIL_H / 2, z);
-      parent.add(post);
-    }
-    // Solid colliders: axis-aligned segments tracking the slope. Each segment's
-    // h = the ramp surface at its SOUTH (top) edge, so it always catches the
-    // little car riding that stretch (never floats below it).
-    const RAIL_SEGS = 10;
-    const segLen = GRAND.len / RAIL_SEGS;
-    for (let k = 0; k < RAIL_SEGS; k++) {
-      const zc = (GRAND.z - GRAND.len / 2) + (k + 0.5) * segLen;
-      grandRailColliders.push({
-        x: edgeX, z: zc,
-        halfW: 0.6, halfD: segLen / 2 + 0.2,
-        h: grandRampSurfaceY(zc - segLen / 2),
-      });
-    }
-  }
-  // ---- Black techno fence on the waterfall's west flank ----
-  // The invisible wall beside the ramp never went away, so here's a black
-  // techno fence standing right on it (reported world (15, 51)) — run into
-  // it and there's finally something to see. Black steel with a magenta
-  // glow rail and cyan LED slats between the posts; jutting wing fins at
-  // each end angle out past the ramp so it reads as a guard fin off the
-  // waterfall, not a stray prop. Purely visual (no collider).
-  const FZ = GRAND.z - GRAND.len / 2;                 // 48 — ramp's top end
-  const FLEN = GRAND.len;                             // 34 — spans the footprint
-  const FX = GRAND.x - GRAND.width / 2 - 3;           // 15 — the invisible wall's x
-  {
-    const FH = 2.4;        // fence height
-    const STEP = 5;        // post spacing
-    const blackTech = new THREE.MeshStandardMaterial({ color: 0x0a0a0e, roughness: 0.5, metalness: 0.45 });
-    const glowRail = makeGlowMat(NEON.magenta);
-    const ledMat = makeGlowMat(NEON.cyan);
-    const finMat = new THREE.MeshStandardMaterial({ color: 0x14141c, roughness: 0.6, metalness: 0.4 });
-    // Black top rail with a glowing magenta cap riding on top of it.
-    const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, FLEN), blackTech);
-    topRail.position.set(FX, FH, FZ + FLEN / 2);
-    parent.add(topRail);
-    const glowCap = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, FLEN), glowRail);
-    glowCap.position.set(FX, FH + 0.09, FZ + FLEN / 2);
-    parent.add(glowCap);
-    // Black mid rail, about halfway up.
-    const midRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, FLEN), blackTech);
-    midRail.position.set(FX, FH * 0.55, FZ + FLEN / 2);
-    parent.add(midRail);
-    // Posts + cyan LED slats in the gaps between them.
-    let prevPost = null;
-    for (let z = FZ; z <= FZ + FLEN + 0.01; z += STEP) {
-      const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, FH, 0.14), blackTech);
-      post.position.set(FX, FH / 2, z);
-      parent.add(post);
-      if (prevPost != null && z - prevPost > 0.5) {
-        const mid = (z + prevPost) / 2;
-        const span = z - prevPost - 0.4;
-        const slat = new THREE.Mesh(new THREE.BoxGeometry(0.06, FH * 0.42, span), ledMat);
-        slat.position.set(FX, FH * 0.55, mid);
-        parent.add(slat);
-      }
-      prevPost = z;
-    }
-    // Jutting wing fins at each end, angling out away from the ramp so the
-    // fence visibly pokes off the side of the waterfall.
-    for (const end of [{ z: FZ, dir: 1 }, { z: FZ + FLEN, dir: -1 }]) {
-      const fin = new THREE.Mesh(new THREE.BoxGeometry(3.4, FH * 0.55, 0.12), finMat);
-      const finY = FH * 0.35;
-      fin.position.set(FX - 1.6, finY, end.z + 0.4 * end.dir);
-      fin.rotation.z = 0.35 * end.dir;   // slight rake up/out
-      parent.add(fin);
-      const finCap = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.06, 0.18), glowRail);
-      finCap.position.set(fin.position.x, finY, fin.position.z);
-      finCap.rotation.z = 0.35 * end.dir;
-      parent.add(finCap);
-    }
-  }
-  // Ramp surface height at world z (the ramp is axis-aligned along Z).
-  function grandRampSurfaceY(pz) {
-    const s = (GRAND.z + GRAND.len / 2 - pz) / GRAND.len;   // 0 at base, 1 at top
-    return GRAND.height * s;
-  }
-  // A couple of course lights so the ramp and its candy waterfall read in
-  // the dark — magenta at the top (the gemstone spawn), cyan at the base.
-  const grandTopLight = new THREE.PointLight(NEON.magenta, 1.6, 70, 2);
-  grandTopLight.position.set(GRAND.x, 24, GRAND.z - GRAND.len / 2 + 4);
-  parent.add(grandTopLight);
-  const grandBaseLight = new THREE.PointLight(NEON.cyan, 1.2, 60, 2);
-  grandBaseLight.position.set(GRAND.x, 6, GRAND.z + GRAND.len / 2 - 4);
-  parent.add(grandBaseLight);
+  // (see buildGrandRamp; the wedge, guardrails + their colliders, the west
+  // techno fence and the two course lamps are all built inside it.)
+  const { colliders: grandRailColliders } = buildGrandRamp(parent);
+  ugRamps.push(GRAND);
 
   await ugPhase(0.52, 'the big staircase');
 
@@ -2411,70 +2729,12 @@ export async function addUnderground(parent, opts = {}) {
   // solid collider were deleted with the rest of the course. ----
 
   // ---- Giant rotating disco ball you can hit ----
-  // A big faceted mirror sphere hangs from the cavern ceiling OVER THE MIDDLE
-  // of the first long straight — the eastbound z=37 lane (151 units long, from
-  // the start bend to the x=134 column). A kicker ramp on the lane ahead
-  // launches the car into it and you keep flying along the SAME straight, so
-  // you land back on the path. It spins and carries a ring of colored point
-  // lights that throw moving neon pools across the cavern floor: fly into it
-  // and the ball swings on its cable like a pendulum, then settles with a
-  // damped wobble (and spins a touch faster with every hit).
-  const DISCO = { x: 58, z: 37, topY: CEIL_Y, len: 21, r: 4, spin: 1.2, hitR: 6.5 };   // ball centre at y = topY - len = 9
+  // (see buildDisco). `disco` holds the pendulum motion state; the pivot/spin
+  // groups it swings and rotates are returned by the builder.
   const disco = { ax: 0, vx: 0, az: 0, vz: 0, hits: 0, cd: 0 };
-  const discoPivot = new THREE.Group();
-  discoPivot.position.set(DISCO.x, DISCO.topY, DISCO.z);
-  parent.add(discoPivot);
-  // Hanger cable running up to the ceiling.
-  const discoCable = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.12, 0.12, DISCO.len, 8),
-    new THREE.MeshStandardMaterial({ color: 0x2e2a38, roughness: 0.7, metalness: 0.4 })
-  );
-  discoCable.position.set(0, -DISCO.len / 2, 0);
-  discoPivot.add(discoCable);
-  const discoBall = new THREE.Group();
-  discoBall.position.set(0, -DISCO.len, 0);
-  discoPivot.add(discoBall);
-  const discoSpin = new THREE.Group();
-  discoBall.add(discoSpin);
-  const discoCore = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(DISCO.r, 2),
-    new THREE.MeshStandardMaterial({ color: 0xdff2ff, metalness: 1, roughness: 0.12, flatShading: true, emissive: 0x22333f, emissiveIntensity: 0.35 })
-  );
-  discoCore.castShadow = true;
-  discoSpin.add(discoCore);
-  // Scatter tiny mirrored facets over the sphere for the classic sparkle.
-  {
-    const facetGeo = new THREE.PlaneGeometry(0.42, 0.42);
-    const facetN = 150;
-    const facets = new THREE.InstancedMesh(
-      facetGeo,
-      new THREE.MeshStandardMaterial({ color: 0xeaf6ff, metalness: 1, roughness: 0.05, side: THREE.DoubleSide, emissive: 0xffffff, emissiveIntensity: 0.25 }),
-      facetN
-    );
-    const dummy = new THREE.Object3D();
-    const zAxis = new THREE.Vector3(0, 0, 1);
-    for (let i = 0; i < facetN; i++) {
-      // Fibonacci sphere for even coverage.
-      const t = (i + 0.5) / facetN;
-      const y = 1 - 2 * t;
-      const rad = Math.sqrt(Math.max(0, 1 - y * y));
-      const phi = i * 2.399963229728653;
-      const dir = new THREE.Vector3(Math.cos(phi) * rad, y, Math.sin(phi) * rad);
-      dummy.position.copy(dir).multiplyScalar(DISCO.r + 0.02);
-      dummy.quaternion.setFromUnitVectors(zAxis, dir);
-      dummy.updateMatrix();
-      facets.setMatrixAt(i, dummy.matrix);
-    }
-    facets.instanceMatrix.needsUpdate = true;
-    discoSpin.add(facets);
-  }
-  // Ring of colored lights orbiting with the ball — the moving neon dots.
-  [NEON.magenta, NEON.cyan, NEON.amber, NEON.lime].forEach((c, i) => {
-    const L = new THREE.PointLight(c, 4.5, 40, 2);
-    const a = (i / 4) * Math.PI * 2;
-    L.position.set(Math.cos(a) * (DISCO.r + 0.6), 0, Math.sin(a) * (DISCO.r + 0.6));
-    discoSpin.add(L);
-  });
+  const { pivot: discoPivot, spin: discoSpin } = buildDisco(parent);
+
+  // ---- Ramps: a disco kicker and factory machine ramps ----
 
   // ---- Ramps: a disco kicker and factory machine ramps ----
   // The disk kicker on the eastbound z=37 straight sits right under the disco
@@ -2566,48 +2826,9 @@ export async function addUnderground(parent, opts = {}) {
 
   await ugPhase(0.58, 'the trampoline pads');
 
-  // ---- Trampoline launch pads (idea #13) ----
-  // Glowing bounce patches set into the cavern floor. Drive over one on the
-  // ground and it punts the car straight up (main.js gives it a vy of 35 —
-  // enough to clear the 31.3-high second roof) so it sails up through the
-  // ceiling and lands on the colorful tiles: a floor→roof route that skips
-  // the staircase and the grand ramp. A translucent light column marks the
-  // launch line all the way up to the roof.
-  const TRAMPOLINES = [
-    { x: 128, z: -90, r: 3.4 },  // far SE corner, off every lane (clear of the x=134 column and the z=-30 run) — under the roof
-    { x: 18, z: 46, r: 3.4 },    // far NW, north of the z=37 lane and beneath the ceiling's north edge — off-course
-  ];
   const trampolines = [];
-  const trampPadMat = new THREE.MeshStandardMaterial({ color: 0x203a2f, roughness: 0.6, metalness: 0.2 });
   for (const T of TRAMPOLINES) {
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(T.r, T.r + 0.3, 0.5, 28), trampPadMat);
-    base.position.set(T.x, 0.25, T.z);
-    base.castShadow = true;
-    parent.add(base);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(T.r - 0.15, 0.16, 10, 32), makeGlowMat(NEON.lime));
-    ring.rotation.x = Math.PI / 2;
-    ring.position.set(T.x, 0.55, T.z);
-    parent.add(ring);
-    // Woven bed: crossing glow bars so the disc reads as a sprung trampoline.
-    for (let i = 0; i < 4; i++) {
-      const bar = new THREE.Mesh(
-        new THREE.BoxGeometry(T.r * 1.7, 0.08, 0.24),
-        makeGlowMat(i % 2 ? NEON.cyan : NEON.lime)
-      );
-      bar.position.set(T.x, 0.52, T.z);
-      bar.rotation.y = (i / 4) * Math.PI;
-      parent.add(bar);
-    }
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(T.r * 0.55, T.r * 0.75, CEIL_Y, 18, 1, true),
-      new THREE.MeshBasicMaterial({ color: NEON.lime, transparent: true, opacity: 0.08, side: THREE.DoubleSide, depthWrite: false })
-    );
-    beam.position.set(T.x, CEIL_Y / 2, T.z);
-    parent.add(beam);
-    const glow = new THREE.PointLight(NEON.lime, 3, 30, 2);
-    glow.position.set(T.x, 1.5, T.z);
-    parent.add(glow);
-    trampolines.push({ x: T.x, z: T.z, r: T.r, base, ring, beam, glow, cd: 0, squash: 0 });
+    trampolines.push(buildTrampolinePad(parent, T.x, T.z, T.r));
   }
 
   // Task #35 helper: is the car ghosting at floor level inside the solid
@@ -4021,153 +4242,9 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   };
 
   // ---- 2. Taffy-puller machine (open-frame drive-through on the z=-30 lane) -
-  // An OPEN-FRAME industrial taffy machine straddling the westbound z=-30 lane
-  // at x=128 — you drive the car straight through it like a car wash. The old
-  // glass box is gone: a gantry of steel uprights, top beams, cross ties and
-  // mid rails frames the machine wide open on the east/west faces so every part
-  // is visible from the lane and the car can rumble right through the middle.
-  // Inside, two counter-rotating chrome hooks sweep across the lane (posts at
-  // (128,-26) and (128,-34), one each side of the car's path), a train of
-  // gears, pulleys and pistons churn, and an endless chain racetracks around
-  // the whole unit right over/under the car as it passes through. A car under
-  // a sweep gets hooked (main.js calls `taffy.hookedAt(x,z)` → trip the
-  // carTaffyMode noodle-stretch). The arms NEVER become colliders — the hook
-  // _grabs and stretches_ the car, it doesn't smash it.
-  const TAFFY = [
-    { x: 128, z: -26, armLen: 6, phase: 0,    tipAngle: 0.9,  angle: 0, cd: 0, snap: 0 },
-    { x: 128, z: -34, armLen: 6, phase: Math.PI, tipAngle: -0.9, angle: 0, cd: 0, snap: 0 },
-  ];
-  const chromeMat = new THREE.MeshStandardMaterial({ color: 0xd8e2ea, metalness: 0.95, roughness: 0.18 });
-  const taffySteel = new THREE.MeshStandardMaterial({ color: 0x8a93a8, metalness: 0.85, roughness: 0.3 });
-  const taffyArms = [];
-  const taffyMotion = [];   // {kind, ref, speed, phase} spun in update()
-  // ---- Open-frame gantry: a steel cage over the two hook posts, wide open on
-  // ---- the east/west faces so the car drives straight through the machine.
-  // ---- Four corner uprights (straddling the westbound z=-30 lane around the
-  // ---- posts at z=-26/-34), top beams + cross ties, neon mid rails and a
-  // ---- glowing portal bar on each open end. Pure decor — no colliders, the
-  // ---- car plows through the frame like the car-wash whites.
-  {
-    const spanX = 8.6;       // east-west opening (x 123.7 … 132.3)
-    const spanZ = 8.2;       // north-south opening (z -34.1 … -25.9)
-    const upY = 6.6;         // upright + top-beam height
-    const posts = [[128 - spanX / 2, -25.9], [128 + spanX / 2, -25.9], [128 - spanX / 2, -34.1], [128 + spanX / 2, -34.1]];
-    for (const [px, pz] of posts) {
-      const upright = new THREE.Mesh(new THREE.BoxGeometry(0.5, upY, 0.5), taffySteel);
-      upright.position.set(px, upY / 2, pz);
-      upright.castShadow = true;
-      parent.add(upright);
-    }
-    // Two long top beams running east-west over each side of the lane.
-    for (const pz of [-25.9, -34.1]) {
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(spanX + 0.6, 0.5, 0.5), taffySteel);
-      beam.position.set(128, upY, pz);
-      beam.castShadow = true;
-      parent.add(beam);
-    }
-    // Two shorter cross ties connecting the top beams across the lane.
-    for (const px of [128 - spanX / 2, 128 + spanX / 2]) {
-      const tie = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, spanZ + 0.6), taffySteel);
-      tie.position.set(px, upY, -30);
-      tie.castShadow = true;
-      parent.add(tie);
-    }
-    // Neon mid rails on the two open faces (car drives between them) + a
-    // glowing portal bar overhead on each end, like a wash-bay arch.
-    for (const pz of [-25.9, -34.1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(spanX - 0.4, 0.28, 0.28), makeGlowMat(NEON.cyan));
-      rail.position.set(128, 4.6, pz);
-      parent.add(rail);
-    }
-    for (let k = 0; k < 2; k++) {
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, spanZ - 1.6), makeGlowMat(k ? NEON.magenta : NEON.amber));
-      bar.position.set(k ? 128 - spanX / 2 : 128 + spanX / 2, 5.4, -30);
-      parent.add(bar);
-    }
-  }
-  // ---- Endless chain loop: links run around a vertical ring centred between
-  // ---- the two posts (the racetrack ellipse of the stretched-open machine),
-  // ---- at y≈3.1, so the belt visibly churns right over the passing car.
-  {
-    const CHAIN_N = 18;
-    const chainGeom = new THREE.BoxGeometry(0.22, 0.5, 0.34);
-    const chainMat = taffySteel;
-    for (let k = 0; k < CHAIN_N; k++) {
-      const link = new THREE.Mesh(chainGeom, chainMat);
-      link.castShadow = true;
-      parent.add(link);
-      taffyMotion.push({ kind: 'chain', ref: link, speed: 1.6, phase: k / CHAIN_N });
-    }
-  }
-  for (const h of TAFFY) {
-    // Chrome post (floor → hip height) with a glowing base ring.
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.5, 3.4, 14), chromeMat);
-    post.position.set(h.x, 1.7, h.z);
-    post.castShadow = true;
-    parent.add(post);
-    const baseRing = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.1, 8, 18),
-      makeGlowMat(NEON.amber));
-    baseRing.rotation.x = Math.PI / 2;
-    baseRing.position.set(h.x, 0.42, h.z);
-    parent.add(baseRing);
-    // Big drive gear under the post — a heavy disc with 12 teeth, spinning.
-    {
-      const gear = new THREE.Group();
-      const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 0.4, 18), taffySteel);
-      disc.castShadow = true;
-      gear.add(disc);
-      for (let k = 0; k < 12; k++) {
-        const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.4, 0.42), taffySteel);
-        tooth.position.x = 1.22;
-        tooth.rotation.y = (k / 12) * Math.PI * 2;
-        const holder = new THREE.Group();
-        holder.add(tooth);
-        holder.rotation.y = (k / 12) * Math.PI * 2;
-        gear.add(holder);
-      }
-      gear.position.set(h.x, 0.95, h.z);
-      parent.add(gear);
-      taffyMotion.push({ kind: 'spin', ref: gear, speed: 2.4, dir: h.z === -22 ? -1 : 1 });
-      // A small meshing pinion beside the gear, counter-rotating against it.
-      const pinion = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.42, 8), chromeMat);
-      pinion.position.set(h.x + 1.55, 0.95, h.z);
-      parent.add(pinion);
-      taffyMotion.push({ kind: 'spin', ref: pinion, speed: -6.5, dir: h.z === -22 ? -1 : 1 });
-    }
-    // Overhead pulley: a grooved steel wheel on each post top, spinning fast.
-    {
-      const pulley = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 0.3, 14), chromeMat);
-      pulley.position.set(h.x, 3.9, h.z);
-      pulley.castShadow = true;
-      parent.add(pulley);
-      const groove = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.08, 8, 18), makeGlowMat(NEON.cyan));
-      groove.rotation.x = Math.PI / 2;
-      groove.position.set(h.x, 3.9, h.z);
-      parent.add(groove);
-      taffyMotion.push({ kind: 'pulley', ref: pulley, speed: 3.2, dir: h.z === -22 ? -1 : 1 });
-    }
-    // Sweeping arm: horizontal chrome rod pivoting about Y at the post top.
-    const armPivot = new THREE.Group();
-    armPivot.position.set(h.x, 3.0, h.z);
-    parent.add(armPivot);
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(h.armLen, 0.18, 0.18), chromeMat);
-    arm.position.set(h.armLen / 2, 0, 0);
-    arm.castShadow = true;
-    armPivot.add(arm);
-    // Hook claw at the far tip (an L-bend that reads as "pulls you out").
-    // Cloned from the glow cache because the sweep pulses its emissive per arm.
-    const claw = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.8, 8),
-      makeGlowMat(NEON.magenta).clone());
-    claw.rotation.z = Math.PI / 2;
-    claw.position.set(h.armLen - 0.2, 0, 0);
-    armPivot.add(claw);
-    // A piston riding the arm's axle — bobs up/down as the arm sweeps, another
-    // visible moving part for people watching from the course.
-    const piston = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.6, 0.24), chromeMat);
-    piston.position.set(h.armLen * 0.35, 0.7, 0);
-    armPivot.add(piston);
-    taffyArms.push({ hook: h, armPivot, claw });
-  }
+  // (see buildTaffyPuller). The builder returns the animated arms + the
+  // taffyMotion list update() spins; `taffy` below is the live hook-poll state.
+  const { arms: taffyArms, motion: taffyMotion } = buildTaffyPuller(parent);
   const taffy = {
     hits: 0,   // monotonic hook counter, main.js edges on it for the THWACK
     // A car point (x,z) is hooked when it sits within the sweep radius of a
@@ -4199,43 +4276,7 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   };
 
   // ---- 3. Industrial magnet pit-stop (on the eastbound belt lane) -----------
-  // A huge electromagnet hangs from the ceiling at (55,0), radius 9, right over
-  // the eastbound conveyor belt lane (z=0, x 41..107) — clear of the machine
-  // bridge at x=92 and the steam press beyond it. A timer runs ON 3.2s / OFF
-  // 4.8s; while active (`magnet.active`) main.js yanks a near grounded car up
-  // off the belt to `magnet.holdY`, spins its wheels and hangs it until the
-  // field drops. A red coil + translucent beam read the state from across the
-  // cavern.
-  const MAGNET = { x: 55, z: 0, r: 9, holdY: 27, on: 3.2, off: 4.8 };
-  const magnetSteel = new THREE.MeshStandardMaterial({ color: 0x4a4a55, roughness: 0.4, metalness: 0.9 });
-  const magGroup = new THREE.Group();
-  magGroup.position.set(MAGNET.x, 0, MAGNET.z);
-  {
-    const core = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 1.2, 22), magnetSteel);
-    core.position.y = MAGNET.holdY;
-    core.castShadow = true;
-    magGroup.add(core);
-    // Coil clone — the update loop pulses emissiveIntensity on it each frame.
-    const coil = new THREE.Mesh(new THREE.TorusGeometry(2.9, 0.28, 12, 26), makeGlowMat(NEON.red).clone());
-    coil.rotation.x = Math.PI / 2;
-    coil.position.y = MAGNET.holdY - 0.15;
-    magGroup.add(coil);
-    // Translucent pull beam (faint when off, bright while active).
-    const beam = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.2, 6.5, MAGNET.holdY, 20, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xff5560, transparent: true, opacity: 0.06,
-        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false,
-      })
-    );
-    beam.position.y = MAGNET.holdY / 2;
-    magGroup.add(beam);
-    const magLight = new THREE.PointLight(0xff4455, 0, 60, 2);
-    magLight.position.y = MAGNET.holdY - 3;
-    magGroup.add(magLight);
-    magGroup.userData = { beam, light: magLight, coil };
-  }
-  parent.add(magGroup);
+  const magGroup = buildMagnet(parent);
   const magnet = { x: MAGNET.x, z: MAGNET.z, r: MAGNET.r, holdY: MAGNET.holdY, active: false, t: 0, hits: 0 };
 
   // ---- 4. (removed — the pinball plunger shortcut is deleted; it didn't work)
@@ -5335,8 +5376,8 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
       }
       pressed.head.position.y += (headTarget - pressed.head.position.y) * Math.min(1, delta * 6);
       const pressing = pressed.phase === 'drop' || pressed.phase === 'hold';
-      warnLight.material.emissiveIntensity = pressing ? 1.3 + Math.sin(pressed.t * 26) * 0.9 : 0.4;
-      warnLight.scale.setScalar(pressing ? 1.35 : 1);
+      pressed.warnLight.material.emissiveIntensity = pressing ? 1.3 + Math.sin(pressed.t * 26) * 0.9 : 0.4;
+      pressed.warnLight.scale.setScalar(pressing ? 1.35 : 1);
       pressed.slamActive = false;
       if (player
         && pressing

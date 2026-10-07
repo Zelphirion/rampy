@@ -46,7 +46,7 @@ import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, 
 import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE } from './levels/house/index.js?v=1791123166969';
 import { addCat } from './cat.js?v=1790881800021';
 import { makeAsh, inHearth, stepAsh, ashBlack, ashFlakeRate } from './ash.js';
-import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1791039533469';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1791559660313';
 import {
   createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1,
@@ -54,7 +54,7 @@ import {
 } from './levels/beach/index.js?v=1791042091764';
 // The object catalogue: every level's categories and the small standalone
 // models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791123166969';
+import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791396329761';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -5545,7 +5545,7 @@ function exitSelectMode(apply) {
   document.body.classList.remove('select-mode');
   // Leaving the modal drops the stage furniture too, so reopening it starts
   // from the tab that was showing rather than a stale object or a bare glow.
-  document.body.classList.remove('tab-levels', 'tab-objects', 'browser-mode');
+  document.body.classList.remove('tab-levels', 'tab-objects', 'browser-mode', 'object-open');
   clearSelectPreview();
   gearBtn.textContent = '⚙';
   gearBtn.title = 'Settings';
@@ -5570,15 +5570,18 @@ function cycleCar(dir) {
   refreshSelectCar(CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id);
 }
 
-// Switch the showroom to one of its four tabs.
+// Switch the showroom to one of its three tabs.
 //
 // PLAYER and CHASE spin a car and commit a choice. LEVELS and OBJECTS are
 // browsers: they do not change what you drive, they take you somewhere or show
 // you something, and they leave the car tabs' armed previews untouched.
+// OBJECTS has no tab button of its own — it is a screen inside LEVELS, opened
+// from a level's own Objects button — but the body classes below still drive
+// its panel.
 function setPickerTab(tab) {
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
-  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-objects', 'objects']]) {
+  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels']]) {
     const el = tabEl(id);
     if (el) el.classList.toggle('active', tab === name);
   }
@@ -5588,6 +5591,9 @@ function setPickerTab(tab) {
   document.body.classList.toggle('tab-levels', tab === 'levels');
   document.body.classList.toggle('tab-objects', tab === 'objects');
   document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects');
+  // The object-on-the-disc layout belongs to the objects screen alone. Leaving
+  // it has to put the grid furniture back, or the panel comes back empty.
+  if (tab !== 'objects') document.body.classList.remove('object-open');
 
   if (tab === 'levels') {
     clearSelectPreview();
@@ -5601,25 +5607,30 @@ function setPickerTab(tab) {
 }
 
 function updateSelectCar() {
-  // The grid's miniatures turn on the same tick as the big stage, and only on the
-  // Objects tab — a grid of nine models spinning behind the car picker would be
-  // drawing into tiles that are not on screen.
-  if (selectMode && pickerTab === 'objects') {
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - selectLastNow) / 1000) || 0;
-    selectLastNow = now;
-    layoutObjThumbs();
-    updateObjThumbs(dt);
-  }
-  if (!selectMode || !selectCarGroup) return;
+  if (!selectMode) return;
+  // ONE dt for the whole frame, taken here and never measured again. The old
+  // version read the clock twice — once for the miniatures and once for the
+  // stage — so the second reading was ~0 and a model could spin happily in its
+  // tile while sitting perfectly still on the glowing disc.
   const now = performance.now();
   const dt = Math.min(0.05, (now - selectLastNow) / 1000) || 0;
   selectLastNow = now;
+
+  // The grid's miniatures turn on this same tick, at this same rate, and only
+  // while the grid is showing: behind the car picker they'd be drawing into
+  // tiles that are not on screen, and while an object is open on the disc the
+  // tiles are display:none.
+  if (pickerTab === 'objects' && !objOpen) {
+    layoutObjThumbs();
+    updateObjThumbs(dt);
+  }
+
+  if (!selectCarGroup) return;
   if (selectCamera.aspect !== window.innerWidth / window.innerHeight) {
     selectCamera.aspect = window.innerWidth / window.innerHeight;
     selectCamera.updateProjectionMatrix();
   }
-  selectCarGroup.rotation.y += dt * 0.55;   // slow spin
+  selectCarGroup.rotation.y += dt * OBJECT_SPIN;
 }
 
 buildSelectScene();
@@ -5635,7 +5646,6 @@ if (tabPlayerBtn) tabPlayerBtn.addEventListener('click', () => setPickerTab('pla
 const tabChaseBtn = document.getElementById('tab-chase');
 if (tabChaseBtn) tabChaseBtn.addEventListener('click', () => setPickerTab('chase'));
 const tabLevelsBtn = document.getElementById('tab-levels');
-const tabObjectsBtn = document.getElementById('tab-objects');
 
 // The chase defaults to the little blue car, so dress the chaser right away.
 applyChaseCar(chaseCarKind);
@@ -5674,6 +5684,11 @@ window.addEventListener('pointerdown', (e) => {
 // URL that silently drops you on the wrong one is worse than a long one.
 
 const OBJ_PAGE_SIZE = 9;              // nine to a page: the 3x3 grid
+// The single rate at which everything the browser shows turns: the car on the
+// stage, the object on the glowing disc, and each miniature in its tile. One
+// constant because two of them drifting apart is exactly how the preview and
+// the stage end up disagreeing about whether something spins.
+const OBJECT_SPIN = 0.55;             // rad/s
 let objLevel = LEVELS[0].id;
 let objCat = null;
 let objPage = 0;
@@ -5826,16 +5841,33 @@ function travelToLevel(levelId) {
   } else if (levelId === 'ramp') {
     enterRampWorld();
   } else if (levelId === 'underground') {
+    // Same as the U-key shortcut (and the ?debug toUnderground): enter the
+    // world, then hand off straight to finishSpiralCine so the car lands at
+    // the tunnel foot already moving. Earlier versions manually replicated the
+    // handoff, and drifted just far enough from the real thing that the car
+    // arrived dead or half-in the tunnel — the proven path is the only one
+    // used from now on.
     enterUndergroundWorld();
-    // The shaft's arrival is a scripted orbit with the car still in the tunnel.
-    // Cut it short: the jump is a jump, not a cutscene.
-    spiralCine.active = false;
-    portalGrace = 0.5;
+    if (spiralCine.active) finishSpiralCine();
+    // The tail of travelToLevel zeroes the launch speed finishSpiralCine
+    // grants (the dive keeps it; a menu jump doesn't), so the jump would be
+    // left parked STILL inside the return-portal catchment — 5 units around
+    // the tunnel foot — and when portalGrace expires the car gets flung
+    // straight back up the shaft to the city, which reads as "the link
+    // doesn't work". Shove it out along the exit tangent well past that
+    // radius, where a parked car is safe.
+    const uf = tunnelPoint(1);
+    const ug = tunnelPoint(0.994);
+    let ux = uf.x - ug.x, uz = uf.z - ug.z;
+    const ul = Math.hypot(ux, uz) || 1;
+    ux /= ul; uz /= ul;
+    car.position.set(uf.x + ux * 16, 0, uf.z + uz * 16);
   } else if (levelId === 'house') {
     // Entering the house the normal way plays a held shot and then parks the car
     // in the garage — which would throw away the position this jump asked for. So
     // swap directly instead: same scene move, no theatre, and nothing left mid-
-    // fade when control comes back.
+    // fade when control comes back. The car lands on the same standard starting
+    // spot the garage cut puts it on — HOUSE_START, inside on the first floor.
     housePortal.side = null;
     housePortal.swapping = false;
     housePortal.watch.active = false;
@@ -5844,6 +5876,8 @@ function travelToLevel(levelId) {
     scene.remove(car);
     houseScene.add(car);
     worldState = 'house';
+    car.position.set(HOUSE_START.x, HOUSE.floorY, HOUSE_START.z);
+    car.rotation.set(0, HOUSE_START.yaw, 0);
     globalDarkness = true;
     applyGlobalDarkness();
     houseCat.reset();
@@ -5881,6 +5915,8 @@ const odBlurbEl = document.getElementById('od-blurb');
 const odWhereEl = document.getElementById('od-where');
 const odCloseBtn = document.getElementById('od-close');
 const odGoBtn = document.getElementById('od-go');
+const odPrevBtn = document.getElementById('od-prev');
+const odNextBtn = document.getElementById('od-next');
 
 function renderObjectBrowser() {
   const cats = currentCategories();
@@ -6011,7 +6047,8 @@ let thumbScene = null;
 let thumbCamera = null;
 let objThumbs = [];            // [{ el, group, spin }]
 const OBJ_THUMB_H = 2.2;       // how tall a normalised model stands, in thumb units
-const OBJ_THUMB_SPIN = 0.5;    // rad/s — a shade slower than the big stage's 0.55
+// The turn rate is OBJECT_SPIN, shared with the big stage: the miniatures and
+// the object on the disc must never disagree about how fast is fast.
 
 function buildObjThumbs() {
   if (thumbScene || !objThumbCanvas) return;
@@ -6124,7 +6161,7 @@ function updateObjThumbs(dt) {
     thumbCamera.updateProjectionMatrix();
   }
   for (const v of views) {
-    v.t.spin += dt * OBJ_THUMB_SPIN;
+    v.t.spin += dt * OBJECT_SPIN;
     v.t.group.rotation.y = v.t.spin;
     thumbRenderer.setViewport(v.x, v.y, v.w, v.h);
     thumbRenderer.setScissor(v.x, v.y, v.w, v.h);
@@ -6163,7 +6200,15 @@ function normalizedModelGroup(model, targetH, widthRatio = 1.7) {
   const fitW = (targetH * widthRatio) / Math.max(size.x, size.z, 1e-3);
   inner.scale.setScalar(Math.min(fitH, fitW));
   pivot.position.set(-cx, -cy, -cz);
-  while (model.children.length > 0) pivot.add(model.children[0]);
+  // Attach the model WHOLE. The old `while (model.children.length) pivot.add(...)`
+  // hoisted its children one by one and so silently dropped the model's own
+  // transform — while the box that the -c offset was computed from still
+  // included it. The two disagreed by exactly that transform, which is why
+  // anything returning a positioned group (a palm, a crab, a flock) sat off the
+  // centre of the disc and swung wide when it turned. Keeping the group also
+  // keeps its rotation and scale, so a deliberately squashed builder stays
+  // squashed.
+  pivot.add(model);
   inner.add(pivot);
   return inner;
 }
@@ -6182,6 +6227,10 @@ function openObject(o) {
 }
 
 function renderObjectDetail(o) {
+  // Swap the whole panel to "an object is on the disc" first, and unconditionally:
+  // the body class is what takes the grid away, and it must land even on a build
+  // where the detail card markup is missing.
+  document.body.classList.toggle('object-open', !!o);
   if (!objDetailEl) return;
   if (!o) {
     objDetailEl.classList.remove('open');
@@ -6199,6 +6248,11 @@ function renderObjectDetail(o) {
     const lvl = LEVELS.find((l) => l.id === objLevel);
     odWhereEl.textContent = `${lvl ? lvl.label : objLevel} · x ${Math.round(o.x)} · z ${Math.round(o.z)}`;
   }
+  // Arrows within the category. Wrapping, because a browser at the end of a list
+  // is more usefully met with the start of it than with two dead controls.
+  const atEnd = !cat || !cat.objects.length;
+  if (odPrevBtn) odPrevBtn.disabled = atEnd;
+  if (odNextBtn) odNextBtn.disabled = atEnd;
 }
 
 function closeObject() {
@@ -6206,6 +6260,20 @@ function closeObject() {
   clearSelectPreview();
   renderObjectBrowser();
   pushBrowserUrl();
+}
+
+// Step to the neighbour in the current category — the full-screen version of the
+// grid, so the page number is carried along with it and closing the object puts
+// you on the right page of tiles.
+function stepObject(dir) {
+  const cat = currentCategory();
+  if (!cat) return;
+  const list = cat.objects;
+  const i = list.findIndex((o) => o.name === objOpen);
+  if (i < 0 || !list.length) return;
+  const j = (i + dir + list.length) % list.length;
+  objPage = Math.floor(j / OBJ_PAGE_SIZE);
+  openObject(list[j]);
 }
 
 // "View in context": go to the object's level and park in front of it.
@@ -6230,18 +6298,23 @@ function viewObjectInContext() {
 function groundHeightForWorld(levelId, x, z) {
   if (levelId === 'beach') return groundHeight + beachGroundOffsetAt(x, z);
   if (levelId === 'ramp') return groundHeight + terrainHeightAt(x, z);
-  if (levelId === 'underground') return UNDERGROUND_Y + groundHeight;
+  // The underground's course floor is world y=0 — the same flat resting height
+  // as the city's ground. The UNDERGROUND_Y = -30 plane belongs to the DECOR
+  // cavern and is not where the course (or anything on it) sits, so parking on
+  // that height drops the car straight through the floor.
+  if (levelId === 'underground') return groundHeight;
   return groundHeight;
 }
 
 // ===== The browser's own wiring =====
 
 if (tabLevelsBtn) tabLevelsBtn.addEventListener('click', () => setPickerTab('levels'));
-if (tabObjectsBtn) tabObjectsBtn.addEventListener('click', () => setPickerTab('objects'));
 if (objPrevBtn) objPrevBtn.addEventListener('click', () => { objPage--; renderObjectBrowser(); });
 if (objNextBtn) objNextBtn.addEventListener('click', () => { objPage++; renderObjectBrowser(); });
 if (odCloseBtn) odCloseBtn.addEventListener('click', closeObject);
 if (odGoBtn) odGoBtn.addEventListener('click', viewObjectInContext);
+if (odPrevBtn) odPrevBtn.addEventListener('click', () => stepObject(-1));
+if (odNextBtn) odNextBtn.addEventListener('click', () => stepObject(1));
 
 // Back and forward move through the object history, because every screen change
 // pushed an entry.

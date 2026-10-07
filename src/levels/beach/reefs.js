@@ -49,7 +49,7 @@ function domeRadius(u, ang, seed, wide) {
   return Math.max(0.02, profile * lump);
 }
 
-function buildReefField() {
+function buildReefField(heads = BEACH_REEFS) {
   const pos = [];
   const col = [];
 
@@ -61,7 +61,7 @@ function buildReefField() {
     }
   };
 
-  for (const [cx, cz, r, h, seed] of BEACH_REEFS) {
+  for (const [cx, cz, r, h, seed] of heads) {
     // The coral rises out of the sand at this spot, so the base sits ON the sea
     // floor rather than at some absolute depth. Building it here and letting the
     // caller's mesh be positioned at groundHeight keeps the two in agreement.
@@ -157,6 +157,21 @@ function buildReefField() {
 export function buildReefs() {
   const mesh = new THREE.Mesh(
     buildReefField(),
+    new THREE.MeshLambertMaterial({ vertexColors: true }),
+  );
+  mesh.castShadow = false;
+  mesh.receiveShadow = false;
+  mesh.userData.isReef = true;
+  return mesh;
+}
+
+// A SINGLE coral head, for the object browser. It uses the same field geometry
+// code as buildReefs(), just restricted to one site instead of the whole basin,
+// so the preview is a real head and not a miniature of the whole field.
+export function buildCoralHead(index = 0) {
+  const entry = BEACH_REEFS[index % BEACH_REEFS.length];
+  const mesh = new THREE.Mesh(
+    buildReefField([entry]),
     new THREE.MeshLambertMaterial({ vertexColors: true }),
   );
   mesh.castShadow = false;

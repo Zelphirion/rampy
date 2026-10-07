@@ -98,6 +98,15 @@ const M = {
 // base + amp * sin(t * speed + phase).
 const blinkers = [];
 
+// True while a building is being built as a STANDALONE model for the object
+// browser rather than for the world. Physics keeps every knockable for the
+// life of the page (resetKnockable only rewrites fields, it never unlists), so
+// a preview copy that registered one would be yanked back to its world
+// position every time the level changed - and the blinker list would grow by
+// two entries every time somebody opened the Objects tab. The geometry is the
+// same either way; only the world-facing registration is skipped.
+let standaloneBuild = false;
+
 // Set by houseStandard() in the open bay's own local space, then exported to the
 // world by houseGarageTrigger() once the layout's origin and facing are known.
 // This is the brown-roofed house's OPEN BAY. The grey-roofed house-with-garage
@@ -410,7 +419,9 @@ function chainFence(parent, x1, z1, x2, z2, h = 2.2) {
   rail.rotation.z = Math.PI / 2;
   rail.rotation.y = Math.atan2(dz, -dx);
   // Make fence knockable by heavy vehicles only (monster truck/steamroller)
-  addKnockable(mid, Math.max(1, len / 2), { mode: 'topple', toppleRadius: Math.max(1, len / 2), smashOnlyBy: 'monster' });
+  if (!standaloneBuild) {
+    addKnockable(mid, Math.max(1, len / 2), { mode: 'topple', toppleRadius: Math.max(1, len / 2), smashOnlyBy: 'monster' });
+  }
 }
 
 // ============================================================================
@@ -662,7 +673,7 @@ function fireStation() {
   const alarmLight = new THREE.PointLight(0xff2a10, 6, 16, 2);
   alarmLight.position.set(0, 3.4, frontZ + 0.6);
   g.add(alarmLight);
-  blinkers.push({ light: alarmLight, base: 2, amp: 7, speed: 5.5, phase: 0 });
+  if (!standaloneBuild) blinkers.push({ light: alarmLight, base: 2, amp: 7, speed: 5.5, phase: 0 });
   panel(g, 5.2, 0.9, 0, 4.6, frontZ + 0.12, 0, M.signRed);
 
   // ---- Radio mast: four splayed legs with cross bracing, which reads as a
@@ -687,7 +698,7 @@ function fireStation() {
   const beaconLight = new THREE.PointLight(0xff3020, 4, 12, 2);
   beaconLight.position.set(mastX, mastTop + 1.6, mastZ);
   g.add(beaconLight);
-  blinkers.push({ light: beaconLight, base: 1, amp: 5, speed: 3.2, phase: 1.4 });
+  if (!standaloneBuild) blinkers.push({ light: beaconLight, base: 1, amp: 5, speed: 3.2, phase: 1.4 });
 
   // Hydrants out front, one per bay, because it is a fire station.
   for (const s of [-1, 1]) {
@@ -858,9 +869,9 @@ function bodega() {
   box(g, 2.5, 0.14, 1.4, dx, 1.24, -2.4, M.hedgeLight, false);
   box(g, 0.9, 0.8, 0.9, dx + 0.2, 0.4, -0.6, M.metalDark, true);
   for (let i = 0; i < 3; i++) sph(g, 0.3, dx - 1.5 + i * 0.7, 0.3, -4.2, M.cardboard, false);
-  // Bollards and a newspaper rack by the door.
+  // Bollards by the door.
   for (const s of [-1, 1]) cyl(g, 0.13, 0.13, 0.9, s * 1.2, 0.45, frontZ + 1.3, M.metalDark, 8, false);
-  box(g, 0.7, 0.9, 0.5, 3.4, 0.45, frontZ + 0.9, M.metalDark, false);
+  newspaperRack(g, 3.4, frontZ + 0.9);
 
   colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY });
   // The bin area is solid too, so you cannot drive through the dumpster.
@@ -1247,8 +1258,7 @@ function houseWithGarage() {
   cornerBush(g, MAIN_X - W / 2 - 0.6, -D / 2 + 0.8, 0.55);
   pottedPlant(g, MAIN_X + 2.4, D / 2 + 0.9, 1.0);
   // Mailbox at the kerb.
-  cyl(g, 0.07, 0.07, 1.1, MAIN_X + 3.0, 0.55, D / 2 + 5.0, M.wood, 6, false);
-  box(g, 0.4, 0.3, 0.5, MAIN_X + 3.0, 1.2, D / 2 + 5.0, M.metal, false);
+  kerbMailbox(g, MAIN_X + 3.0, D / 2 + 5.0);
 
   // Colliders: the main house as a solid block, and the garage as a closed box.
   // The garage's front used to be left deliberately open so the drive-in gap
@@ -1371,7 +1381,7 @@ function houseStandard() {
   const workLight = new THREE.PointLight(0xffd9a0, 16, 17, 2);
   workLight.position.set(lampX, 1.55, lampZ + 0.2);
   g.add(workLight);
-  blinkers.push({ light: workLight, base: 13, amp: 2.4, speed: 2.1, phase: 0.7 });
+  if (!standaloneBuild) blinkers.push({ light: workLight, base: 13, amp: 2.4, speed: 2.1, phase: 0.7 });
 
   // Tools on the back wall of the bay, in silhouette against that glow: claw
   // hammer, handsaw, spanner, screwdrivers, a shovel, a paint roller and a
@@ -1425,32 +1435,7 @@ function houseStandard() {
   box(g, 1.0, 0.2, 1.0, -W / 2 + 0.6, 5.25, -2.0, M.concreteDark, false);
 
   // ---- Picket-fenced lawn with an open gate ----
-  const picketMat = cached('picket', () => new THREE.MeshStandardMaterial({ color: 0xf0efe6, roughness: 0.8 }));
-  const picketLine = (z, from, to) => {
-    const n = Math.max(2, Math.round(Math.abs(to - from) / 0.5));
-    for (let i = 0; i <= n; i++) {
-      const x = from + ((to - from) * i) / n;
-      box(g, 0.12, 0.85, 0.12, x, 0.42, z, picketMat, false);
-    }
-    box(g, Math.abs(to - from), 0.1, 0.07, (from + to) / 2, 0.62, z, picketMat, false);
-  };
-  picketLine(-D / 2 - 2.5, -W / 2 - 1, W / 2 + 1);
-  picketLine(-D / 2 - 2.5, -W / 2 - 1, -W / 2 - 1);
-  // Side runs, with the gate left as a gap on the -X side.
-  for (const sz of [-1, 1]) {
-    for (let i = 0; i < 5; i++) box(g, 0.12, 0.85, 0.12, W / 2 + 1, 0.42, -D / 2 - 2.5 + (i * (D + 5) / 4), picketMat, false);
-  }
-  // Garden: everything is kept to the WEST half now. The east half of the front
-  // is the garage apron, and a flower bed parked on a driveway is exactly the
-  // kind of thing that reads as broken rather than quaint. (A full-height front
-  // tree was tried here and had to go too - the plot is only 11 wide and its
-  // canopy reached straight into the next building.)
-  cornerBush(g, -W / 2 + 0.9, D / 2 + 1.0, 0.5);
-  cornerBush(g, -W / 2 + 0.8, -D / 2 - 1.6, 0.55);
-  cornerBush(g, W / 2 - 0.7, D / 2 + 1.1, 0.55);
-  pottedPlant(g, -3.2, D / 2 + 0.5, 1.0);
-  flowerBed(g, -1.4, D / 2 + 1.1, 1.8, 1.0);
-  flowerBed(g, -4.4, D / 2 + 1.1, 1.6, 1.0);
+  frontYard(g, W, D);
   // Air-con unit on the rear wall.
   box(g, 0.8, 0.6, 0.8, 3.0, 0.5, -D / 2 - 0.3, M.metal, false);
 
@@ -1804,7 +1789,7 @@ function substation() {
     for (let d = 0; d < 5; d++) cyl(xfmr, 0.3, 0.3, 0.1, bx, 3.5 + d * 0.28, 0, M.porcelain, 10, false);
   }
   g.add(xfmr);
-  addKnockable(xfmr, 3, { mode: 'topple', toppleRadius: 3, smashOnlyBy: 'monster' });
+  if (!standaloneBuild) addKnockable(xfmr, 3, { mode: 'topple', toppleRadius: 3, smashOnlyBy: 'monster' });
   // The hazard band: the one piece of graphic that identifies a substation.
   box(g, 3.7, 0.5, 3.1, tx, 0.75, tz, M.warning, false);
   for (let i = 0; i < 5; i++) {
@@ -2363,3 +2348,73 @@ export function houseGarageTrigger() {
 
 // ---- named builder aliases, so the layout table reads as a list of places ----
 function houseGarage() { return houseWithGarage(); }
+
+// ============================================================================
+// Standalone extracts - the same geometry the world gets, called on a group of
+// the caller's choosing. These exist so the object browser can show the REAL
+// building fragments (a mail box, the picket lawn) without owning a second
+// copy of them; see src/objects/catalog.js.
+// ============================================================================
+
+// The kerb mailbox on a house's frontage (a post and a box).
+export function kerbMailbox(parent, x, z) {
+  cyl(parent, 0.07, 0.07, 1.1, x, 0.55, z, M.wood, 6, false);
+  box(parent, 0.4, 0.3, 0.5, x, 1.2, z, M.metal, false);
+}
+
+// The newspaper rack by the bodega door (one metre-tall steel box).
+export function newspaperRack(parent, x, z) {
+  box(parent, 0.7, 0.9, 0.5, x, 0.45, z, M.metalDark, false);
+}
+
+// The picket-fenced lawn and garden dressing around a suburban house, in the
+// house's own local frame (W and D are the house block's width and depth).
+export function frontYard(parent, W, D) {
+  const picketMat = cached('picket', () => new THREE.MeshStandardMaterial({ color: 0xf0efe6, roughness: 0.8 }));
+  const picketLine = (z, from, to) => {
+    const n = Math.max(2, Math.round(Math.abs(to - from) / 0.5));
+    for (let i = 0; i <= n; i++) {
+      const x = from + ((to - from) * i) / n;
+      box(parent, 0.12, 0.85, 0.12, x, 0.42, z, picketMat, false);
+    }
+    box(parent, Math.abs(to - from), 0.1, 0.07, (from + to) / 2, 0.62, z, picketMat, false);
+  };
+  picketLine(-D / 2 - 2.5, -W / 2 - 1, W / 2 + 1);
+  picketLine(-D / 2 - 2.5, -W / 2 - 1, -W / 2 - 1);
+  // Side runs, with the gate left as a gap on the -X side.
+  for (const sz of [-1, 1]) {
+    for (let i = 0; i < 5; i++) {
+      box(parent, 0.12, 0.85, 0.12, W / 2 + 1, 0.42, -D / 2 - 2.5 + (i * (D + 5) / 4), picketMat, false);
+    }
+  }
+  // Garden: everything is kept to the WEST half now. The east half of the front
+  // is the garage apron, and a flower bed parked on a driveway is exactly the
+  // kind of thing that reads as broken rather than quaint.
+  cornerBush(parent, -W / 2 + 0.9, D / 2 + 1.0, 0.5);
+  cornerBush(parent, -W / 2 + 0.8, -D / 2 - 1.6, 0.55);
+  cornerBush(parent, W / 2 - 0.7, D / 2 + 1.1, 0.55);
+  pottedPlant(parent, -3.2, D / 2 + 0.5, 1.0);
+  flowerBed(parent, -1.4, D / 2 + 1.1, 1.8, 1.0);
+  flowerBed(parent, -4.4, D / 2 + 1.1, 1.6, 1.0);
+}
+
+// One of the city's buildings as a standalone model - the SAME geometry the
+// world gets, including the rear dressing, posed in its own footprint at its
+// world position and facing (so "view in context" matches what you just looked
+// at). Registration side effects are suppressed while it builds.
+export function buildCityBuilding(name) {
+  const entry = LAYOUT.find((e) => e.name === name);
+  if (!entry) return null;
+  standaloneBuild = true;
+  let built;
+  try {
+    built = entry.build();
+  } finally {
+    standaloneBuild = false;
+  }
+  const g = built.group;
+  dressRear(g, entry, built);
+  g.position.set(entry.x, 0, entry.z);
+  g.rotation.y = entry.face === null ? 0 : FACE_YAW[entry.face];
+  return g;
+}

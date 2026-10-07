@@ -8,7 +8,10 @@ import {
 const grassMaterial = new THREE.MeshStandardMaterial({ color: 0x3a7a3f, roughness: 1 });
 
 // ===== Trees =====
-function makeTree(scene, x, z) {
+// buildTree is the whole tree, placed; makeTree puts it in the world and makes
+// it knockable. The split exists so the object browser can show the real tree
+// without registering physics for it — see src/objects/catalog.js.
+export function buildTree(x, z) {
   const group = new THREE.Group();
   const trunk = new THREE.Mesh(
     new THREE.CylinderGeometry(0.18, 0.24, 1.8, 8),
@@ -29,6 +32,11 @@ function makeTree(scene, x, z) {
   group.add(crown);
 
   group.position.set(x, 0, z);
+  return group;
+}
+
+function makeTree(scene, x, z) {
+  const group = buildTree(x, z);
   scene.add(group);
   addKnockable(group, 0.55, { fallTime: 0.5 });
 }
@@ -50,7 +58,10 @@ function addSurroundingTrees(scene) {
 // ===== Traffic lights & stop signs =====
 const poleMat = new THREE.MeshStandardMaterial({ color: 0x2f353b, roughness: 0.8 });
 
-function makeTrafficLight(scene, x, z, axis, trafficLights) {
+// Builds one signal at (x, z), bulb side facing the intersection (lookAt needs
+// the world position, so the placement is part of the build). The three bulb
+// meshes hang off group.userData.bulbs for the caller that has to animate them.
+export function buildTrafficLight(x, z) {
   const group = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 4.4, 10), poleMat);
   pole.position.y = 2.2;
@@ -73,11 +84,17 @@ function makeTrafficLight(scene, x, z, axis, trafficLights) {
   });
   group.position.set(x, 0, z);
   group.lookAt(0, 3.6, 0);   // +Z (bulb side) faces the intersection
+  group.userData.bulbs = bulbs;
+  return group;
+}
+
+function makeTrafficLight(scene, x, z, axis, trafficLights) {
+  const group = buildTrafficLight(x, z);
   scene.add(group);
   addKnockable(group, 0.7, { fallTime: 0.45 });
   // `axis` says which road this signal governs: 'x' for E/W (main road),
   // 'z' for N/S (cross road), so the intersection can alternate properly.
-  trafficLights.push({ bulbs, axis });
+  trafficLights.push({ bulbs: group.userData.bulbs, axis });
 }
 
 function makeStopSign(scene, x, z, rotY) {
@@ -103,7 +120,7 @@ function makeStopSign(scene, x, z, rotY) {
 const lampBulbMat = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 1.4 });
 const lampBulbMatDark = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 0 });
 
-function makeLampPost(scene, x, z) {
+export function buildLampPost(x, z) {
   const group = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 3.3, 8), poleMat);
   pole.position.y = 1.65;
@@ -116,6 +133,11 @@ function makeLampPost(scene, x, z) {
   bulb.position.set(1.1, 3.15, 0);
   group.add(bulb);
   group.position.set(x, 0, z);
+  return group;
+}
+
+function makeLampPost(scene, x, z) {
+  const group = buildLampPost(x, z);
   scene.add(group);
   addKnockable(group, 0.5, { fallTime: 0.4 });
 }
@@ -147,7 +169,7 @@ const _SPRAY_DROPS = 55;
 const _SPRAY_DURATION = 3.8;
 const _hydrantSprays = [];
 
-function makeFireHydrant(scene, x, z) {
+export function buildFireHydrant(x, z) {
   const group = new THREE.Group();
   const redMat = new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 0.6 });
 
@@ -180,6 +202,11 @@ function makeFireHydrant(scene, x, z) {
 
   group.position.set(x, 0, z);
   group.scale.set(3, 3, 3);
+  return group;
+}
+
+function makeFireHydrant(scene, x, z) {
+  const group = buildFireHydrant(x, z);
   scene.add(group);
   const k = addKnockable(group, 1.05, { fallTime: 0.25 });
 
@@ -354,7 +381,9 @@ function addPotholeCones(scene) {
 const meterMat = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, roughness: 0.6, metalness: 0.4 });
 const coinMat = new THREE.MeshStandardMaterial({ color: 0xdaa520, roughness: 0.3, metalness: 0.7 });
 
-function makeParkingMeter(scene, x, z, rotY) {
+// The meter itself. The rain of loose coins is world dressing, not part of the
+// object, so it stays in makeParkingMeter.
+export function buildParkingMeter(x, z, rotY) {
   const group = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 1.3, 6), meterMat);
   pole.position.y = 0.65;
@@ -373,6 +402,11 @@ function makeParkingMeter(scene, x, z, rotY) {
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
   group.scale.set(3, 3, 3);
+  return group;
+}
+
+function makeParkingMeter(scene, x, z, rotY) {
+  const group = buildParkingMeter(x, z, rotY);
   scene.add(group);
   const k = addKnockable(group, 1.05, { fallTime: 0.3 });
   k.linked = [];
@@ -565,7 +599,7 @@ function makeSodaVendingMachine(scene, x, z, rotY) {
 const phoneBoothMat = new THREE.MeshStandardMaterial({ color: 0xcc0000, roughness: 0.6 });
 const phoneBoothGlassMat = new THREE.MeshStandardMaterial({ color: 0xaaddff, transparent: true, opacity: 0.35, roughness: 0.1 });
 
-function makePhoneBooth(scene, x, z, rotY) {
+export function buildPhoneBooth(x, z, rotY) {
   const group = new THREE.Group();
   const base = new THREE.Mesh(new THREE.BoxGeometry(0.85, 0.07, 0.85), phoneBoothMat);
   base.position.y = 0.035;
@@ -595,6 +629,11 @@ function makePhoneBooth(scene, x, z, rotY) {
   group.position.set(x, 0, z);
   group.rotation.y = rotY || 0;
   group.scale.set(3, 3, 3);
+  return group;
+}
+
+function makePhoneBooth(scene, x, z, rotY) {
+  const group = buildPhoneBooth(x, z, rotY);
   scene.add(group);
   addKnockable(group, 1.95, { fallTime: 0.5 });
 }
@@ -942,7 +981,7 @@ function makeFenceLine(scene, x1, z1, x2, z2, sections = 12) {
 }
 
 // ===== Park (north of the market, beside the library) =====
-function makeBench(scene, x, z, rotY) {
+export function buildBench(x, z, rotY) {
   const group = new THREE.Group();
   const benchMat = new THREE.MeshStandardMaterial({ color: 0x7a5b3a, roughness: 0.9 });
   const seat = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.1, 0.5), benchMat);
@@ -954,6 +993,11 @@ function makeBench(scene, x, z, rotY) {
   group.add(back);
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
+  return group;
+}
+
+function makeBench(scene, x, z, rotY) {
+  const group = buildBench(x, z, rotY);
   scene.add(group);
   addKnockable(group, 1.1, { fallTime: 0.35 });
 }

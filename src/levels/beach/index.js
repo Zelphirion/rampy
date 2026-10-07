@@ -22,6 +22,12 @@ export {
 };
 export { BEACH_SHELL } from './layout.js?v=1791038381904';
 
+// The object browser builds the REST of the beach from these same builders, so
+// a preview is the real geometry rather than a miniature. They are geometry
+// only (position is baked in at build time, no scene registration), which is
+// what makes that safe.
+export { makePalm, makeRock, makeBeachShell, makeCampfire };
+
 // ===== Beach World =====
 //
 // A cove, not a map. Sheer cliffs wall it in on three sides and the sea floor

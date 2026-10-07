@@ -45,7 +45,7 @@ function towerSkipped(x, z) {
   return false;
 }
 
-function makeTower(scene, x, z, w, h, colorIdx) {
+export function makeTower(scene, x, z, w, h, colorIdx) {
   const g = new THREE.Group();
   const mat = glassTowerMat.clone();
   mat.color.set(glassColors[colorIdx % glassColors.length]);
@@ -163,7 +163,7 @@ function makeBalloon(scene, x, z) {
   return g;
 }
 
-function makeOrchardPlaza(scene, cx, cz) {
+export function makeOrchardPlaza(scene, cx, cz) {
   const floor = new THREE.Mesh(new THREE.BoxGeometry(34, 0.25, 22), marbleMat);
   floor.position.set(cx, 0.02, cz);   // top ~0.145 (car rides over it level)
   floor.receiveShadow = true;
@@ -182,7 +182,7 @@ function makeOrchardPlaza(scene, cx, cz) {
 // A dapper little figure in a pointy hat. They never stop: they bounce, bob
 // side to side, flail their arms and wiggle their hat, each on its own phase
 // so they never move in lockstep — just like the birds in the other shop.
-function makeDancer(color) {
+export function makeDancer(color) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
   const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10), mat);
@@ -226,7 +226,7 @@ function makeDancer(color) {
   return { g, head, hat, armL, armR, legL, legR };
 }
 
-function makeTableauShop(scene, x, z, color, colors) {
+export function makeTableauShop(scene, x, z, color, colors) {
   const g = new THREE.Group();
   const mat = glassTowerMat.clone();
   mat.color.set(color);
@@ -349,7 +349,7 @@ function redBandMat() {
 // glasscityGhosts.js; this file owns the meshes.
 
 // One ghost: a translucent, floating body with a trailing skirt of afterimages.
-function makeGhost(scene, x, z, tint) {
+export function makeGhost(scene, x, z, tint) {
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
     color: tint, emissive: tint, emissiveIntensity: 0.85,
@@ -402,6 +402,42 @@ function makeGhostPatrol(scene, legs, tint, phase) {
   };
 }
 
+// The city's heart: one big double-terminated crystal in the corridor the
+// towers ring, with a glowing halo and a bright light. Built as its own pure
+// factory so the Object browser can show the real thing.
+export function makeCitadelSpire(scene, x, z) {
+  const spireMat = new THREE.MeshStandardMaterial({
+    color: 0xaee6ff, emissive: 0x5fb9ff, emissiveIntensity: 1.2,
+    transparent: true, opacity: 0.72, roughness: 0.06, metalness: 0.3, flatShading: true,
+  });
+  const spire = new THREE.Group();
+  const spireBody = new THREE.Mesh(new THREE.OctahedronGeometry(2.6, 0), spireMat);
+  spireBody.scale.set(1, 4.4, 1);
+  spireBody.position.y = 11.5;
+  spireBody.castShadow = true;
+  spire.add(spireBody);
+  const spireBase = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.6, 3.4, 1.2, 8),
+    new THREE.MeshStandardMaterial({ color: 0x2b2838, roughness: 0.85, metalness: 0.2 })
+  );
+  spireBase.position.y = 0.6;
+  spireBase.castShadow = true;
+  spire.add(spireBase);
+  const spireHalo = new THREE.Mesh(
+    new THREE.TorusGeometry(3.6, 0.14, 10, 40),
+    new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  spireHalo.rotation.x = Math.PI / 2;
+  spireHalo.position.y = 1.4;
+  spire.add(spireHalo);
+  const spireLight = new THREE.PointLight(0x7fd0ff, 3.2, 60, 2);
+  spireLight.position.set(0, 8, 0);
+  spire.add(spireLight);
+  spire.position.set(x, 0, z);
+  scene.add(spire);
+  return { spire, halo: spireHalo, light: spireLight };
+}
+
 export function addGlassCity(scene, opts = {}) {
   const onCrystalPop = typeof opts.onCrystalPop === 'function' ? opts.onCrystalPop : null;
   const onGhostRide = typeof opts.onGhostRide === 'function' ? opts.onGhostRide : null;
@@ -440,35 +476,7 @@ export function addGlassCity(scene, opts = {}) {
   // One big double-terminated crystal in the corridor the towers ring, with a
   // glowing halo and a bright light so it reads as the city's heart.
   const spireX = 4, spireZ = 152;
-  const spireMat = new THREE.MeshStandardMaterial({
-    color: 0xaee6ff, emissive: 0x5fb9ff, emissiveIntensity: 1.2,
-    transparent: true, opacity: 0.72, roughness: 0.06, metalness: 0.3, flatShading: true,
-  });
-  const spire = new THREE.Group();
-  const spireBody = new THREE.Mesh(new THREE.OctahedronGeometry(2.6, 0), spireMat);
-  spireBody.scale.set(1, 4.4, 1);
-  spireBody.position.y = 11.5;
-  spireBody.castShadow = true;
-  spire.add(spireBody);
-  const spireBase = new THREE.Mesh(
-    new THREE.CylinderGeometry(2.6, 3.4, 1.2, 8),
-    new THREE.MeshStandardMaterial({ color: 0x2b2838, roughness: 0.85, metalness: 0.2 })
-  );
-  spireBase.position.y = 0.6;
-  spireBase.castShadow = true;
-  spire.add(spireBase);
-  const spireHalo = new THREE.Mesh(
-    new THREE.TorusGeometry(3.6, 0.14, 10, 40),
-    new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false })
-  );
-  spireHalo.rotation.x = Math.PI / 2;
-  spireHalo.position.y = 1.4;
-  spire.add(spireHalo);
-  const spireLight = new THREE.PointLight(0x7fd0ff, 3.2, 60, 2);
-  spireLight.position.set(0, 8, 0);
-  spire.add(spireLight);
-  spire.position.set(spireX, 0, spireZ);
-  scene.add(spire);
+  const { spire, halo: spireHalo, light: spireLight } = makeCitadelSpire(scene, spireX, spireZ);
   colliders.push({ x: spireX, z: spireZ, halfW: 2.6, halfD: 2.6, h: 20 });
 
   // ---- Street ghosts ----
