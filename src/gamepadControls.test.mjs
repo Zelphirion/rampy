@@ -1,8 +1,13 @@
 // The gear screen's Controls tab is a table of promises: "press this, that
 // happens", in two columns — keyboard/mouse and Xbox. A promise the code does
 // not keep is worse than no table, so both halves are pinned together here:
-// the markup has to promise only things main.js actually reads, and every
-// binding main.js reads has to be listed.
+// the markup has to promise only things the code actually reads, and every
+// binding the code reads has to be listed.
+//
+// The driving bindings live in the input-scheme module (modules/player.js,
+// INPUT_SCHEMES), resolved per player by readInput(); the global one-shot keys
+// (pause, horn, bookmark, top-down, menu navigation) stay in main.js's keydown
+// handler. A binding can live in either half and the table must list it.
 //
 // Run: node --test src/gamepadControls.test.mjs
 import test from 'node:test';
@@ -12,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const main = readFileSync(new URL('main.js', import.meta.url), 'utf8');
+const player = readFileSync(new URL('modules/player.js', import.meta.url), 'utf8');
+const src = main + '\n' + player;   // bindings may live in either half
 
 // The markup is written with entities (&uarr; and friends) so it survives in a
 // plain file; the assertions below are written in real characters.
@@ -83,21 +90,26 @@ test('the Xbox buttons in the table are the ones the code reads', () => {
 });
 
 test('the keyboard bindings in the table are the ones the game reads', () => {
-  // Keyboard half: the <kbd> caps in the table against event.code / keys[].
+  // Keyboard half: the <kbd> caps in the table against the input schemes
+  // (modules/player.js) and the global keydown handler (main.js).
   const caps = [...html.matchAll(/<kbd>([^<]+)<\/kbd>/g)].map((m) => decode(m[1].trim()));
   const expect = {
-    'W': "keys['KeyW']", 'S': "keys['KeyS']", 'A': "keys['KeyA']", 'D': "keys['KeyD']",
-    'Shift': "keys['ShiftLeft']", 'Space': "event.code === 'Space'",
+    'W': "'KeyW'", 'S': "'KeyS'", 'A': "'KeyA'", 'D': "'KeyD'",
+    'Shift': "'ShiftLeft'", 'Space': "event.code === 'Space'",
     'H': "event.code === 'KeyH'",
     'C': "event.code === 'KeyC'", 'B': "event.code === 'KeyB'",
     'Enter': "event.code === 'Enter'", 'Esc': "event.code === 'Escape'",
     '←': "event.code === 'ArrowLeft'", '→': "event.code === 'ArrowRight'",
-    '↑': "keys['ArrowUp']", '↓': "keys['ArrowDown']",
+    '↑': "'ArrowUp'", '↓': "'ArrowDown'",
   };
-  for (const [cap, code] of Object.entries(expect)) {
+  for (const [cap, needle] of Object.entries(expect)) {
     assert.ok(caps.includes(cap), `the table no longer lists ${cap}`);
-    assert.ok(main.includes(code), `main.js no longer reads ${code} for ${cap}`);
+    assert.ok(src.includes(needle), `nothing reads ${cap} (${needle}) anywhere`);
   }
+  // The split-screen schemes are keysets, not loose conditions: each cap above
+  // must be declared in the scheme its player is bound to.
+  assert.ok(player.includes("'kb-wasd'") && player.includes("'kb-arrows'"),
+    'the input schemes module is missing the wasd / arrows halves');
 });
 
 test('the pad is polled every frame and feeds the car', () => {
@@ -112,11 +124,16 @@ test('the pad is polled every frame and feeds the car', () => {
   assert.ok(pausedAt >= 0, 'the frame loop lost its paused early-return');
   assert.ok(pollAt < pausedAt,
     'the poll sits after the paused early-return, so a paused game would ignore the pad');
-  assert.match(main, /pad\.throttle > 0\.05/, 'the triggers do not accelerate');
-  assert.match(main, /pad\.reverse > 0\.05/, 'the triggers do not reverse');
-  assert.match(main, /pad\.steer/, 'the stick does not steer');
-  assert.match(main, /keys\['ShiftLeft'\] \|\| keys\['ShiftRight'\] \|\| pad\.boost/,
-    'X is not wired to the boost');
+  // The pad's analog state is published by pollGamepad and folded into the
+  // per-frame input by the scheme resolver (modules/player.js) — not read loose
+  // in the driving block any more.
+  assert.match(main, /pad\.throttle = throttle/, 'the poll never publishes throttle');
+  assert.match(main, /readInput\(players\[0\], \{ keys, pad, joy \}\)/,
+    'the frame loop does not resolve the driving input through the player');
+  assert.match(player, /pad\.throttle > 0\.05/, 'the scheme resolver never accelerates with the triggers');
+  assert.match(player, /pad\.reverse > 0\.05/, 'the scheme resolver never reverses with the triggers');
+  assert.match(player, /state\.pad\.steer/, 'the scheme resolver never steers with the stick');
+  assert.match(player, /pad\.boost/, 'the scheme resolver never folds X into the boost');
   assert.match(main, /addEventListener\('gamepadconnected'/, 'no connect status');
   assert.match(main, /addEventListener\('gamepaddisconnected'/, 'no disconnect status');
 });

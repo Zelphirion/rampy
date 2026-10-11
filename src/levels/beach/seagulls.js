@@ -222,11 +222,15 @@ export function createGulls(base) {
   group.add(thief);
 
   let t = 0;
-  let idle = 0;
   let cooldown = 0;
-  let lastX = 0;
-  let lastZ = 0;
-  let haveLast = false;
+  // Per-car idle clocks: index 0 = P1, 1 = P2. Each is measured off that car's
+  // own movement, so she can go for whichever one was left sitting. The thief
+  // itself is still ONE bird — she just chooses her victim this trip.
+  const idle = [];
+  const lastX = [];
+  const lastZ = [];
+  const haveLast = [];
+  let target = -1;          // which car she is carrying this trip (-1 = none)
   let phase = 'perch';
   let timer = 0;
   let from = new THREE.Vector3();
@@ -254,9 +258,15 @@ export function createGulls(base) {
     // The pose the main loop must apply to the car, or null when she is not
     // holding it. Read-only from outside; the update below owns it.
     carCarry: null,
-    update(delta, carPos, blocked) {
+    // Which car the published `carCarry` belongs to: 0 = P1, 1 = P2, -1 = none.
+    carryIndex: -1,
+    // `cars` is the list of live car positions (P1 first, then P2 in split
+    // screen). The thief is one bird but chooses her victim each trip.
+    update(delta, cars, blocked) {
       t += delta;
       const api = this;
+      const n = cars ? cars.length : 0;
+      const tcar = () => (target >= 0 && cars && cars[target]) || null;
 
       // ---- the flock, always ----
       for (const b of flock) {
@@ -271,33 +281,35 @@ export function createGulls(base) {
         flap(b.g, t + b.phase, 2.4 + b.rate, 0.55);
       }
 
-      // ---- the idle clock ----
-      // Measured off the car's own movement rather than off the keys, so it
-      // also resets if something else moves the car - a nudge from a crab, a
-      // jolt off a rock - and it resets for the right reason: the car is where
-      // you left it no longer.
+      // ---- the idle clocks ----
+      // One per car, each measured off that car's own movement rather than off
+      // the keys, so it also resets if something else moves the car - a nudge
+      // from a crab, a jolt off a rock - and it resets for the right reason:
+      // the car is where you left it no longer.
       //
-      // The clock ONLY runs while the car is on the sand, and stops dead while
-      // it is underwater. That is deliberate: driving out under the sea is the
-      // safe place to park. The thief catches a car someone left sitting on the
-      // beach - that is the joke - and a car sunk in the basin is one she never
-      // even starts counting on. `submerged` also gates the trigger below, so a
-      // car that rolls up out of the deep at the last moment still gets the
-      // full ten seconds on dry sand before she moves.
-      const submerged = !!(carPos && beachGroundOffsetAt(carPos.x, carPos.z) < BEACH_SEA_Y);
-      if (!blocked && carPos) {
-        if (haveLast) {
-          const moved = Math.hypot(carPos.x - lastX, carPos.z - lastZ);
-          if (moved > 0.02) idle = 0;
+      // A clock ONLY runs while its car is on the sand, and stops dead while it
+      // is underwater. That is deliberate: driving out under the sea is the safe
+      // place to park. The thief catches a car someone left sitting on the beach
+      // - that is the joke - and a car sunk in the basin is one she never even
+      // starts counting.
+      while (idle.length < n) { idle.push(0); lastX.push(0); lastZ.push(0); haveLast.push(false); }
+      for (let i = 0; i < n; i++) {
+        const cp = cars[i];
+        if (!cp) { idle[i] = 0; continue; }
+        if (blocked) continue;
+        if (haveLast[i]) {
+          const moved = Math.hypot(cp.x - lastX[i], cp.z - lastZ[i]);
+          if (moved > 0.02) idle[i] = 0;
         }
-        lastX = carPos.x;
-        lastZ = carPos.z;
-        haveLast = true;
+        lastX[i] = cp.x;
+        lastZ[i] = cp.z;
+        haveLast[i] = true;
+        if (beachGroundOffsetAt(cp.x, cp.z) >= BEACH_SEA_Y) idle[i] += delta;
       }
-      if (!blocked && !submerged) idle += delta;
       if (cooldown > 0) cooldown -= delta;
 
       api.carCarry = null;
+      api.carryIndex = -1;
 
       // ---- the thief's state machine ----
       const HOLD_Y = 15;      // how high she cruises carrying
@@ -316,18 +328,31 @@ export function createGulls(base) {
           thief.rotation.y = -p + Math.PI / 2;
           thief.rotation.z = 0.3;
           thief.visible = false;
-          if (idle >= IDLE_TO_THEFT && cooldown <= 0 && carPos && !submerged) {
-            phase = 'approach';
-            timer = 0;
-            thief.visible = true;
-            drop = pickDropPoint();
-            // Come in from out over the water, high, so she crosses the whole
-            // beach before she is over you.
-            from.set(
-              PERCH.x + Math.cos(p) * 16,
-              base + PERCH.y + 4,
-              PERCH.z + Math.sin(p) * 12);
-            to.set(carPos.x, carPos.y + GRAB_Y + 9, carPos.z);
+          if (cooldown <= 0) {
+            // Everyone who has sat still long enough. If more than one, she
+            // picks at random - the point of a single thief is that you cannot
+            // know which car she wants.
+            const cands = [];
+            for (let i = 0; i < n; i++) {
+              const cp = cars[i];
+              if (cp && idle[i] >= IDLE_TO_THEFT &&
+                  beachGroundOffsetAt(cp.x, cp.z) >= BEACH_SEA_Y) cands.push(i);
+            }
+            if (cands.length) {
+              target = cands[Math.floor(Math.random() * cands.length)];
+              const cp = cars[target];
+              phase = 'approach';
+              timer = 0;
+              thief.visible = true;
+              drop = pickDropPoint();
+              // Come in from out over the water, high, so she crosses the whole
+              // beach before she is over you.
+              from.set(
+                PERCH.x + Math.cos(p) * 16,
+                base + PERCH.y + 4,
+                PERCH.z + Math.sin(p) * 12);
+              to.set(cp.x, cp.y + GRAB_Y + 9, cp.z);
+            }
           }
           break;
         }
@@ -352,10 +377,12 @@ export function createGulls(base) {
         case 'grab': {
           // Talons down onto the roof, a moment of contact, then up.
           timer += delta;
-          thief.position.x += (carPos.x - thief.position.x) * 0.25;
-          thief.position.z += (carPos.z - thief.position.z) * 0.25;
-          thief.position.y += (carPos.y + GRAB_Y - thief.position.y) * 0.25;
-          steer(thief, carPos.x, thief.position.y, carPos.z);
+          const cp = tcar();
+          if (!cp) { phase = 'perch'; timer = 0; thief.visible = false; break; }
+          thief.position.x += (cp.x - thief.position.x) * 0.25;
+          thief.position.z += (cp.z - thief.position.z) * 0.25;
+          thief.position.y += (cp.y + GRAB_Y - thief.position.y) * 0.25;
+          steer(thief, cp.x, thief.position.y, cp.z);
           thief.rotation.z = 0;
           reach(thief, 1);
           flap(thief, t, 5.5, 0.9);
@@ -363,7 +390,7 @@ export function createGulls(base) {
             phase = 'lift';
             timer = 0;
             from.copy(thief.position);
-            to.set(carPos.x, base + HOLD_Y, carPos.z);
+            to.set(cp.x, base + HOLD_Y, cp.z);
           }
           break;
         }
@@ -469,6 +496,8 @@ export function createGulls(base) {
         carryPose.pitch = 0.16 + swing;
         carryPose.roll = swing * 2.2;
         api.carCarry = carryPose;
+        // Tell the main loop WHICH car to apply it to (0 = P1, 1 = P2).
+        api.carryIndex = target;
       }
     },
   };

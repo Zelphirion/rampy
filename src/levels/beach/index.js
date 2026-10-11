@@ -6,7 +6,7 @@ import { addBeachCliffs } from './cliffs.js?v=1791600000000';
 import { addBeachLife, makeCrab } from './critters.js?v=1791600000000';
 import { buildReefs } from './reefs.js?v=1791600000000';
 import { buildBoat, updateBoat, BOAT_SPOT } from './boat.js?v=1791038847704';
-import { createGulls } from './seagulls.js?v=1791600000000';
+import { createGulls } from './seagulls.js?v=1791700000000';
 import { buildSandcastle } from './sandcastle.js?v=1791600000000';
 import {
   BEACH_START, BEACH_SHELL, BEACH_SAND_Y, BEACH_SEA_Y, BEACH_SHORE_Z,
@@ -926,7 +926,9 @@ export function createBeachWorld(scene, opts = {}) {
     // polls this after update() and, when it is set, drives the car from the
     // pose instead of from the physics.
     get carCarry() { return gulls.carCarry; },
-    update(delta, carPos, carR, blocked) {
+    // Which car the carry pose belongs to: 0 = P1, 1 = P2, -1 = none.
+    get carryIndex() { return gulls.carryIndex; },
+    update(delta, carPos, carR, blocked, carPos2) {
       t += delta;
       const shut = shell.update(delta);
       // Two crossing swells ride the water's vertices.
@@ -959,8 +961,10 @@ export function createBeachWorld(scene, opts = {}) {
       castle.update(delta, carPos, carR);
       // `blocked` is true while the shell is closing, or during a fade: she does
       // not start a ten-second count towards robbing a car that is already on
-      // its way home.
-      gulls.update(delta, carPos, !!blocked);
+      // its way home. Both cars are offered as targets (P2 only exists in split
+      // screen); the thief picks whichever one was left sitting.
+      const carList = carPos2 ? [carPos, carPos2] : [carPos];
+      gulls.update(delta, carList, !!blocked);
       updateBoat(boat, t);
       updateBubbles(delta, carPos);
       return shut;

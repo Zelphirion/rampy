@@ -50,8 +50,9 @@
         margin-bottom: 4px;
       }
 
-      /* ===== Touch joystick (bottom-right) ===== */
-      #joystick {
+      /* ===== Touch joystick (bottom-right; a second one joins it in a
+         two-player touch split, left = P1 / right = P2) ===== */
+      #joystick, #joystick2 {
         position: fixed;
         right: 24px;
         bottom: 24px;
@@ -66,7 +67,7 @@
         z-index: 10;
       }
 
-      #joystick::before {
+      #joystick::before, #joystick2::before {
         content: '';
         position: absolute;
         left: 50%;
@@ -77,7 +78,7 @@
         background: rgba(255, 255, 255, 0.12);
       }
 
-      #joystick::after {
+      #joystick::after, #joystick2::after {
         content: '';
         position: absolute;
         left: 50%;
@@ -88,7 +89,7 @@
         background: rgba(255, 255, 255, 0.12);
       }
 
-      #joy-knob {
+      #joy-knob, #joy2-knob {
         position: absolute;
         left: 50%;
         top: 50%;
@@ -103,7 +104,7 @@
         will-change: transform;
       }
 
-      #joystick-hit {
+      #joystick-hit, #joystick2-hit {
         position: fixed;
         right: 4px;
         bottom: 4px;
@@ -113,6 +114,8 @@
         touch-action: none;
         z-index: 9;
       }
+      /* The second joystick only exists while a touch split is live. */
+      #joystick2, #joystick2-hit { display: none; }
 
       @media (max-width: 700px) {
         .hud {
@@ -997,6 +1000,328 @@
         min-height: 1.3em;
         padding: 0 24px;
       }
+
+      /* ===== Multiplayer tab (gear → Multiplayer) =====
+         Shares the browser-panel styling: a title, a blurb, a one-player /
+         two-player choice and a Start button. */
+      body.tab-multiplayer #multiplayer-panel { display: flex; }
+      .mp-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .mp-rows .gfx-check { font-size: 13px; color: #dbe7ff; padding: 6px 4px; }
+      .mp-start-row { display: flex; justify-content: flex-end; gap: 10px; }
+      .mp-status {
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: #93a9c8;
+        padding: 10px 12px;
+        border-radius: 11px;
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      /* ===== Split-screen pairing (claim screen) =====
+         Shown the moment "2 Players" starts and the settings modal has closed:
+         two slots, each waiting for its player to press a keyboard half or a
+         controller. Esc / pad B cancels back to settings. */
+      #claim-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: rgba(4, 8, 16, 0.82);
+        backdrop-filter: blur(4px);
+        font-family: Arial, sans-serif;
+        color: #dbe7ff;
+      }
+      body.claim-active #claim-screen { display: flex; }
+      #claim-box {
+        width: min(560px, 92vw);
+        padding: 26px 30px;
+        border-radius: 20px;
+        background: rgba(6, 11, 22, 0.9);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        box-shadow: 0 14px 60px rgba(0, 0, 0, 0.6);
+      }
+      #claim-title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #7ef9ff;
+        margin-bottom: 18px;
+      }
+      #claim-slots { display: flex; flex-direction: column; gap: 12px; }
+      .claim-slot {
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .claim-slot.waiting { border-style: dashed; border-color: rgba(255, 255, 255, 0.28); }
+      .claim-slot.done { border-color: rgba(159, 240, 184, 0.5); }
+      .claim-pnum {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: #8fa8cc;
+        min-width: 70px;
+      }
+      .claim-pstate { font-size: 13px; color: #b9cbe8; flex: 1 1 auto; }
+      .claim-slot.done .claim-pstate { color: #9ff0b8; }
+      .claim-flicker {
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: #ff9a8f;
+        min-height: 1.4em;
+        margin-top: 14px;
+      }
+      #claim-hint {
+        font-size: 12px;
+        line-height: 1.5;
+        color: #8fa8cc;
+        margin-top: 10px;
+      }
+
+      /* ===== Two-sided car picker (after both inputs are claimed) =====
+         Player 1's column on the left, Player 2's on the right, split by a
+         centre rule. Each player cycles the roster with their own controls and
+         locks in; the split starts once both have locked. */
+      /* Full-screen picker. The two spinning cars are drawn on the WebGL canvas
+         BEHIND this overlay (see the pick stage in main.js); the overlay carries
+         only the labels and controls, each player's anchored to the bottom of
+         their own half so the car above stays fully in view. A bottom-up gradient
+         keeps the text legible without hiding the models. */
+      #pick-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: none;
+        background: linear-gradient(to top,
+          rgba(4, 8, 16, 0.94) 0%,
+          rgba(4, 8, 16, 0.6) 24%,
+          rgba(4, 8, 16, 0) 52%);
+        font-family: Arial, sans-serif;
+        color: #dbe7ff;
+      }
+      body.pick-active #pick-screen { display: block; }
+      /* While the picker is up it owns the whole screen: hide the driving HUD
+         (minimaps, joysticks, gear) under it, since the overlay is transparent
+         and the models are drawn on the canvas behind it. */
+      body.pick-active #minimap,
+      body.pick-active #minimap-p2,
+      body.pick-active #joystick,
+      body.pick-active #joystick-hit,
+      body.pick-active #joystick2,
+      body.pick-active #joystick2-hit,
+      body.pick-active #gear-btn,
+      body.pick-active #gear-fps,
+      body.pick-active #hud { display: none !important; }
+      #pick-title {
+        position: absolute;
+        top: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #7ef9ff;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+        white-space: nowrap;
+      }
+      #pick-cols {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: stretch;
+        gap: 0;
+      }
+      .pick-col {
+        flex: 1 1 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 12px;
+        padding: 0 16px 92px;
+        /* Only the controls take taps; the empty area above shows the car. */
+        pointer-events: none;
+      }
+      .pick-col > * { pointer-events: auto; }
+      .pick-who {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: #8fa8cc;
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+      }
+      #pick-p1 .pick-who { color: #ff9a8f; }
+      #pick-p2 .pick-who { color: #8fb4ff; }
+      .pick-row { display: flex; align-items: center; gap: 12px; width: min(340px, 86%); }
+      .pick-arrow {
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        background: rgba(12, 20, 38, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        color: #dbe7ff;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .pick-arrow:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .pick-name {
+        flex: 1 1 auto;
+        text-align: center;
+        font-size: 18px;
+        font-weight: 700;
+        color: #eaf1ff;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9);
+      }
+      .pick-state {
+        font-size: 12px;
+        text-align: center;
+        line-height: 1.4;
+        color: #8fa8cc;
+        min-height: 1.4em;
+        text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+      }
+      .pick-col.ready .pick-state { color: #9ff0b8; }
+      #pick-p1.ready .pick-name, #pick-p1.ready .pick-who { color: #ff9a8f; }
+      #pick-p2.ready .pick-name { color: #8fb4ff; }
+      /* A tappable Lock In under each column: the picker's own control for
+         mouse and touch, where there is no claimed keyboard/pad key to press. */
+      .pick-lock {
+        padding: 9px 26px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(12, 20, 38, 0.7);
+        color: #dbe7ff;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      #pick-p1 .pick-lock { border-color: rgba(255, 90, 90, 0.5); }
+      #pick-p2 .pick-lock { border-color: rgba(90, 140, 255, 0.5); }
+      .pick-lock:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .pick-col.ready .pick-lock { opacity: 0.45; }
+      #pick-hint {
+        position: absolute;
+        left: 50%;
+        bottom: 52px;
+        transform: translateX(-50%);
+        font-size: 12px;
+        color: #8fa8cc;
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
+        white-space: nowrap;
+      }
+      .pick-actions {
+        position: absolute;
+        left: 50%;
+        bottom: 12px;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+      }
+      .claim-actions { display: flex; justify-content: center; gap: 10px; margin-top: 14px; }
+
+      /* ===== Split-screen live elements =====
+         The vertical divider and Player 2's minimap only exist while the game
+         draws two viewports; the touch joystick hides so the split view is
+         clean. Player 2's map mirrors Player 1's, pinned to the far corner of
+         their own half. */
+      #split-divider, #minimap-p2 { display: none; }
+      body.split-on #split-divider { display: block; }
+      /* One map for both players, dead centre at the BOTTOM, replacing the old
+         per-viewport pair. The two cars are labelled P1 / P2 on the map (see
+         drawMinimap) so it is obvious which arrow is whose. Bottom-centre keeps
+         it clear of the car pickers/name tags up top and above the touch sticks. */
+      body.split-on #minimap {
+        left: 50% !important;
+        bottom: 12px !important;
+        top: auto !important;
+        transform: translateX(-50%);
+        z-index: 31;
+      }
+      /* In the touch split the two joysticks own the bottom corners, but the map
+         still sits on the bottom edge like them: it is narrow and pointer-events
+         is off, so the sticks and the centred map never actually fight. */
+      body.split-touch #minimap {
+        bottom: 12px !important;
+      }
+      body.split-on #minimap-p2 { display: none; }
+      #mp-exit {
+        position: fixed;
+        top: 14px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 32;
+        display: none;
+        padding: 8px 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(12, 20, 38, 0.7);
+        color: #dbe7ff;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body.split-on #mp-exit { display: block; }
+      #mp-exit:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      /* The single-view joystick hides in a controller split; the touch split
+         brings back TWO, one per player (left = P1, right = P2). */
+      body.split-on #joystick, body.split-on #joystick-hit,
+      body.split-on #joystick2, body.split-on #joystick2-hit { display: none; }
+      body.split-touch #joystick, body.split-touch #joystick-hit,
+      body.split-touch #joystick2, body.split-touch #joystick2-hit { display: block; }
+      body.split-touch #joystick { left: 5%; right: auto; }
+      body.split-touch #joystick-hit { left: calc(5% - 20px); right: auto; }
+      body.split-touch #joystick2 { right: 5%; left: auto; }
+      body.split-touch #joystick2-hit { right: calc(5% - 20px); left: auto; }
+      #split-divider {
+        position: fixed;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        z-index: 30;
+        transform: translateX(-50%);
+        background: rgba(6, 14, 26, 0.9);
+        border-left: 1px solid rgba(255, 255, 255, 0.25);
+        border-right: 1px solid rgba(255, 255, 255, 0.2);
+        pointer-events: none;
+      }
+      #minimap-p2 {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        pointer-events: none;
+        background: rgba(5, 10, 18, 0.68);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        z-index: 20;
+      }
     </style>
   </head>
   <body>
@@ -1122,15 +1447,35 @@
       style="position:fixed;left:16px;bottom:16px;pointer-events:none;
              background:rgba(5,10,18,0.68);border:1px solid rgba(255,255,255,0.15);border-radius:12px;"></canvas>
 
+    <!-- Split-screen Player 2 minimap: only shown while split-screen is live
+         (see body.split-on). Its world drawing is shared with Player 1 —
+         drawMinimap() is called a second time with this context, flipping the
+         bright player marker to car 2's position. -->
+    <canvas id="minimap-p2" width="160" height="160"></canvas>
+
+    <!-- Split-screen divider: a 3px bar down the exact middle of the screen
+         while two cars are racing side by side. Purely cosmetic; the two
+         WebGL viewports are split by scissor rects, not by this div. -->
+    <div id="split-divider"></div>
+
     <!-- Touch joystick: drag the knob to drive -->
     <div id="joystick"><div id="joy-knob"></div></div>
     <div id="joystick-hit"></div>
+
+    <!-- Second touch joystick: only shown in a two-player touch split, where
+         Player 1 drives with the left stick and Player 2 with this one. -->
+    <div id="joystick2"><div id="joy2-knob"></div></div>
+    <div id="joystick2-hit"></div>
 
     <!-- Settings (gear) button, top-left. Opens the car showroom; while the
          showroom is open it becomes the return-to-game button. The optional
          frame-rate badge sits to its right (see #gfx-show-fps). -->
     <div id="gear-btn" title="Settings">&#9881;</div>
     <div id="gear-fps" title="Frame rate">-- fps</div>
+
+    <!-- Leave split-screen: only shown while two players are live. The touch
+         split has no Esc key, so it needs a visible way back. -->
+    <button id="mp-exit" type="button" title="Leave split-screen">&nbsp;Exit Split&nbsp;</button>
 
     <!-- Car showroom overlay (pure UI; the 3D car is rendered on the canvas):
          side arrows cycle the cars, clicking the spinning car drives it. -->
@@ -1149,6 +1494,7 @@
     <div id="picker-tabs">
       <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
       <button id="tab-chase" class="picker-tab" type="button" title="Choose the car that chases you">&nbsp;Chase&nbsp;</button>
+      <button id="tab-multiplayer" class="picker-tab" type="button" title="Two drivers, one box: split-screen multiplayer">&nbsp;Multiplayer&nbsp;</button>
       <button id="tab-levels" class="picker-tab" type="button" title="Go to another level">&nbsp;Levels&nbsp;</button>
       <button id="tab-controls" class="picker-tab" type="button" title="Keyboard, mouse and Xbox controller controls">&nbsp;Controls&nbsp;</button>
       <button id="tab-graphics" class="picker-tab" type="button" title="Resolution, draw distance, shadows, frame rate">&nbsp;Graphics&nbsp;</button>
@@ -1374,6 +1720,76 @@
       </div>
     </div>
 
+    <!-- Multiplayer: the gateway to two-player split screen. Starts pairing
+         immediately when you press Start; the left window drives with WASD or
+         the first controller, the right window with the arrow keys or a second
+         controller. -->
+    <div id="multiplayer-panel" class="browser-panel">
+      <div class="browser-title">Multiplayer</div>
+      <div class="browser-blurb">Race the same world as a friend, split down the
+        middle.</div>
+      <div class="mp-start-row">
+        <button id="mp-start" class="gfx-btn" type="button" title="Two players with controllers or keyboard halves">&nbsp;Controllers &amp; Keyboard&nbsp;</button>
+        <button id="mp-touch" class="gfx-btn" type="button" title="Two players on this one screen, each with an on-screen joystick">&nbsp;Two on This Screen (Touch)&nbsp;</button>
+      </div>
+    </div>
+
+    <!-- Split-screen pairing: shown the moment Start Multiplayer is pressed,
+         while the settings modal closes. Each slot says who it wants and what it
+         has got; Esc or pad B cancels back to settings. -->
+    <div id="claim-screen">
+      <div id="claim-box">
+        <div id="claim-title">Split screen</div>
+        <div id="claim-slots">
+          <div class="claim-slot waiting" id="claim-p1">
+            <span class="claim-pnum">Player 1</span>
+            <span class="claim-pstate">Press <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> or a controller button&hellip;</span>
+          </div>
+          <div class="claim-slot waiting" id="claim-p2">
+            <span class="claim-pnum">Player 2</span>
+            <span class="claim-pstate">Press an arrow key or a different controller&hellip;</span>
+          </div>
+        </div>
+        <div class="claim-flicker" id="claim-err"></div>
+        <div id="claim-hint">Esc or <span class="padbtn">B</span> cancels back to the settings.</div>
+        <div class="claim-actions">
+          <button id="claim-cancel" class="gfx-btn" type="button">&nbsp;Back&nbsp;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Car-pick step: once both inputs are claimed, each player chooses a ride
+         in their own column — P1 left, P2 right — then both lock in to start. -->
+    <div id="pick-screen">
+      <div id="pick-title">Choose your ride</div>
+      <div id="pick-cols">
+        <div class="pick-col" id="pick-p1">
+          <div class="pick-who">Player 1</div>
+          <div class="pick-row">
+            <button class="pick-arrow" id="pick-p1-prev" type="button" title="Previous car">&#9664;</button>
+            <span class="pick-name" id="pick-p1-name">Crankshaft</span>
+            <button class="pick-arrow" id="pick-p1-next" type="button">&#9654;</button>
+          </div>
+          <div class="pick-state" id="pick-p1-state">A / D to change &middot; W to lock in</div>
+          <button class="pick-lock" id="pick-p1-lock" type="button">&nbsp;Lock In&nbsp;</button>
+        </div>
+        <div class="pick-col" id="pick-p2">
+          <div class="pick-who">Player 2</div>
+          <div class="pick-row">
+            <button class="pick-arrow" id="pick-p2-prev" type="button">&#9664;</button>
+            <span class="pick-name" id="pick-p2-name">City Car</span>
+            <button class="pick-arrow" id="pick-p2-next" type="button">&#9654;</button>
+          </div>
+          <div class="pick-state" id="pick-p2-state">&#8592; / &#8594; to change &#183; &#8593; to lock in</div>
+          <button class="pick-lock" id="pick-p2-lock" type="button">&nbsp;Lock In&nbsp;</button>
+        </div>
+      </div>
+      <div id="pick-hint">Both players lock in to start. Esc or <span class="padbtn">B</span> cancels.</div>
+      <div class="pick-actions">
+        <button id="pick-cancel" class="gfx-btn" type="button">&nbsp;Back&nbsp;</button>
+      </div>
+    </div>
+
     <!-- About: the logo, the game's name and the tools it was built with. -->
     <div id="about-panel" class="browser-panel">
       <div class="about-wrap">
@@ -1435,6 +1851,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1791700000000"></script>
+    <script type="module" src="./src/main.js?v=1799999999999"></script>
   </body>
 </html>

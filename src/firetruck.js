@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // Stamp matches main.js's import of this module. Two different query strings are
 // two different cache keys, so an unstamped import here would have the browser
 // hold a second, potentially stale copy of cars.js.
-import { createFiretruck } from './cars.js?v=1791481956200';
+import { createFiretruck } from './cars.js?v=1799999999999';
 
 const UP = new THREE.Vector3(0, 1, 0);
 

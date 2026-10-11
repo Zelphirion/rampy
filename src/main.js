@@ -3,10 +3,10 @@ import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from '
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, POTHOLE,
 LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1791570000000';
-import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, addTrafficCars } from './cars.js?v=1791481956200';
-import { addFiretruck } from './firetruck.js?v=1791430389189';
+import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, addTrafficCars } from './cars.js?v=1799999999999';
+import { addFiretruck } from './firetruck.js?v=1799999999999';
 import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger, cityPowerOut } from './cityBuildings.js?v=1791700000000';
-import { addPeople } from './people.js?v=1791479956919';
+import { addPeople } from './people.js?v=1799999999999';
 import { addRobot, buildRobotModel } from './robot.js?v=1791700000000';
 import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1791479956919';
 import { addLizard } from './lizard.js';
@@ -43,6 +43,10 @@ import {
   isInUndergroundReturnZone,
 } from './modules/portalRules.js?v=1791479956919';
 import { resolveStuck, wallNormal, collidersToSolids } from './modules/unstick.js?v=1791700000000';
+import { gfxQualCreate, gfxQualTick } from './modules/gfxQualityWalk.js?v=1791700000000';
+import { makePlayer, readInput } from './modules/player.js?v=1791800000000';
+import { tryClaim, makeClaimState, cancelClaims, claimStatePlayers, MAX_PLAYERS } from './modules/claim.js?v=1799999999999';
+import { splitViewports, SPLIT_FOV } from './modules/splitViewports.js?v=1791700000000';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
 import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1791506000000';
 import { houseSurfaceY, houseLandingY } from './levels/house/surfaces.js';
@@ -53,10 +57,10 @@ import {
   createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_TRENCH_Z,
   BEACH_SEA_Y, BEACH_CAMPFIRE, makeCrab,
-} from './levels/beach/index.js?v=1791600000000';
+} from './levels/beach/index.js?v=1791700000000';
 // The object catalogue: every level's categories and the small standalone
 // models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791570000000';
+import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1799999999999';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -285,126 +289,30 @@ function gfxUpdateGearFps() {
 // ===== Automatic quality =====
 // The safety net for a machine that cannot hold the frame rate: the settings
 // walk themselves DOWN one rung at a time until the frame rate recovers, and
-// then walk back UP again once there is headroom to spare.
-//
-// The walk is armed by a sustained dip below GFX_AUTO_FLOOR (25fps). Once it is
-// moving it keeps cutting until the frame rate is back at GFX_AUTO_TARGET (30),
-// or until the ladder runs out. When the frame rate has instead been comfortably
-// above GFX_AUTO_RISE (40fps) for a while, it hands one rung back at a time —
-// all the way to the user's original settings. The gap between the cut line (30)
-// and the rise line (40) is deliberate hysteresis: it stops the two directions
-// from fighting over a machine that sits right on the boundary.
-//
-// Draw distance is NOT part of this walk. The camera far plane is the one
-// setting a player is expected to tune by hand, so the automatic system never
-// touches it — `gfx.far` is only ever changed by the slider. "Max" (gfx.max) is
-// the user saying "I want this picture whatever the frame rate" and switches the
-// whole walk off.
-const GFX_AUTO_FLOOR = 25;       // the dip that arms the walk
-const GFX_AUTO_TARGET = 30;      // what it cuts to reach
-const GFX_AUTO_SUSTAIN = 1000;   // ms under the floor before the first cut
-const GFX_AUTO_RISE = 40;        // fps above which the walk starts climbing back
-const GFX_AUTO_RISE_SUSTAIN = 1500;   // ms above the rise line before handing one back
-const GFX_AUTO_COOLDOWN = 1500;  // ms between steps (either direction), so a change can settle
-// Most aggressive-of-each-key is applied cumulatively, so the rungs only ever
-// reduce. The bottom rung is the blocky end: a tenth-resolution buffer. The
-// draw distance is left out on purpose — see the note above.
-const GFX_AUTO_LADDER = [
-  { scale: 1.0, shadows: true, aa: false },
-  { scale: 1.0, shadows: false, aa: false },
-  { scale: 0.8, shadows: false, aa: false },
-  { scale: 0.65, shadows: false, aa: false },
-  { scale: 0.5, shadows: false, aa: false },
-  { scale: 0.4, shadows: false, aa: false },
-  { scale: 0.32, shadows: false, aa: false },
-  { scale: 0.25, shadows: false, aa: false },
-  { scale: 0.2, shadows: false, aa: false },
-  { scale: 0.16, shadows: false, aa: false },
-  { scale: 0.13, shadows: false, aa: false },
-  { scale: GFX_SCALE_MIN, shadows: false, aa: false },
-];
-let gfxAutoStep = -1;       // last rung applied (-1 = the walk has not started)
-let gfxAutoBase = null;     // the settings the walk reduces FROM
-let gfxAutoLowSince = 0;    // when the current sub-floor dip began
-let gfxAutoHighSince = 0;   // when the current above-the-rise-line spell began
-let gfxAutoLastStep = 0;    // when the last step (either direction) was made
+// then walk back UP again once there is headroom to spare. The decision engine
+// lives in modules/gfxQualityWalk.js (pure and headless-testable); this wrapper
+// feeds it the live settings and the measured fps every tick. Draw distance is
+// deliberately NOT part of the walk: `gfx.far` is only ever changed by the
+// slider, and "Max" (gfx.max) switches the whole walk off.
+const gfxQualState = gfxQualCreate();
 
-// Any manual change re-arms the walk: the user's new settings become the base it
-// reduces from, and a walk that was in progress is abandoned.
 function gfxAutoReset() {
-  gfxAutoStep = -1;
-  gfxAutoBase = null;
-  gfxAutoLowSince = 0;
-  gfxAutoHighSince = 0;
-}
-
-function gfxAutoApply(step) {
-  const base = gfxAutoBase || gfx;
-  // `far` and `max` are deliberately absent: the walk never changes the draw
-  // distance, and it always leaves itself armed (max stays false).
-  const next = { scale: base.scale, fogTie: base.fogTie, shadows: base.shadows, aa: base.aa };
-  for (let i = 0; i <= step; i++) {
-    const s = GFX_AUTO_LADDER[i];
-    if (s.scale !== undefined) next.scale = Math.min(next.scale, s.scale);
-    if (s.shadows !== undefined) next.shadows = next.shadows && s.shadows;
-    if (s.aa !== undefined) next.aa = next.aa && s.aa;
-  }
-  next.max = false;
-  Object.assign(gfx, next);
-  gfxApply();
+  Object.assign(gfxQualState, gfxQualCreate());
 }
 
 function gfxAutoTick() {
-  // Never touch the picture while paused (the Graphics tab is open), and never
-  // at all under Max.
-  if (gfx.max || isPaused || !gfxFps) return;
-  const now = performance.now();
-  const active = gfxAutoStep >= 0;
-  const cooled = now - gfxAutoLastStep >= GFX_AUTO_COOLDOWN;
-
-  // --- Hand quality back ---
-  // Only once the walk has actually lowered something. The rise line sits well
-  // above the target so a machine hovering at 30-40fps keeps the settings it
-  // has instead of flapping between two rungs.
-  if (active && gfxFps >= GFX_AUTO_RISE) {
-    if (!gfxAutoHighSince) { gfxAutoHighSince = now; }
-    if (cooled && now - gfxAutoHighSince >= GFX_AUTO_RISE_SUSTAIN) {
-      gfxAutoStep--;
-      if (gfxAutoStep < 0) {
-        // Fully recovered: restore the user's own settings wholesale and retire
-        // the walk until the next dip re-arms it.
-        Object.assign(gfx, gfxAutoBase);
-        gfxAutoBase = null;
-        gfxApply();
-      } else {
-        gfxAutoApply(gfxAutoStep);
-      }
-      gfxAutoLastStep = now;
-      gfxAutoHighSince = 0;
-      gfxAutoLowSince = 0;
-      return;
-    }
+  // Never touch the picture while paused (the Graphics tab is open); the walk
+  // itself also stays off under Max.
+  if (isPaused || !gfxFps) return;
+  const res = gfxQualTick(gfxQualState, gfx, gfxFps, performance.now());
+  if (!res) return;
+  if (res.apply) {
+    gfx.max = false;
+    Object.assign(gfx, res.apply);
   } else {
-    gfxAutoHighSince = 0;
+    Object.assign(gfx, res.restore);
   }
-
-  // --- Take quality away ---
-  if (gfxFps >= (active ? GFX_AUTO_TARGET : GFX_AUTO_FLOOR)) { gfxAutoLowSince = 0; return; }
-  if (!cooled) return;
-  // Arming the walk takes a sustained dip; once it is moving, the cooldown is
-  // the only brake, so it can keep stepping down promptly.
-  if (!active) {
-    if (!gfxAutoLowSince) { gfxAutoLowSince = now; return; }
-    if (now - gfxAutoLowSince < GFX_AUTO_SUSTAIN) return;
-  }
-  if (gfxAutoStep >= GFX_AUTO_LADDER.length - 1) return;   // already at the floor
-  if (!gfxAutoBase) {
-    gfxAutoBase = { scale: gfx.scale, far: gfx.far, fogTie: gfx.fogTie, shadows: gfx.shadows, aa: gfx.aa };
-  }
-  gfxAutoStep++;
-  gfxAutoApply(gfxAutoStep);
-  gfxAutoLastStep = now;
-  gfxAutoLowSince = 0;
+  gfxApply();
 }
 
 // ===== The Graphics tab's own controls =====
@@ -1165,6 +1073,13 @@ function distanceToObstacleAhead(t) {
     const p = aheadDist(mx, mz, t.dir, t.axis, car.position.x, car.position.z);
     if (p < best) best = p;
   }
+  // Player 2 in a split: traffic brakes for a LIGHT twin standing in its lane,
+  // but a heavy twin (steamroller / monster truck) plows straight through, so it
+  // is ignored exactly like P1's heavy rides.
+  if (splitActive && car2 && !playerTwoSteamroller) {
+    const p2ahead = aheadDist(mx, mz, t.dir, t.axis, car2.position.x, car2.position.z);
+    if (p2ahead < best) best = p2ahead;
+  }
   // Traffic brakes for the engine — but not for one stood down in its bay, which
   // is tucked off the lanes anyway and invisible while you are driving.
   if (firetruck.duty()) {
@@ -1219,7 +1134,11 @@ function deOverlapTraffic() {
 function carCollisionList() {
   const list = [];
   // Cars being held in the robot's claw are not driving — leave them out.
-  if (!robot.playerCaptured) list.push({ mesh: car, radius: playerCarRadius, kind: 'player', steamroller: playerSteamroller });
+  if (!robot.playerCaptured) list.push({ mesh: car, radius: playerCarRadius, kind: 'player', steamroller: playerSteamroller, playerIndex: 0 });
+  if (splitActive && players[1] && car2 && !robot.playerCaptured) {
+    // Carry P2's heavy flag so a steamroller/monster twin smashes like P1's.
+    list.push({ mesh: car2, radius: playerCarRadius, kind: 'player2', playerIndex: 1, steamroller: playerTwoSteamroller });
+  }
   if (!robot.bumperCaptured) list.push({ mesh: bumperCar, radius: aiCarRadius, kind: 'bumper' });
   list.push({ mesh: firetruck.truck, radius: firetruckColliderR, kind: 'firetruck', offDuty: !firetruck.duty() });
   for (const t of traffic) {
@@ -1291,6 +1210,26 @@ function applyBounce(me, nx, nz, foeKind, foeSteamroller) {
     }
     velocity.value = THREE.MathUtils.clamp(velocity.value * (me.steamroller ? 0.85 : 0.5) + knock, -6, 6);
     shake.intensity = Math.max(shake.intensity, heavy ? 0.15 : 0.07);
+  } else if (me.kind === 'player2') {
+    // Player 2 recoils exactly like P1, but on their own scalar speed — and a
+    // heavy ride (steamroller / monster truck) barely feels light traffic, just
+    // like P1's drum: it plows through instead of bouncing off.
+    const p2 = players[1];
+    if (p2) {
+      const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(car2.quaternion);
+      dir.y = 0;
+      dir.normalize();
+      const align = dir.x * nx + dir.z * nz;
+      const heavy = foeKind === 'firetruck';
+      let knock;
+      if (me.steamroller) {
+        knock = heavy ? (align >= 0 ? 3.2 : -3.8) : (align >= 0 ? 0.5 : -0.3);
+      } else {
+        knock = heavy ? (align >= 0 ? 3.2 : -3.8) : (align >= 0 ? 2.2 : -1.0);
+      }
+      p2.velocity.value = THREE.MathUtils.clamp(p2.velocity.value * (me.steamroller ? 0.85 : 0.5) + knock, -6, 6);
+      shake.intensity = Math.max(shake.intensity, heavy ? 0.15 : 0.07);
+    }
   } else if (me.kind === 'traffic') {
     const t = me.t;
     // Run over by the player's steamroller: a much heavier knock + spin so
@@ -1353,19 +1292,33 @@ function resolveCarCollisions() {
       const overlap = minDist - dist;
       // Split the separation by mass: the player is heaviest, then the truck;
       // smaller AI cars yield the most so they don't shove the player around.
-      const aMass = a.kind === 'player' ? 3 : a.kind === 'firetruck' ? 2 : 1;
-      const bMass = b.kind === 'player' ? 3 : b.kind === 'firetruck' ? 2 : 1;
+      const aMass = (a.kind === 'player' || a.kind === 'player2') ? 3 : a.kind === 'firetruck' ? 2 : 1;
+      const bMass = (b.kind === 'player' || b.kind === 'player2') ? 3 : b.kind === 'firetruck' ? 2 : 1;
       const total = aMass + bMass;
       a.mesh.position.x -= nx * overlap * (bMass / total);
       a.mesh.position.z -= nz * overlap * (bMass / total);
       b.mesh.position.x += nx * overlap * (aMass / total);
-      b.mesh.position.z += nz * overlap * (aMass / total);
+      b.mesh.position.z += nz * overlap * (bMass / total);
       // Recoil both cars so they bounce apart (foeKind lets a car know who
       // hit it — the player's hits shove light cars out of the way harder).
       // foeSteamroller tells a victim it was run over by the player's roller,
       // which turns the nudge into a full smash.
-      applyBounce(a, -nx, -nz, b.kind, b.steamroller);
-      applyBounce(b, nx, nz, a.kind, a.steamroller);
+      const bKind = (b.kind === 'player2') ? 'player' : b.kind;
+      const aKind = (a.kind === 'player2') ? 'player' : a.kind;
+      const bSteam = b.steamroller || false;
+      const aSteam = a.steamroller || false;
+      applyBounce(a, -nx, -nz, bKind, bSteam);
+      applyBounce(b, nx, nz, aKind, aSteam);
+      // Player-vs-player in the city: a heavy ride (steamroller / monster truck)
+      // pancakes the other player on contact, in either direction.
+      const aIsP = a.kind === 'player' || a.kind === 'player2';
+      const bIsP = b.kind === 'player' || b.kind === 'player2';
+      if (aIsP && bIsP) {
+        const aHeavy = a.kind === 'player2' ? playerTwoSteamroller : playerSteamroller;
+        const bHeavy = b.kind === 'player2' ? playerTwoSteamroller : playerSteamroller;
+        if (aHeavy && !bHeavy) { if (b.kind === 'player2') flattenCar2FromRock(); else flattenCarFromRock(); }
+        else if (bHeavy && !aHeavy) { if (a.kind === 'player2') flattenCar2FromRock(); else flattenCarFromRock(); }
+      }
     }
   }
   // Re-wrap any cars the separation pushed across a map seam.
@@ -1373,6 +1326,45 @@ function resolveCarCollisions() {
     c.mesh.position.x = wrapCoordX(c.mesh.position.x);
     c.mesh.position.z = wrapCoordZ(c.mesh.position.z);
   }
+}
+
+// Split-screen only, OUTSIDE the city: the two players must bump off each other
+// in every world, not just the city (resolveCarCollisions runs from the city AI
+// block above, so underground / ramp / beach / house had them driving as ghosts
+// through one another). There is no wrap torus out here, so this uses the raw
+// delta rather than wrappedDelta (which folds coordinates around the city seam
+// and would report a bogus overlap across the map). Equal mass, even split.
+function resolvePlayerPairCollision() {
+  if (!splitActive || !players[1] || !car2) return;
+  // Only skip the test when a car is genuinely flying HIGH over the other.
+  // Requiring BOTH the airborne flag AND a real altitude gap (rather than the
+  // flag alone) is what stops a stuck/edge-case `inAir` — e.g. a car left
+  // flagged airborne after a ramp crest in the underground — from switching the
+  // whole bump off, which let the twins drive straight through one another as
+  // ghosts. Two grounded cars always collide, even at different heights on a
+  // slope.
+  const p1Air = jumpState.inAir;
+  const p2Air = players[1].jump && players[1].jump.inAir;
+  if ((p1Air || p2Air) && Math.abs(car.position.y - car2.position.y) > 2.0) return;
+  const dx = car2.position.x - car.position.x;
+  const dz = car2.position.z - car.position.z;
+  const minDist = playerCarRadius * 2;
+  const dist2 = dx * dx + dz * dz;
+  if (dist2 >= minDist * minDist) return;
+  const dist = Math.sqrt(dist2) || 0.001;
+  const nx = dx / dist, nz = dz / dist;   // unit normal P1 -> P2
+  const overlap = minDist - dist;
+  car.position.x -= nx * overlap * 0.5;
+  car.position.z -= nz * overlap * 0.5;
+  car2.position.x += nx * overlap * 0.5;
+  car2.position.z += nz * overlap * 0.5;
+  applyBounce({ kind: 'player', steamroller: playerSteamroller }, -nx, -nz, 'player', false);
+  applyBounce({ kind: 'player2' }, nx, nz, 'player', playerSteamroller);
+  // A heavy ride (steamroller / monster truck) driven onto the other player
+  // pancakes them on contact — the same shtick it has against traffic, now
+  // against a rival. Whoever is the roller flattens whoever is the road.
+  if (playerSteamroller && !playerTwoSteamroller) flattenCar2FromRock();
+  else if (playerTwoSteamroller && !playerSteamroller) flattenCarFromRock();
 }
 
 // 4-way traffic light signal for a given road axis, on a 12s cycle:
@@ -1435,6 +1427,784 @@ const keys = {};
 const velocity = { value: 0 };
 const steering = { value: 0 };
 const jumpState = { yVelocity: 0, inAir: false };
+
+// ===== The player record =====
+// One per human; split-screen will hold two. Today there is exactly one, and
+// the convenience names the code below still reads (car / velocity / steering)
+// ARE its fields — the players[0] record shares the very same objects, so the
+// single source of truth has moved onto it. Nothing else spots the difference.
+const players = [makePlayer(0, { device: 'kb-both', padIndex: 0 })];
+{
+  const p = players[0];
+  p.car = car;
+  p.velocity = velocity;
+  p.steering = steering;
+  p.camera = camera;
+  p.cam.orbit = cameraOrbit;
+  p.cam.yaw = cameraYawOffset;
+  p.spawn = car.position.clone();
+}
+
+// ===== Split-screen multiplayer =====
+// Two players share one world. Player 1 keeps the existing car, camera and the
+// full single-player physics block in animate(); Player 2 gets a fresh car, a
+// twin chase camera (camB) and a condensed, self-contained physics step
+// (stepTwoPlayer) so the single-player path stays byte-for-byte identical. The
+// two viewports are the scissor rects from modules/splitViewports.js, the
+// pairing rules live in modules/claim.js, and the floating P1/P2 name tags use
+// the marker layers from modules/splitMarkers.js (each camera sees only the
+// OTHER player's tag).
+const SPLIT_P1_COLOR = '#ff4444';
+const SPLIT_P2_COLOR = '#3b6bb5';
+let splitActive = false;            // two viewports are rendering right now
+let splitTouch = false;             // the split is two players on one touchscreen
+let claimActive = false;            // the pairing screen is up
+let claimPhase = 'claim';           // 'claim' (pairing) or 'pick' (choosing rides)
+let claimState = makeClaimState();  // who has claimed what, so far
+const pads = [];                    // per-index flattened gamepads; pads[i] is only ever set for connected pads
+const emptyPad = { steer: 0, throttle: 0, reverse: 0, boost: false };
+let pickKinds = ['classic', 'city']; // each player's chosen ride (car kind id)
+let pickReady = [false, false];      // each player has locked their pick in
+let pickWasPaused = false;           // game pause state before the pick screen froze it
+const pickPadPrev = [];              // per-pad button edge state during the pick screen
+const pickPadSteer = [];             // per-pad last steer sign (edge-cycles on push)
+let car2 = null;                    // Player 2's car, built on beginSplit
+let camB = null;                    // Player 2's camera, built on beginSplit
+let _sp2Dir = null;                 // scratch vector (stepTwoPlayer)
+let _camTwTarget = null, _camTwFwd = null, _camTwLook = null, _camTwDesired = null; // scratch for followCameraTwo
+
+// Flatten one raw Gamepad snapshot into the object readInput expects. Mirrors
+// the single-player flattening in pollGamepad (stick up = go, triggers, D-pad;
+// padAxis applies the deadzone). Called once per connected pad per frame.
+function flattenGamepad(g) {
+  const ax = (i) => (g.axes && g.axes[i] !== undefined ? g.axes[i] : 0);
+  const btn = (i) => !!(g.buttons && g.buttons[i] && g.buttons[i].pressed);
+  const stickY = ax(1);
+  let throttle = Math.max(0, -padAxis(stickY));
+  let reverse = Math.max(0, padAxis(stickY));
+  const rt = g.buttons[7] && g.buttons[7].value > 0.08 ? g.buttons[7].value : 0;
+  const lt = g.buttons[6] && g.buttons[6].value > 0.08 ? g.buttons[6].value : 0;
+  if (rt > throttle) throttle = rt;
+  if (lt > reverse) reverse = lt;
+  if (btn(12)) throttle = 1;
+  if (btn(13)) reverse = 1;
+  let steer = padAxis(ax(0));
+  if (!steer) { if (btn(14)) steer = -1; else if (btn(15)) steer = 1; }
+  return { connected: true, id: g.id || 'Controller', throttle, reverse, steer, boost: btn(2) };
+}
+
+// The scene the active world renders into — P2's car is reparented here
+// whenever a portal changes world so it never vanishes with its old scene.
+function activeWorldScene() {
+  return worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene;
+}
+
+// ===== The pairing screen (claim) =====
+let claimErrText = '';
+function claimEls() {
+  const els = {};
+  els.box = document.getElementById('claim-screen');
+  els.p1 = document.getElementById('claim-p1');
+  els.p2 = document.getElementById('claim-p2');
+  els.err = document.getElementById('claim-err');
+  return els;
+}
+function flashClaimErr(msg) {
+  claimErrText = msg;
+  const els = claimEls();
+  if (els.err) els.err.textContent = msg;
+}
+function updateClaimOverlay() {
+  const els = claimEls();
+  for (let i = 0; i < 2; i++) {
+    const c = claimState.claims[i];
+    const slot = i === 0 ? els.p1 : els.p2;
+    if (!slot) continue;
+    const st = slot.querySelector('.claim-pstate');
+    if (c) {
+      slot.classList.remove('waiting');
+      slot.classList.add('done');
+      if (st) st.textContent = c.device === 'kb-wasd' ? 'WASD taken.'
+        : c.device === 'kb-arrows' ? 'Arrow keys taken.'
+          : 'Controller ' + c.padIndex + ' taken.';
+    } else {
+      slot.classList.add('waiting');
+      slot.classList.remove('done');
+      if (st) st.textContent = i === 0
+        ? 'Press W, A, S, D or a controller button\u2026'
+        : 'Press an arrow key or a different controller\u2026';
+    }
+  }
+}
+// Feed one claimed input (a keyboard event.code or a padIndex) through the pure
+// claim rules. A success advances the pairing; two successes end it.
+function claimFromInput(input) {
+  const r = tryClaim(claimState, input);
+  if (r.ok) {
+    claimState = r.state;
+    flashClaimErr('');
+    updateClaimOverlay();
+    // Both inputs claimed: move to the car-pick step rather than starting
+    // straight away — each player must choose their ride first.
+    if (claimState.claims.length >= MAX_PLAYERS) enterPickPhase();
+  } else if (r.reason === 'duplicate') {
+    flashClaimErr('That input already belongs to the other player\u2014pick the other half or plug in a second controller.');
+  }
+}
+// From the Multiplayer tab → "Two players": close the settings modal so the
+// keyboard halves and every pad's buttons are live for pairing, then drop the
+// claim screen over the single viewport.
+function startClaimFlow() {
+  exitSelectMode(false);
+  splitTouch = false;
+  claimActive = true;
+  claimPhase = 'claim';
+  claimState = makeClaimState();
+  claimErrText = '';
+  flashClaimErr('');
+  padClaimPrev.length = 0;
+  pickPadPrev.length = 0;
+  pickPadSteer.length = 0;
+  updateClaimOverlay();
+  document.body.classList.remove('pick-active');
+  document.body.classList.add('claim-active');
+}
+// From the Multiplayer tab → "Two on this screen": two players sharing one
+// touch device. There is no controller to claim, so jump straight to the
+// two-sided car picker with both players pre-assigned to an on-screen joystick
+// (P1 left, P2 right) and lock in with the on-screen buttons.
+function startTouchSplit() {
+  exitSelectMode(false);
+  splitTouch = true;
+  // Two synthetic 'touch' claims so the picker hints, the lock-in flow and
+  // beginSplit (which reads claimStatePlayers) all work unchanged.
+  claimState = { claims: [{ device: 'touch' }, { device: 'touch' }], players: [] };
+  claimState.players = claimStatePlayers(claimState);
+  claimErrText = '';
+  flashClaimErr('');
+  padClaimPrev.length = 0;
+  document.body.classList.remove('claim-active');
+  enterPickPhase();
+}
+// Esc / pad B / the Back button cancels pairing and returns to the settings
+// Multiplayer tab.
+function cancelClaimFlow() {
+  claimActive = false;
+  claimPhase = 'claim';
+  claimState = makeClaimState();
+  splitTouch = false;
+  flashClaimErr('');
+  clearPickStage();
+  // Undo the pick screen's freeze so the settings modal remembers the real
+  // pre-pick pause state (enterSelectMode captures selectWasPaused from it).
+  setPaused(pickWasPaused);
+  document.body.classList.remove('claim-active', 'pick-active');
+  enterSelectMode();
+}
+
+// ===== The car-pick step (both players choose their ride) =====
+// Once both inputs are claimed the pairing becomes a two-sided car picker:
+// Player 1's column on the left, Player 2's on the right. Each player cycles
+// the roster with their own claimed controls and locks in; when BOTH have
+// locked in, the split begins with those two cars.
+function enterPickPhase() {
+  claimPhase = 'pick';
+  claimActive = true;   // the picker still owns all input
+  document.body.classList.remove('claim-active');
+  document.body.classList.add('pick-active');
+  // Default each player to their current ride (P1) and a distinct starter (P2).
+  pickKinds[0] = playerCarKind;
+  pickKinds[1] = 'city';
+  pickReady[0] = false;
+  pickReady[1] = false;
+  pickPadPrev.length = 0;
+  pickPadSteer.length = 0;
+  // Stand both chosen cars up on the side-by-side stage and start its clock so
+  // the very first rendered pick frame has no spin jump.
+  pickLastNow = performance.now();
+  refreshPickPreview(0, pickKinds[0]);
+  refreshPickPreview(1, pickKinds[1]);
+  // Freeze the world while picking; the isPaused branch in animate() draws the
+  // pick stage. Remember the prior state so Cancel and the settings modal can
+  // restore it.
+  pickWasPaused = isPaused;
+  setPaused(true);
+  updatePickOverlay();
+}
+function cyclePick(pi, dir) {
+  if (pickReady[pi]) return;   // locked in — the choice is committed
+  const i = CAR_KINDS.findIndex((k) => k.id === pickKinds[pi]);
+  pickKinds[pi] = CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id;
+  refreshPickPreview(pi, pickKinds[pi]);
+  updatePickOverlay();
+}
+function confirmPick(pi) {
+  if (pickReady[pi]) return;
+  pickReady[pi] = true;
+  updatePickOverlay();
+  if (pickReady[0] && pickReady[1]) {
+    claimActive = false;
+    document.body.classList.remove('pick-active');
+    beginSplit();
+  }
+}
+// The hint line under a player's picker, keyed to the controls they claimed.
+function pickHintFor(pi) {
+  // Touch split: nobody has a claimed key, so the hint is about the on-screen
+  // arrows and the Lock In button under each column.
+  if (splitTouch) return 'Tap \u25c0 \u25b6 to choose \u00b7 Lock In when ready';
+  const c = claimState.claims[pi];
+  const dev = c ? c.device : (pi === 0 ? 'kb-wasd' : 'kb-arrows');
+  if (dev === 'kb-wasd') return 'A / D to change \u00b7 W to lock in';
+  if (dev === 'kb-arrows') return '\u2190 / \u2192 to change \u00b7 \u2191 to lock in';
+  return 'Stick \u2194 to change \u00b7 A to lock in';
+}
+function updatePickOverlay() {
+  for (let i = 0; i < 2; i++) {
+    const nameEl = document.getElementById(i === 0 ? 'pick-p1-name' : 'pick-p2-name');
+    const col = document.getElementById(i === 0 ? 'pick-p1' : 'pick-p2');
+    const stateEl = document.getElementById(i === 0 ? 'pick-p1-state' : 'pick-p2-state');
+    const entry = CAR_KINDS.find((k) => k.id === pickKinds[i]) || CAR_KINDS[0];
+    if (nameEl) nameEl.textContent = entry.label;
+    if (col) col.classList.toggle('ready', !!pickReady[i]);
+    if (stateEl) stateEl.textContent = pickReady[i]
+      ? 'Locked in \u2014 waiting for the other player\u2026'
+      : pickHintFor(i);
+  }
+}
+// Which player's picker owns a keyboard code, and what the key does. Follows
+// the CLAIMED half (a player who took the arrows uses the arrows to pick).
+function pickPlayerForCode(code) {
+  for (let i = 0; i < 2; i++) {
+    const c = claimState.claims[i];
+    if (!c) continue;
+    if (c.device === 'kb-wasd') {
+      if (code === 'KeyA') return { i, action: 'left' };
+      if (code === 'KeyD') return { i, action: 'right' };
+      if (code === 'KeyW') return { i, action: 'confirm' };
+    } else if (c.device === 'kb-arrows') {
+      if (code === 'ArrowLeft') return { i, action: 'left' };
+      if (code === 'ArrowRight') return { i, action: 'right' };
+      if (code === 'ArrowUp') return { i, action: 'confirm' };
+    }
+  }
+  return null;
+}
+function handlePickKey(event) {
+  if (event.repeat) return;   // a held key must not spin the roster
+  if (event.code === 'Escape') { cancelClaimFlow(); return; }
+  const hit = pickPlayerForCode(event.code);
+  if (!hit) return;
+  if (hit.action === 'left') cyclePick(hit.i, -1);
+  else if (hit.action === 'right') cyclePick(hit.i, 1);
+  else confirmPick(hit.i);
+}
+
+// ===== Starting / ending the split =====
+function removePlayerTag(p) {
+  if (p && p.marker) {
+    const parent = p.marker.parent;
+    if (parent) parent.remove(p.marker);
+    p.marker = null;
+  }
+}
+// A floating name tag over a car. Each split viewport draws ONLY the OTHER
+// player's tag (see the split render loop) so you get a bubble over the rival's
+// car, never over your own hat. The sprite stays on the default layer so nothing
+// else hides it, and is drawn at 4x supersample with anisotropic filtering so it
+// reads crisp instead of blocky when the cars are close.
+function makePlayerTag(parent, label, color) {
+  const SS = 4;
+  const cv = document.createElement('canvas');
+  cv.width = 80 * SS;
+  cv.height = 30 * SS;
+  const g = cv.getContext('2d');
+  g.scale(SS, SS);
+  g.fillStyle = 'rgba(6, 14, 26, 0.82)';
+  g.strokeStyle = color;
+  g.lineWidth = 2;
+  g.beginPath();
+  const r = 10;
+  g.moveTo(r, 1);
+  g.lineTo(79 - r, 1);
+  g.quadraticCurveTo(79, 1, 79, r);
+  g.lineTo(79, 29 - r);
+  g.quadraticCurveTo(79, 29, 79 - r, 29);
+  g.lineTo(r, 29);
+  g.quadraticCurveTo(1, 29, 1, 29 - r);
+  g.lineTo(1, r);
+  g.quadraticCurveTo(1, 1, r, 1);
+  g.closePath();
+  g.fill();
+  g.stroke();
+  g.fillStyle = color;
+  g.font = 'bold 19px Arial';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText(label, 40, 16);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sprite.scale.set(2.8, 1.05, 1);
+  sprite.position.set(0.25, 3.1, 0);
+  sprite.renderOrder = 10;
+  parent.add(sprite);
+  return sprite;
+}
+
+function beginSplit() {
+  claimActive = false;
+  claimPhase = 'claim';
+  // Leave the side-by-side picker stage behind and unfreeze the world; setPaused
+  // discards the wall-clock time that built up while the picker held the world
+  // still, so the first split frame ticks normal physics instead of jumping.
+  clearPickStage();
+  setPaused(false);
+  // Never leave a picker layer behind: split must take over the WHOLE screen.
+  // exitSelectMode early-returns when the settings modal is already closed, so
+  // its body-class teardown is repeated here (defensively) or a claim/pick
+  // overlay could stay stuck over the running game.
+  document.body.classList.remove('select-mode', 'tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open', 'claim-active', 'pick-active');
+  // Exit settings modal so the split view takes over the whole screen.
+  exitSelectMode(false);
+  const devs = claimStatePlayers(claimState);
+  // Re-point Player 1's input at what they claimed (a keyboard half, or their
+  // own controller rather than the shared first pad)...
+  players[0].device = devs[0].device;
+  players[0].padIndex = devs[0].padIndex;
+  // Dress Player 1 in the ride they picked. Must run BEFORE their name tag is
+  // attached below (swapPlayerCar rebuilds the car's children).
+  if (pickKinds[0] && pickKinds[0] !== playerCarKind) swapPlayerCar(pickKinds[0]);
+  // ...and stand up Player 2 with a fresh car beside Player 1, facing the same
+  // way, so nobody drops on top of anybody.
+  players[1] = makePlayer(1, { device: devs[1].device, padIndex: devs[1].padIndex });
+  const p2 = players[1];
+  car2 = createCar(0x2a5ca8);
+  const s = players[0].car.position;
+  car2.position.set(s.x + 4, Math.max(groundHeight, s.y), s.z + 4);
+  car2.rotation.copy(players[0].car.rotation);
+  activeWorldScene().add(car2);
+  p2.car = car2;
+  p2.velocity = { value: 0 };
+  p2.steering = { value: 0 };
+  p2.kind = pickKinds[1] || 'classic';
+  // Build the twin's chosen body now, before its name tag is added below.
+  applyPlayerTwoCar(pickKinds[1] || 'classic');
+  flatCar2State = createFlatCarState(false);   // fresh twin is never pre-flattened
+  p2.cam.orbit.radius = cameraOrbit.radius;
+  p2.cam.orbit.phi = cameraOrbit.phi;
+  p2.cam.orbit.minPhi = cameraOrbit.minPhi;
+  p2.cam.orbit.maxPhi = cameraOrbit.maxPhi;
+  p2.cam.yaw = cameraYawOffset;
+  p2.spawn = car2.position.clone();
+
+  // P2's chase camera. The aspect is the halved width (left/right split) and
+  // the vertical FOV is bumped (SPLIT_FOV) so the horizontal view stays close
+  // to the single-player shot.
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  camB = new THREE.PerspectiveCamera(SPLIT_FOV, (w / 2) / h, camera.near, camera.far);
+  camera.aspect = (w / 2) / h;
+  camera.updateProjectionMatrix();
+  // Floating name tags: each viewport draws only the OTHER player's tag, toggled
+  // in the split render loop. P1's tag on P1's car, P2's on P2's car.
+  players[0].marker = makePlayerTag(car, 'P1', SPLIT_P1_COLOR);
+  players[1].marker = makePlayerTag(car2, 'P2', SPLIT_P2_COLOR);
+
+  splitActive = true;
+  document.body.classList.add('split-on');
+  // Touch split: show the two on-screen joysticks, one per player.
+  if (splitTouch) document.body.classList.add('split-touch');
+}
+
+function endSplit() {
+  if (!splitActive) return;
+  splitActive = false;
+  splitTouch = false;
+  if (car2) {
+    const parent = car2.parent;
+    if (parent) parent.remove(car2);
+  }
+  removePlayerTag(players[1]);
+  removePlayerTag(players[0]);
+  players[1] = null;
+  car2 = null;
+  camB = null;
+  flatCar2State = createFlatCarState(false);
+  // Back to the single-player shared keyboard+pad scheme.
+  players[0].device = 'kb-both';
+  players[0].padIndex = 0;
+  // Drop any joystick input so a player isn't still holding a stick.
+  joy.active = false; joy.x = 0; joy.y = 0;
+  joy2.active = false; joy2.x = 0; joy2.y = 0;
+  if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
+  if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
+  // beginSplit halved the main camera's aspect for the left viewport; give the
+  // full-width single-player view its aspect back or the picture stays squashed.
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  // The split loop leaves the renderer's viewport on the last half; put it back
+  // on the whole canvas right away so the very next frame (picker / showroom /
+  // single-player) is not drawn into one side. Drop the pick stage too, so a
+  // fresh session rebuilds it from scratch.
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+  renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+  clearPickStage();
+  document.body.classList.remove('split-on', 'split-touch');
+}
+
+// Leaving a live split via the on-screen Exit button (or Esc) collapses BOTH
+// sides and drops straight back to the Multiplayer settings tab, so the pair can
+// start a fresh session — or close the modal to return to single-player. (A bare
+// endSplit() left them in the running single-player game with no way back to the
+// session controls.)
+function exitSplitToSettings() {
+  if (!splitActive) return;
+  endSplit();
+  enterSelectMode();
+  setPickerTab('multiplayer');
+}
+
+// ===== Bring the twin along through a world change =====
+// Every world transition teleports Player 1 to a fresh spawn. Without this the
+// twin would simply be reparented into the new scene and left at its old
+// coordinates — stranded across the map (or floating) the moment the world
+// swaps. Call this at the end of each transition so P2 lands beside P1, on the
+// same heading, with its knock/jump cleared. No-op in single-player.
+function placePlayerTwoNearP1() {
+  if (!splitActive || !players[1] || !car2) return;
+  const p2 = players[1];
+  const sc = activeWorldScene();
+  if (car2.parent !== sc) {
+    if (car2.parent) car2.parent.remove(car2);
+    sc.add(car2);
+  }
+  // Forward and the right-hand perpendicular of P1's new heading, so P2 sits
+  // a few units to the side rather than on top of P1.
+  const fx = -Math.cos(car.rotation.y), fz = Math.sin(car.rotation.y);
+  const rx = -fz, rz = fx;
+  car2.position.set(
+    car.position.x + rx * 4,
+    car.position.y,
+    car.position.z + rz * 4
+  );
+  car2.rotation.copy(car.rotation);
+  car2.scale.set(1, 1, 1);
+  flatCar2State = createFlatCarState(false);   // a world change un-pancakes the twin
+  p2.velocity.value = 0;
+  p2.steering.value = 0;
+  p2.knock = null;
+  // Mirror P1's airborne state so a mid-air spawn (e.g. the vortex drop) drops
+  // them together instead of P2 snapping to the ground alone.
+  p2.jump = { inAir: !!jumpState.inAir, yVelocity: jumpState.yVelocity || 0 };
+  p2.wasOnRamp2 = false;
+  p2.spawn = car2.position.clone();
+}
+
+// ===== Player 2's physics =====
+// The single-player block above is ~940 lines and stays P1-only. This is a
+// condensed, isolated twin of its core: readInput -> accel/steer -> move with
+// wall/normal rejection -> world-aware ground height -> wheel spin. It
+// deliberately skips the cinematics, the robot/attractions, hazards, knock and
+// the anti-stuck pass: v1 splits the world between two players but keeps each
+// player's step in its own sandbox, so nothing here can regress the
+// single-player block. `p2Jump` is always false in v1 (P2 never launches and
+// never rides ramps' areal maths) - the "airborne rides over things" rule is
+// therefore reduced to roof-riding via buildingTopAt, exactly like P1's.
+function stepTwoPlayer(p, dt) {
+  if (!p || !p.car) return;
+  const carTwo = p.car;
+  // P2 riding the hilltop portal: freeze the twin. The levitation block owns its
+  // Y (and X/Z centering) at the end of the frame; running steering/ground-snap
+  // here would drag it back to the terrain. Mirrors P1's own frozen state.
+  if (splitActive && buildingLevitate.levitating && (buildingLevitate.rider || 0) === 1) {
+    p.velocity.value *= 0.9;
+    p.steering.value *= 0.8;
+    carTwo.rotation.z *= 0.5;
+    carTwo.rotation.x *= 0.5;
+    return;
+  }
+  // A gull carrying THIS car owns its transform (applied in the beach block),
+  // so don't fight it here. P1's equivalent is `gullHasTheCar()` gating its
+  // physics; this is the P2 twin of that.
+  if (beachWorld && beachWorld.carryIndex === 1) {
+    p.velocity.value = 0;
+    p.steering.value = 0;
+    if (p.jump) { p.jump.inAir = false; p.jump.yVelocity = 0; }
+    carTwo.rotation.z *= 0.5;
+    carTwo.rotation.x *= 0.5;
+    return;
+  }
+  const accel2 = 10 * dt;
+  const turnRate2 = 1.7 * dt;
+  // A touch player reads the SECOND on-screen stick (bottom-right) and no
+  // keyboard/pad; everyone else reads their claimed pad with the shared stick
+  // folded in, exactly as before.
+  const touch2 = p.device === 'touch';
+  const inp = readInput(p, {
+    keys,
+    pad: touch2 ? emptyPad : (pads[p.padIndex] || emptyPad),
+    joy: touch2 ? joy2 : joy,
+  });
+  p.input = inp;
+  const forward = inp.forward;
+  const reverse = inp.reverse;
+  const boost = inp.boost ? 2 : 1;
+
+  if (forward > 0) {
+    p.velocity.value = Math.min(p.velocity.value + accel2 * 2.2 * forward * boost, 14 * boost);
+  } else if (reverse > 0) {
+    p.velocity.value = Math.max(p.velocity.value - accel2 * 1.5 * reverse * boost, -7 * boost);
+  } else {
+    p.velocity.value *= 0.92;
+  }
+
+  if (inp.joyActive) {
+    p.steering.value += (-inp.joyX * 0.9 - p.steering.value) * Math.min(1, 12 * dt);
+  } else if (inp.steerPad) {
+    p.steering.value += (-inp.steerPad * 0.9 - p.steering.value) * Math.min(1, 12 * dt);
+  } else {
+    if (inp.wantLeft) p.steering.value = Math.min(p.steering.value + turnRate2 * 1.2, 0.9);
+    else if (inp.wantRight) p.steering.value = Math.max(p.steering.value - turnRate2 * 1.2, -0.9);
+    else p.steering.value *= 0.8;
+  }
+
+  const reverseFlip = p.velocity.value < -0.5 ? -1 : 1;
+  carTwo.rotation.y += p.steering.value * dt * 2.3 * reverseFlip;
+
+  if (!_sp2Dir) _sp2Dir = new THREE.Vector3();
+  _sp2Dir.set(-1, 0, 0).applyQuaternion(carTwo.quaternion);
+  _sp2Dir.y = 0;
+  _sp2Dir.normalize();
+  const nextX = carTwo.position.x + _sp2Dir.x * p.velocity.value * dt;
+  const nextZ = carTwo.position.z + _sp2Dir.z * p.velocity.value * dt;
+
+  // Movement with wall rejection — the same rule as P1: the ramp world is wide
+  // open, roof-riding carries the car over solids, otherwise the shared solids
+  // block. The high-level tests are P1's own, so both cars respect the same
+  // streets, walls and props.
+  const p2elevated = worldState === 'house'
+    ? false
+    : (buildingTopAt(nextX, nextZ) > 0 && carTwo.position.y > 0.5);
+  const p2CanMove =
+    worldState === 'ramp' ||
+    p2elevated ||
+    (!isPositionBlocked(nextX, nextZ, playerCarRadius, true) &&
+      !isPositionBlockedByFiretruck(nextX, nextZ, playerCarRadius) &&
+      !isPositionBlockedByRobot(nextX, nextZ, playerCarRadius) &&
+      !isPositionBlockedByCat(nextX, nextZ, playerCarRadius));
+  if (p2CanMove) {
+    carTwo.position.x = nextX;
+    carTwo.position.z = nextZ;
+  } else {
+    const mvX = _sp2Dir.x * p.velocity.value * dt;
+    const mvZ = _sp2Dir.z * p.velocity.value * dt;
+    const n2 = wallNormal(carTwo.position.x, carTwo.position.z, playerSolids(), playerCarRadius + 0.06);
+    if (n2) {
+      const into = mvX * n2.nx + mvZ * n2.nz;
+      if (into < 0) {
+        const slideX = carTwo.position.x + (mvX - n2.nx * into);
+        const slideZ = carTwo.position.z + (mvZ - n2.nz * into);
+        if (!isPositionBlocked(slideX, slideZ, playerCarRadius, true)) {
+          carTwo.position.x = slideX;
+          carTwo.position.z = slideZ;
+        }
+      }
+      p.velocity.value *= 0.97;
+      // Dead-on press: deflect the nose AWAY from the wall so P2 can never pin
+      // itself in place the way the old reverse-velocity code used to wedge P1.
+      if (forward > 0.05) {
+        const yaw = 0.5;
+        const h = carTwo.rotation.y;
+        const away = (s) => -Math.cos(h + s * yaw) * n2.nx + Math.sin(h + s * yaw) * n2.nz;
+        if (away(1) >= away(-1)) carTwo.rotation.y += yaw;
+        else carTwo.rotation.y -= yaw;
+      }
+    } else {
+      p.velocity.value *= 0.9;
+    }
+  }
+
+  // Tier-3 knock impulse (hammer / boulder / wheel): slide the twin in world
+  // space and spin it, decaying each frame exactly like P1's playerKnock.
+  if (p.knock) {
+    const k = p.knock;
+    carTwo.position.x += k.vx * dt;
+    carTwo.position.z += k.vz * dt;
+    carTwo.rotation.y += k.w * dt;
+    k.vx *= KNOCK_DECAY;
+    k.vz *= KNOCK_DECAY;
+    k.w *= KNOCK_DECAY;
+    k.t -= dt;
+    if (k.t <= 0) p.knock = null;
+  }
+
+  // Ground height by world. These reuse the levels' own height queries so the
+  // twin car sits on the same terrain P1 does.
+  let groundY2 = groundHeight;
+  let onRamp2 = false;
+  let rampDef2 = null;   // the ramp P2 is riding now, for body tilt
+  if (worldState === 'ramp') {
+    const r2 = rampRampInfoAt(carTwo.position.x, carTwo.position.z);
+    if (r2 && r2.s > 0.02 && r2.s < 0.98) {
+      groundY2 = groundHeight + r2.height * r2.s;
+      onRamp2 = true;
+      rampDef2 = r2;
+    } else {
+      groundY2 = Math.max(groundHeight + terrainHeightAt(carTwo.position.x, carTwo.position.z), rampRampSurfaceY(carTwo.position.x, carTwo.position.z));
+    }
+  } else if (worldState === 'beach') {
+    groundY2 = groundHeight + beachGroundOffsetAt(carTwo.position.x, carTwo.position.z);
+  } else if (worldState === 'underground') {
+    // The course floor is flat, but Player 2 must still ride the obstacle-course
+    // ramps (the candy waterfall / grand ramp among them), the staircase, the
+    // elevator/rooftop surfaces and the mountain road — the same queries P1 uses.
+    groundY2 = groundHeight;
+    const ride2 = ugRampRideAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
+    if (ride2) {
+      groundY2 = Math.max(groundY2, ride2.baseY + ride2.height * ride2.s);
+      onRamp2 = true;
+      rampDef2 = ride2;
+    }
+    groundY2 = Math.max(groundY2, ugElevatorTopAt(carTwo.position.x, carTwo.position.z, carTwo.position.y));
+    groundY2 = Math.max(groundY2, buildingTopAt(carTwo.position.x, carTwo.position.z));
+    if (undergroundWorld.stairHeightAt) {
+      const sh = undergroundWorld.stairHeightAt(carTwo.position.x, carTwo.position.z);
+      if (Number.isFinite(sh)) groundY2 = Math.max(groundY2, sh);
+    }
+  } else if (worldState === 'house') {
+    // The house has its own walk-based heightfield for the main car; Player 2
+    // rides the flat floor in v1. The walls still block (above), so the twin
+    // stays inside the shell.
+    groundY2 = groundHeight;
+  } else {
+    // City: flat ground, but the city launch ramps lift P2 just like P1.
+    const cityRamp = rampInfoAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
+    if (cityRamp) {
+      groundY2 = groundHeight + cityRamp.height * cityRamp.s;
+      onRamp2 = true;
+      rampDef2 = cityRamp;
+    } else {
+      groundY2 = Math.max(groundHeight, cityGroundHeightAt(carTwo.position.x, carTwo.position.z));
+    }
+  }
+
+  // Airborne physics (P2's own): a trebuchet sling or driving off a ramp crest
+  // sends the twin into a ballistic arc; gravity brings it back down. P2 never
+  // sat on a ramp last frame and flies off one now, that launches them.
+  const j2 = p.jump || (p.jump = { inAir: false, yVelocity: 0 });
+  const rampLaunchWorld = worldState === 'ramp' || worldState === 'underground' || worldState === 'city';
+  if (!j2.inAir && p.wasOnRamp2 && !onRamp2 && rampLaunchWorld && p.velocity.value > 4) {
+    j2.inAir = true;
+    j2.yVelocity = 5 + p.velocity.value * 0.4;
+  }
+  p.wasOnRamp2 = onRamp2;
+  if (j2.inAir) {
+    j2.yVelocity -= 26 * dt;
+    carTwo.position.y += j2.yVelocity * dt;
+    if (carTwo.position.y <= groundY2) {
+      carTwo.position.y = groundY2;
+      j2.inAir = false;
+      j2.yVelocity = 0;
+      carTwo.rotation.z *= 0.5;
+    }
+  } else {
+    carTwo.position.y = groundY2;
+  }
+
+  // Torus wrap, same rule as P1's block: everything except the enclosed
+  // underground cavern and the boxed house wraps across the seam.
+  if (worldState !== 'underground' && worldState !== 'house') {
+    if (carTwo.position.x > worldXHi || carTwo.position.x < worldXLo) {
+      carTwo.position.x = wrapCoordX(carTwo.position.x);
+    }
+    if (carTwo.position.z > worldZHi) carTwo.position.z = wrapCoordZ(carTwo.position.z);
+    else if (carTwo.position.z < worldZLo) carTwo.position.z = wrapCoordZ(carTwo.position.z);
+  }
+
+  // Keep the twin in whatever world is currently active (portals reparent P1).
+  const sc2 = activeWorldScene();
+  if (carTwo.parent !== sc2) {
+    if (carTwo.parent) carTwo.parent.remove(carTwo);
+    sc2.add(carTwo);
+  }
+
+  // Body attitude, the same read P1 gets: on a ramp the car pitches along the
+  // slope (nose up climbing, nose down descending) so all four tires sit on the
+  // slanted ground; otherwise the usual steering roll + acceleration lean. This
+  // is what makes P2 lean into the candy waterfall and every city/ramp/course
+  // launch just like Player 1.
+  if (rampDef2) {
+    const slopeAngle = Math.atan2(rampDef2.height, rampDef2.len);
+    const alongRun = _sp2Dir.x * rampDef2.runX + _sp2Dir.z * rampDef2.runZ;
+    const rampPitch = -slopeAngle * Math.sign(alongRun);
+    carTwo.rotation.z += (rampPitch - carTwo.rotation.z) * 0.28;
+    carTwo.rotation.x += (0 - carTwo.rotation.x) * 0.12;
+  } else if (!j2.inAir) {
+    const roll2 = -p.steering.value * 0.1;
+    const accelPitch2 = THREE.MathUtils.clamp(p.velocity.value, -7, 14) * -0.004;
+    carTwo.rotation.z += (roll2 - carTwo.rotation.z) * 0.12;
+    carTwo.rotation.x += (accelPitch2 - carTwo.rotation.x) * 0.12;
+  }
+
+  // Wheel spin + front-wheel steering.
+  const spin2 = p.velocity.value * dt * 2.6;
+  if (carTwo.userData.wheels) for (const w of carTwo.userData.wheels) w.rotation.y += spin2;
+  const pivs2 = carTwo.userData.wheelPivots;
+  if (pivs2) for (let i = 0; i < Math.min(2, pivs2.length); i++) pivs2[i].rotation.y = p.steering.value * 0.55;
+}
+
+// ===== Player 2's chase camera =====
+// A condensed twin of updateCamera's core chase shot: target the car, offset
+// behind it by the same spherical (radius, phi, yaw) maths, damp the same way.
+// No top-down, no cinematics, no holes/trains/flight — v1 keeps the twin shot
+// simple, and gfx.far is applied so the draw distance matches the primary.
+function followCameraTwo(p, dt) {
+  if (!camB || !p || !p.car) return;
+  const pcar = p.car;
+  const c = p.cam;
+  if (!_camTwTarget) { _camTwTarget = new THREE.Vector3(); _camTwFwd = new THREE.Vector3(); _camTwLook = new THREE.Vector3(); _camTwDesired = new THREE.Vector3(); }
+  if (!c.offset) {
+    // First frame: park the camera directly on the chase offset so there is no
+    // slide-in from the origin.
+    c.offset = new THREE.Vector3(0, 0, 0);
+    _camTwDesired.set(
+      c.orbit.radius * Math.sin(c.orbit.phi) * Math.cos(c.yaw),
+      c.orbit.radius * Math.cos(c.orbit.phi) + 2.2,
+      c.orbit.radius * Math.sin(c.orbit.phi) * Math.sin(c.yaw));
+    c.offset.copy(_camTwDesired);
+  }
+  const target = c.target || (c.target = new THREE.Vector3());
+  target.copy(pcar.position);
+  target.y = Math.max(0.8, pcar.position.y);
+
+  _camTwFwd.set(-1, 0, 0).applyQuaternion(pcar.quaternion);
+  _camTwFwd.y = 0;
+  _camTwFwd.normalize();
+  const heading = Math.atan2(-_camTwFwd.z, -_camTwFwd.x);
+  const theta = heading + c.yaw;
+
+  _camTwDesired.set(
+    c.orbit.radius * Math.sin(c.orbit.phi) * Math.cos(theta),
+    c.orbit.radius * Math.cos(c.orbit.phi) + 2.2,
+    c.orbit.radius * Math.sin(c.orbit.phi) * Math.sin(theta));
+  const damp = THREE.MathUtils.clamp(dt * 8, 0, 1);
+  c.offset.lerp(_camTwDesired, damp);
+
+  camB.position.copy(target).add(c.offset);
+  if (camB.far !== gfx.far) {
+    camB.far = gfx.far;
+    camB.updateProjectionMatrix();
+  }
+  _camTwLook.copy(target).addScaledVector(_camTwFwd, THREE.MathUtils.clamp(p.velocity.value, 0, 14) * 0.12);
+  camB.lookAt(_camTwLook);
+}
+
+// Multiplayer status is no longer shown; kept empty to avoid dead code.
 let ugDbg = null;   // ?debug: which underground physics branch ran last frame
 // Player's previous-frame end position — feeds the vert-pop "outward travel"
 // gate. Captured at the end of each underground physics pass so the gate can
@@ -1449,6 +2219,7 @@ let housePrevX = 0, housePrevZ = 0, houseWasGrounded = false;
 const gravity = 18;
 const groundHeight = 0.15;
 let flatCarState = createFlatCarState(false);
+let flatCar2State = createFlatCarState(false);   // Player 2's pancake state (split-screen only)
 // 2026-09-23 factory-floor attraction states.
 let taffyState = createTaffyState();          // car-squash noodle stretch (taffy pullers)
 let bubbleWobble = 0;                          // steering wobble while freshly popped
@@ -1495,10 +2266,18 @@ const buildingLevitate = {
   timer: 0,          // counts up from 0 once car enters the rings
   levitating: false,  // true once the 1.2s delay is over and the car rises
   levitateTime: 0,    // time since levitation started
+  rider: 0,           // which player stepped into the hall: 0 = P1, 1 = P2
   x: PORTAL_HILL.x, z: PORTAL_HILL.z,
   w: PORTAL_HILL.topRadius * 2, d: PORTAL_HILL.topRadius * 2,
   h: PORTAL_HILL.height + 8,
 };
+
+// True only while PLAYER 1 is the one riding the hilltop portal. In split-screen
+// P2 can be the rider instead, and P1 must keep full control — so every P1-only
+// "frozen while levitating" gate asks this, not `buildingLevitate.levitating`.
+function p1Levitating() {
+  return buildingLevitate.levitating && (buildingLevitate.rider || 0) === 0;
+}
 
 function cityGroundHeightAt(x, z) {
   // The beach is its own ground: a sand profile that falls away into the sea,
@@ -1574,7 +2353,7 @@ const MINE_CENTER_PULL = 3.0;
 // toward the tunnel axis instead of bouncing away from it).
 function isInMineApproach() {
   if (worldState !== 'city' || minePortal.active || jumpState.inAir ||
-      buildingLevitate.levitating) return false;
+      p1Levitating()) return false;
   const p = minePortal;
   return Math.sin(car.rotation.y) > 0.3 &&
     car.position.z > p.camZ && car.position.z < p.triggerZ + 4 &&
@@ -1836,6 +2615,29 @@ function updateFlatCarState(delta) {
   }
 }
 
+// Player 2's own pancake state, so the twin can be flattened by a heavy ride
+// (the other player's steamroller / monster truck) just like P1 can. Kept
+// separate from P1's so one being flat never scales the other.
+function flattenCar2FromRock() {
+  if (!car2) return;
+  if (playerTwoCarKind === 'robot') return;         // a giant mech can't be squashed
+  if (playerTwoCarKind === 'skateboarder') return;  // a person, not a car
+  if (playerTwoCarKind === 'crab') return;          // nor a crab
+  if (flatCar2State.phase === 'bounce') return;
+  flatCar2State.active = true;
+  flatCar2State.phase = 'flat';
+  flatCar2State.timer = 0;
+}
+
+function updateFlatCar2State(delta) {
+  if (!car2) return;
+  const speed = players[1] && players[1].velocity ? players[1].velocity.value : 0;
+  const isDriving = flatCar2State.active && flatCar2State.phase === 'flat' && Math.abs(speed) > 0.8;
+  flatCar2State = stepFlatCarState(flatCar2State, delta, isDriving);
+  const scaleY = flatCar2State.active ? getFlatCarScaleY(flatCar2State) : 1;
+  car2.scale.set(1, scaleY, 1);
+}
+
 // ===== Ramp world (the portal's destination — a bumpy twilight hillscape) =====
 // A SECOND scene so the city stays intact in memory: while we're in the ramp
 // world we stop rendering the city and switch the car over to this scene. On
@@ -1884,6 +2686,7 @@ const beachShell = beachWorld.shell;
 const beachShellPortal = {
   armed: false,
   fadeTimer: -1,
+  rider: 0,          // which player the valves are closing on: 0 = P1, 1 = P2
 };
 
 await __loaderYield(0.31, 'the ramp world hills');
@@ -3825,6 +4628,28 @@ function knockPlayerAway(nx, nz, power, spin, hop) {
   shake.intensity = Math.max(shake.intensity, 0.55);
 }
 
+// The twin of knockPlayerAway for Player 2: same random fan + decay, but the
+// impulse lives on the player record so P2's own step consumes it and P1's
+// knock state is never touched.
+function knockPlayerTwoAway(nx, nz, power, spin, hop) {
+  const p2 = players[1];
+  if (!p2 || !p2.car) return;
+  const px = -nz, pz = nx;
+  const j = (Math.random() - 0.5) * 0.5;
+  nx += px * j;
+  nz += pz * j;
+  const len = Math.hypot(nx, nz) || 1;
+  nx /= len; nz /= len;
+  p2.knock = makeKnock(p2.car, 2.15, 0.9, nx, nz, power, spin);
+  if (hop > KNOCK_AIRBORNE_HOP) {
+    p2.jump = p2.jump || { inAir: false, yVelocity: 0 };
+    p2.jump.inAir = true;
+    p2.jump.yVelocity = hop;
+  }
+  p2.velocity.value = Math.max(p2.velocity.value, 4);
+  shake.intensity = Math.max(shake.intensity, 0.55);
+}
+
 // ===== The cat's swat =====
 // Three deliberate changes from a plain knockPlayerAway call:
 //
@@ -4005,6 +4830,7 @@ function enterRampWorld() {
   car.position.set(sx, terrainHeightAt(sx, sz) + groundHeight, sz);
   car.rotation.set(0, Math.PI / 2, 0);
   shake.intensity = Math.max(shake.intensity, 0.5);
+  placePlayerTwoNearP1();
 }
 
 // City → Beach (the giant scallop in the park).
@@ -4049,6 +4875,7 @@ function enterBeachWorld() {
   shellPortal.armed = false;
   beachShellPortal.armed = false;
   beachShellPortal.fadeTimer = -1;
+  beachShellPortal.rider = 0;
   // Arrive on the sand, facing out to sea - the way out is straight ahead. The
   // shrink was cinematic-only, so the car is full size again the moment it lands.
   portalCarScale = 1;
@@ -4061,6 +4888,7 @@ function enterBeachWorld() {
   // left behind is ready for the trip back.
   clamShell.reopen();
   beachShell.reopen();
+  placePlayerTwoNearP1();
 }
 
 function returnToPark() {
@@ -4081,6 +4909,7 @@ function returnToPark() {
   housePortal.watch.active = false;
   beachShellPortal.armed = false;
   beachShellPortal.fadeTimer = -1;
+  beachShellPortal.rider = 0;
   shellPortal.armed = false;
   // Back down in the bowl you left from, which is exactly where the trip began.
   // Full size again - the shrink only ever belonged to the cut - and DRIVING
@@ -4094,6 +4923,7 @@ function returnToPark() {
   shellPortal.phase = 'exit';
   shellPortal.exitTimer = 0;
   beachShell.reopen();
+  placePlayerTwoNearP1();
 }
 
 // Global darkness is a CITY-only effect - the ramp, underground, house and
@@ -4149,6 +4979,7 @@ function enterCityWorld() {
   car.position.set(0, 40, 0);   // high above the town centre intersection
   car.rotation.set(0, -Math.PI / 2, 0);   // face -Z (south) — steer while falling
   shake.intensity = Math.max(shake.intensity, 0.5);
+  placePlayerTwoNearP1();
 }
 
 // City → Underground (mine shaft portal at -55,50). The world swap hides
@@ -4217,6 +5048,7 @@ function enterUndergroundWorld() {
     _fadeOverlay.style.transition = 'opacity 0.8s';
     _fadeOverlay.style.opacity = '0';
   }, 300);
+  placePlayerTwoNearP1();
 }
 
 // End of the arrival cinematic: drop the car out of the tunnel foot along
@@ -4347,11 +5179,11 @@ function startMineAscent() {
 // 'in' while the car is crossing into the house and 'out' on the way back, and
 // it exists to stop the two triggers fighting each other on the same frame.
 // (housePortal itself is declared up in "The house" section.)
-function houseGarageInCity() {
+function houseGarageInCity(pos = car.position) {
   const t = housePortal.trigger;
   if (!t) return false;
-  return car.position.x > t.x0 && car.position.x < t.x1
-    && car.position.z > t.z0 && car.position.z < t.z1;
+  return pos.x > t.x0 && pos.x < t.x1
+    && pos.z > t.z0 && pos.z < t.z1;
 }
 
 // Cut to black, swap worlds behind the black, then fade back in. The whole
@@ -4488,6 +5320,7 @@ function completeHouseSwap(toHouse) {
     _fadeOverlay.style.opacity = '0';
     housePortal.swapping = false;
   }, 190);
+  placePlayerTwoNearP1();
 }
 
 // Enter: the car is in the suburban garage box.
@@ -4557,12 +5390,14 @@ function updateHousePortal(delta) {
 
   // The trigger box is only meaningful in the city; the house has its own.
   if (worldState === 'city') {
-    if (!housePortal.side && houseGarageInCity()) enterHouseWorld();
-    else if (housePortal.side === 'out' && !houseGarageInCity()) housePortal.side = null;
+    const inGarage = houseGarageInCity()
+      || (splitActive && car2 && houseGarageInCity(car2.position));
+    if (!housePortal.side && inGarage) enterHouseWorld();
+    else if (housePortal.side === 'out' && !inGarage) housePortal.side = null;
   } else if (worldState === 'house') {
     const e = HOUSE_EXIT;
-    const inside = car.position.x > e.x0 && car.position.x < e.x1
-      && car.position.z > e.z0 && car.position.z < e.z1;
+    const inside = (car.position.x > e.x0 && car.position.x < e.x1 && car.position.z > e.z0 && car.position.z < e.z1)
+      || (splitActive && car2 && car2.position.x > e.x0 && car2.position.x < e.x1 && car2.position.z > e.z0 && car2.position.z < e.z1);
     if (!housePortal.side && inside) exitHouseWorld();
     else if (housePortal.side === 'in' && !inside) housePortal.side = null;
   }
@@ -4938,11 +5773,19 @@ function updateMineBlast(delta) {
 // ===== Minimap =====
 const minimap = document.getElementById('minimap');
 const mmCtx = minimap.getContext('2d');
+// Split-screen Player 2's map: the very same world is drawn into this second
+// 160x160 context, with the bright player arrow moved to car 2.
+const minimap2 = document.getElementById('minimap-p2');
+const mm2Ctx = minimap2 ? minimap2.getContext('2d') : null;
 const mmScale = 0.8;
 const mmCenter = 80;
 
-function drawMinimap() {
-  const ctx = mmCtx;
+// `mmCtxArg` lets the same routine paint Player 2's canvas too; `opts` picks
+// which car is the bright "self" arrow and which is the dimmed other player.
+// Omitting both reproduces the original single-player call exactly.
+function drawMinimap(mmCtxArg, opts) {
+  const ctx = mmCtxArg || mmCtx;
+  const mark = opts || { self: car, selfColor: '#ff4444' };
   ctx.clearRect(0, 0, 160, 160);
 
   // Ramp world backdrop: sandy terrain wash (drawn first so the debug grid
@@ -5310,21 +6153,26 @@ function drawMinimap() {
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     ctx.fillRect(px(-BEACH_HALF_W), pz(BEACH_SHORE_Z), BEACH_HALF_W * 2 * mmScale, 0.7);
   }
-  ctx.fillStyle = '#ff4444';   // player — elongated triangle pointing the way it's driving
-  ctx.save();
-  ctx.translate(mmCenter + car.position.x * mmScale, mmCenter + car.position.z * mmScale);
-  // The car's front faces -X (car.rotation.y=0 -> -X). The 180° rotation is a
-  // pure rotation (no mirroring), so the same nose angle that was correct in
-  // the original unrotated maths still points the triangle along the car's
-  // true screen motion after the rotate.
-  ctx.rotate(Math.atan2(Math.sin(car.rotation.y), -Math.cos(car.rotation.y)));
-  ctx.beginPath();
-  ctx.moveTo(5.5, 0);    // nose
-  ctx.lineTo(-3.5, 3);   // left rear
-  ctx.lineTo(-3.5, -3);  // right rear
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
+  // Player arrow(s). The arrow's front faces -X (car.rotation.y=0 -> -X). The
+  // 180° rotation is a pure rotation (no mirroring), so the same nose angle
+  // that was correct in the original unrotated maths still points the triangle
+  // along the car's true screen motion after the rotate. Split-screen draws
+  // the dimmed other player first, then this map's own bright arrow on top.
+  const drawPlayerArrow = (pc, pcolor) => {
+    ctx.fillStyle = pcolor;
+    ctx.save();
+    ctx.translate(mmCenter + pc.position.x * mmScale, mmCenter + pc.position.z * mmScale);
+    ctx.rotate(Math.atan2(Math.sin(pc.rotation.y), -Math.cos(pc.rotation.y)));
+    ctx.beginPath();
+    ctx.moveTo(5.5, 0);    // nose
+    ctx.lineTo(-3.5, 3);   // left rear
+    ctx.lineTo(-3.5, -3);  // right rear
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  };
+  if (mark.other) drawPlayerArrow(mark.other, mark.otherColor || '#7f8fa6');
+  drawPlayerArrow(mark.self, mark.selfColor || '#ff4444');
 
   // Leave the mirrored space — everything from here on is TEXT, which must
   // not be drawn through the scale(1,-1) or the letters would be flipped.
@@ -5353,7 +6201,26 @@ function drawMinimap() {
     }
   }
 
-  
+  // Split-screen: an un-mirrored P1 / P2 label tagged onto each car's arrow so
+  // the two blips on the shared map are never ambiguous. Drawn AFTER the mirror
+  // is undone (like the feature labels above) so the letters read normally; the
+  // position is the arrow's mirrored point mapped back to screen pixels.
+  if (mark.other) {
+    ctx.font = 'bold 8px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const tagArrow = (pc, text, color) => {
+      if (!pc) return;
+      const ax = 160 - (mmCenter + pc.position.x * mmScale);
+      const ay = 160 - (mmCenter + pc.position.z * mmScale);
+      ctx.fillStyle = 'rgba(0,0,0,0.8)';
+      ctx.fillText(text, ax + 0.7, ay - 7.3);
+      ctx.fillStyle = color;
+      ctx.fillText(text, ax, ay - 8);
+    };
+    tagArrow(mark.self, 'P1', mark.selfColor || '#ff4444');
+    tagArrow(mark.other, 'P2', mark.otherColor || '#3b6bb5');
+  }
 
   // Axis numbers: x values along the top edge, z values down the left edge
   // (both shown in MAP coordinates: x=0 at the left edge, z=0 at the top
@@ -5427,6 +6294,16 @@ function bookmarkLocation() {
   } catch (e) { console.log('bookmark error', e); }
 }
 window.addEventListener('keydown', (event) => {
+  // Split-screen pairing: with the claim screen up every key belongs to the
+  // pairing, so swallow them all (Esc cancels, the rest are claim attempts).
+  // Nothing here leaks into the game — the car must sit still while pairing.
+  if (claimActive) {
+    event.preventDefault();
+    if (claimPhase === 'pick') { handlePickKey(event); return; }
+    if (event.code === 'Escape') cancelClaimFlow();
+    else claimFromInput({ code: event.code });
+    return;
+  }
   keys[event.code] = true;
   // Spacebar pauses / unpauses the game (for screenshots). Pausing hides the
   // minimap and the touch joystick; they come back when you unpause. Ignored
@@ -5448,13 +6325,21 @@ window.addEventListener('keydown', (event) => {
     else if (event.code === 'Enter') { event.preventDefault(); exitSelectMode(true); }
     else if (event.code === 'Escape') { event.preventDefault(); exitSelectMode(false); }
   }
+  // Esc leaves a running split-screen: both sides collapse and the Multiplayer
+  // settings tab reopens, matching the on-screen Exit button. Handled here so it
+  // works in both the controller and the touch split.
+  if (event.code === 'Escape' && splitActive && !selectMode) {
+    event.preventDefault();
+    exitSplitToSettings();
+    return;
+  }
   // H: car horn. Also makes the Holy Mountain shrine react (idea #24).
   if (event.code === 'KeyH') {
     honkHorn();
   }
   // C: toggle the top-down camera. Pressed again it goes back to the chase cam,
   // with the chase cam's own zoom and pitch restored rather than reset.
-  if (event.code === 'KeyC' && !event.repeat && !selectMode) {
+  if (event.code === 'KeyC' && !event.repeat && !selectMode && !splitActive) {
     event.preventDefault();
     toggleTopDownCamera();
   }
@@ -5464,49 +6349,66 @@ window.addEventListener('keyup', (event) => {
 });
 
 // ===== Virtual joystick (touch / pointer) =====
+// Two of these exist. In single-player (and a controller split) only the first
+// is shown. In a two-players-on-one-screen touch split, `joy` drives Player 1
+// (bottom-left) and `joy2` drives Player 2 (bottom-right).
 const joy = { active: false, x: 0, y: 0 };
+const joy2 = { active: false, x: 0, y: 0 };
 const joyBase = document.getElementById('joystick');
 const joyKnob = document.getElementById('joy-knob');
 const joyHit = document.getElementById('joystick-hit');
+const joy2Base = document.getElementById('joystick2');
+const joy2Knob = document.getElementById('joy2-knob');
+const joy2Hit = document.getElementById('joystick2-hit');
 const joyMax = 36;   // knob travel radius in px
-let joyOrigin = null;
 
-if (joyBase && joyKnob && joyHit) {
-  const joyApply = (clientX, clientY) => {
-    let dx = clientX - joyOrigin.x;
-    let dy = clientY - joyOrigin.y;
+// Wire one joystick: its base disc, its knob, its invisible hit target, and
+// the state object it writes { active, x, y } into.
+function setupJoystick(base, knob, hit, state) {
+  if (!base || !knob || !hit) return;
+  let origin = null;
+  const apply = (clientX, clientY) => {
+    let dx = clientX - origin.x;
+    let dy = clientY - origin.y;
     const d = Math.hypot(dx, dy);
     if (d > joyMax) {
       dx = (dx / d) * joyMax;
       dy = (dy / d) * joyMax;
     }
-    joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
-    joy.x = dx / joyMax;
-    joy.y = dy / joyMax;
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    state.x = dx / joyMax;
+    state.y = dy / joyMax;
   };
-  const joyRelease = () => {
-    if (!joy.active) return;
-    joy.active = false;
-    joy.x = 0;
-    joy.y = 0;
-    joyKnob.style.transform = 'translate(0px, 0px)';
+  const release = () => {
+    if (!state.active) return;
+    state.active = false;
+    state.x = 0;
+    state.y = 0;
+    knob.style.transform = 'translate(0px, 0px)';
   };
-  joyHit.addEventListener('pointerdown', (event) => {
+  hit.addEventListener('pointerdown', (event) => {
     event.preventDefault();
-    const r = joyBase.getBoundingClientRect();
-    joyOrigin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    joy.active = true;
-    joyApply(event.clientX, event.clientY);
-    joyHit.setPointerCapture(event.pointerId);
+    const r = base.getBoundingClientRect();
+    origin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    state.active = true;
+    apply(event.clientX, event.clientY);
+    hit.setPointerCapture(event.pointerId);
   });
-  joyHit.addEventListener('pointermove', (event) => {
-    if (!joy.active) return;
+  hit.addEventListener('pointermove', (event) => {
+    if (!state.active) return;
     event.preventDefault();
-    joyApply(event.clientX, event.clientY);
+    apply(event.clientX, event.clientY);
   });
-  joyHit.addEventListener('pointerup', joyRelease);
-  joyHit.addEventListener('pointercancel', joyRelease);
+  hit.addEventListener('pointerup', release);
+  hit.addEventListener('pointercancel', release);
 }
+setupJoystick(joyBase, joyKnob, joyHit, joy);
+setupJoystick(
+  document.getElementById('joystick2'),
+  document.getElementById('joy2-knob'),
+  document.getElementById('joystick2-hit'),
+  joy2
+);
 
 // ===== Xbox / gamepad controller =====
 // Any standard-mapping pad (Xbox over USB or Bluetooth) plays the whole game.
@@ -5536,6 +6438,7 @@ const pad = {
   focus: -1,       // highlighted control in padFocusEls (-1 = none)
 };
 let padPrev = [];          // button state from the previous frame
+const padClaimPrev = [];   // per-pad button state, for split-screen claim edges
 let padFocusEls = [];      // the controls the pad can reach on the current screen
 let padFocusDirty = true;  // the screen changed: rebuild padFocusEls
 let padLastNow = performance.now();
@@ -5611,13 +6514,75 @@ function padMoveFocus(step) {
 // LB / RB: step to the previous / next tab, wrapping round the list — the
 // pad's equivalent of clicking along the tab row.
 function padStepTab(dir) {
-  const tabs = ['player', 'chase', 'levels', 'controls', 'graphics', 'about'];
+  const tabs = ['player', 'chase', 'multiplayer', 'levels', 'controls', 'graphics', 'about'];
   const i = tabs.indexOf(pickerTab);
   setPickerTab(tabs[(i + dir + tabs.length) % tabs.length]);
 }
 
+// Car-pick step, controller side: each player reads their OWN claimed pad —
+// the left stick cycles the roster (on a fresh flick, so a held stick doesn't
+// spin the list) and the A button (0) locks in. Buttons are edge-detected so a
+// held A doesn't re-confirm, mirroring the claim screen.
+function pickFromPads(list) {
+  for (let i = 0; i < list.length; i++) {
+    const g = list[i];
+    if (!g || !g.connected) { pickPadPrev[i] = []; pickPadSteer[i] = 0; continue; }
+    let owner = -1;
+    for (let pi = 0; pi < 2; pi++) {
+      const c = claimState.claims[pi];
+      if (c && c.device === 'pad:' + i) owner = pi;
+    }
+    const prevB = pickPadPrev[i] || [];
+    const cur = [];
+    let aEdge = false;
+    for (let j = 0; j < g.buttons.length; j++) {
+      const down = !!(g.buttons[j] && g.buttons[j].pressed);
+      cur[j] = down;
+      if (j === 0 && down && !prevB[j]) aEdge = true;
+    }
+    pickPadPrev[i] = cur;
+    if (owner < 0) continue;
+    if (aEdge) confirmPick(owner);
+    const s = pads[i] ? pads[i].steer : 0;
+    const sign = s > 0.5 ? 1 : s < -0.5 ? -1 : 0;
+    if (sign !== 0 && pickPadSteer[i] !== sign) cyclePick(owner, sign);
+    pickPadSteer[i] = sign;
+  }
+}
+
 function pollGamepad(dt) {
   const list = (navigator.getGamepads && navigator.getGamepads()) || [];
+
+  // Split-screen: publish every connected pad by index (each player reads only
+  // their own — pads[p.padIndex] — in readInput), and, while pairing, watch for
+  // a fresh button press on ANY pad to claim that controller for the player
+  // whose turn it is. A held button must not re-claim, so only the press edge
+  // counts (padClaimPrev), exactly like an event.code keyboard press.
+  pads.length = 0;
+  for (let i = 0; i < list.length; i++) {
+    const g = list[i];
+    pads[i] = (g && g.connected) ? flattenGamepad(g) : null;
+  }
+  if (claimActive) {
+    if (claimPhase === 'pick') { pickFromPads(list); return; }
+    for (let i = 0; i < list.length; i++) {
+      const g = list[i];
+      if (!g || !g.connected) { padClaimPrev[i] = []; continue; }
+      const prevB = padClaimPrev[i] || [];
+      const cur = [];
+      let fresh = false;
+      for (let j = 0; j < g.buttons.length && !fresh; j++) {
+        const down = !!(g.buttons[j] && g.buttons[j].pressed);
+        cur[j] = down;
+        if (down && !prevB[j]) fresh = true;
+      }
+      padClaimPrev[i] = cur;
+      if (fresh) claimFromInput({ padIndex: i });
+    }
+    // Pairing still owns the frame — none of the driving / picker work below
+    if (claimActive) return;
+  }
+
   let gp = null;
   for (const p of list) { if (p && p.connected) { gp = p; break; } }
 
@@ -5673,7 +6638,7 @@ function pollGamepad(dt) {
   // Both run whether or not the game is paused (the mouse wheel and drag do
   // too), so you can frame a screenshot from the pad. Skipped with the modal
   // up, where LB / RB belong to the tab row instead.
-  if (!selectMode) {
+  if (!selectMode && !splitActive) {
     const zoomDir = (b(4) ? -1 : 0) + (b(5) ? 1 : 0);
     if (zoomDir) {
       cameraManualTimer = CAMERA_MANUAL_HOLD;
@@ -5745,8 +6710,8 @@ function pollGamepad(dt) {
   }
 
   // ---- Driving-context buttons ----
-  if (press(0)) honkHorn();                 // A = H
-  if (press(1)) toggleTopDownCamera();      // B = C
+  if (press(0)) honkHorn();                        // A = H
+  if (press(1) && !splitActive) toggleTopDownCamera();   // B = C
 }
 
 // The connect / disconnect events are only for instant status feedback; the
@@ -5775,6 +6740,8 @@ function setPaused(p) {
   minimap.style.display = p ? 'none' : '';
   if (joyBase) joyBase.style.display = p ? 'none' : '';
   if (joyHit) joyHit.style.display = p ? 'none' : '';
+  if (joy2Base) joy2Base.style.display = p ? 'none' : '';
+  if (joy2Hit) joy2Hit.style.display = p ? 'none' : '';
   if (p) {
     // Drop any in-progress joystick input so the car doesn't drive off the
     // moment you unpause.
@@ -5782,6 +6749,10 @@ function setPaused(p) {
     joy.x = 0;
     joy.y = 0;
     if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
+    joy2.active = false;
+    joy2.x = 0;
+    joy2.y = 0;
+    if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
   } else {
     // Discard the time that elapsed while paused so physics don't jump on
     // resume (clock.elapsedTime stays frozen during the pause too).
@@ -5849,6 +6820,7 @@ const CAR_KINDS = [
   { id: 'crab', label: 'Crab', color: '#d9502f', scale: 1.8, faceZ: true, show: 1.2, build: () => createPlayerCrab() },
 ];
 let playerCarKind = CAR_KINDS[0].id;
+let playerTwoCarKind = 'city';   // Player 2's chosen body in split-screen
 // Gear screen: which tab is on show ('player' swaps your ride, 'chase' swaps
 // the car that hounds you). The chase defaults to the little blue utility car
 // — same as the original AI chaser — but you can hand it ANY ride from the
@@ -5874,6 +6846,13 @@ let playerFiretruck = false;
 // Beacon flash clock for the player's own engine. The AI truck keeps its own in
 // firetruck.js; this is the same lightbar pattern driven from the frame loop.
 let playerFiretruckFlash = 0;
+// Player 2's ride abilities. Mirror of P1's flags above, set by applyPlayerTwoCar
+// so the twin gets the SAME interactions P1 does: heavy crush (steamroller /
+// monster truck), and the fire engine's substation-tearing heft. Without these
+// the twin was purely cosmetic and drove through traffic and props.
+let playerTwoSteamroller = false;
+let playerTwoMonster = false;
+let playerTwoFiretruck = false;
 // Scuttle phase for the drivable crab. It has no wheels: its legs windmill in a
 // travelling wave off the car's speed, the same gait the beach's own crabs use,
 // on the rig it carries in `car.userData.crabLegs`.
@@ -6075,6 +7054,40 @@ function swapPlayerCar(kind) {
   beachCollidersNoCrabs = (beachWorld && beachWorld.crabColliders)
     ? beachWorld.colliders.filter((c) => !beachWorld.crabColliders.includes(c))
     : null;
+}
+
+// Dress Player 2's car with one of the picker bodies. Same wrapper trick as
+// swapPlayerCar — an inner group holds the model scale and the +Z->-X quarter
+// turn so the outer `car2` keeps the driving transform — but it never touches
+// P1's global ride flags (playerSteamroller, playerRobot, ...). The picked body
+// on the twin is cosmetic; the special abilities stay Player 1's.
+function applyPlayerTwoCar(kind) {
+  if (!car2) return;
+  const entry = CAR_KINDS.find((k) => k.id === kind) || CAR_KINDS[0];
+  const newMesh = entry.build();
+  const inner = new THREE.Group();
+  if (entry.scale !== 1) inner.scale.setScalar(entry.scale);
+  while (newMesh.children.length > 0) inner.add(newMesh.children[0]);
+  if (entry.faceZ) inner.rotation.y = -Math.PI / 2;
+  const isRobot = entry.id === 'robot';
+  car2.userData.wheels = isRobot ? [] : (newMesh.userData.wheels || []);
+  car2.userData.wheelPivots = isRobot ? [] : (newMesh.userData.wheelPivots || []);
+  car2.userData.effects = isRobot ? null : (newMesh.userData.effects || null);
+  car2.userData.robotAnim = isRobot ? newMesh.userData : null;
+  car2.userData.crabLegs = entry.id === 'crab' ? newMesh.userData.crabLegs : null;
+  car2.userData.crabClaws = entry.id === 'crab' ? newMesh.userData.crabClaws : null;
+  car2.userData.firetruckLights = entry.id === 'firetruck' ? newMesh.userData.warningLights : null;
+  car2.userData.swing = newMesh.userData.swing || null;
+  car2.userData.tarantulaAnim = entry.id === 'tarantula' ? newMesh.userData : null;
+  while (car2.children.length > 0) car2.remove(car2.children[0]);
+  car2.add(inner);
+  playerTwoCarKind = entry.id;
+  // Give Player 2 the same ride abilities P1 gets. The monster truck shares the
+  // steamroller's heavy crush path; the fire engine is heavy too (it can trip
+  // the substation). These feed the collision, traffic-crush and knockAt paths.
+  playerTwoSteamroller = entry.id === 'steamroller' || entry.id === 'monstertruck';
+  playerTwoMonster = entry.id === 'monstertruck';
+  playerTwoFiretruck = entry.id === 'firetruck';
 }
 
 // ===== Drivable locomotive — trailing freight consist =====
@@ -6580,7 +7593,7 @@ function exitSelectMode(apply) {
   document.body.classList.remove('select-mode');
   // Leaving the modal drops the stage furniture too, so reopening it starts
   // from the tab that was showing rather than a stale object or a bare glow.
-  document.body.classList.remove('tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-about', 'browser-mode', 'object-open');
+  document.body.classList.remove('tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open');
   clearSelectPreview();
   gearBtn.textContent = '⚙';
   gearBtn.title = 'Settings';
@@ -6620,7 +7633,7 @@ function cycleCar(dir) {
 function setPickerTab(tab) {
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
-  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-graphics', 'graphics'], ['tab-about', 'about']]) {
+  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-graphics', 'graphics'], ['tab-about', 'about'], ['tab-multiplayer', 'multiplayer']]) {
     const el = tabEl(id);
     if (el) el.classList.toggle('active', tab === name);
   }
@@ -6632,7 +7645,8 @@ function setPickerTab(tab) {
   document.body.classList.toggle('tab-controls', tab === 'controls');
   document.body.classList.toggle('tab-graphics', tab === 'graphics');
   document.body.classList.toggle('tab-about', tab === 'about');
-  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects' || tab === 'controls' || tab === 'graphics' || tab === 'about');
+  document.body.classList.toggle('tab-multiplayer', tab === 'multiplayer');
+  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects' || tab === 'controls' || tab === 'graphics' || tab === 'about' || tab === 'multiplayer');
   // The object-on-the-disc layout belongs to the objects screen alone. Leaving
   // it has to put the grid furniture back, or the panel comes back empty.
   if (tab !== 'objects') document.body.classList.remove('object-open');
@@ -6651,6 +7665,9 @@ function setPickerTab(tab) {
     clearSelectPreview();
     gfxUpdateUI();   // repaint from `gfx`, so reopening the tab always shows the applied settings
   } else if (tab === 'about') {
+    clearSelectPreview();
+  } else if (tab === 'multiplayer') {
+    // No car stage for the pairing screen: hide the preview.
     clearSelectPreview();
   } else {
     // Restore that tab's own armed preview — the other one is left untouched.
@@ -6705,7 +7722,113 @@ function updateSelectCar() {
   selectCarGroup.rotation.y += dt * OBJECT_SPIN;
 }
 
+// ===== Side-by-side car-picker stage =====
+// The multiplayer picker shows BOTH players' cars at once, spinning side by
+// side on the same black sound stage the single-player showroom uses. It has
+// its own scene/camera so it never disturbs the gear-menu showroom, and its
+// overlay (index.html #pick-screen) is transparent so the two models show
+// through with the labels anchored under each.
+let pickScene = null;
+let pickCamera = null;
+const pickPreviewGroups = [null, null];
+let pickLastNow = 0;
+const PICK_STAGE_X = 3.35;    // half the gap between the two cars
+const PICK_LOOK_Y = 0.95;     // the disc's focal height (matches the showroom)
+
+function buildPickScene() {
+  pickScene = new THREE.Scene();
+  pickScene.background = new THREE.Color(0x020407);
+  pickCamera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 200);
+  // A glow disc under each car, so both stand on their own pool of light.
+  for (const dx of [-PICK_STAGE_X, PICK_STAGE_X]) {
+    const glow = new THREE.Mesh(
+      new THREE.PlaneGeometry(SELECT_GLOW_SIZE, SELECT_GLOW_SIZE),
+      new THREE.MeshBasicMaterial({
+        map: makeGlowTexture(),
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    );
+    glow.rotation.x = -Math.PI / 2;
+    glow.position.set(dx, 0.02, 0);
+    pickScene.add(glow);
+  }
+  pickScene.add(new THREE.HemisphereLight(0xffffff, 0x102040, 0.5));
+  const key = new THREE.DirectionalLight(0xffffff, 0.9);
+  key.position.set(3, 6, 4);
+  pickScene.add(key);
+  const rim = new THREE.DirectionalLight(0x4aa8ff, 0.55);
+  rim.position.set(-3, 6, 5);
+  pickScene.add(rim);
+  const back = new THREE.DirectionalLight(0x4aa8ff, 0.4);
+  back.position.set(0, 4, -6);
+  pickScene.add(back);
+}
+
+// Put one player's chosen body on the pick stage. Same wrapper trick the
+// showroom uses (inner group holds the model's scale and +Z->-X quarter-turn),
+// offset left (P1) or right (P2) so the two sit side by side.
+function refreshPickPreview(pi, kind) {
+  if (!pickScene) return;
+  const entry = CAR_KINDS.find((k) => k.id === kind) || CAR_KINDS[0];
+  const model = entry.build();
+  const inner = new THREE.Group();
+  inner.scale.setScalar(entry.scale * SELECT_CAR_SHOW_SCALE * (entry.show || 1));
+  if (entry.faceZ) inner.rotation.y = -Math.PI / 2;
+  while (model.children.length > 0) inner.add(model.children[0]);
+  const holder = new THREE.Group();
+  holder.position.set(pi === 0 ? -PICK_STAGE_X : PICK_STAGE_X, 0, 0);
+  holder.add(inner);
+  if (pickPreviewGroups[pi]) pickScene.remove(pickPreviewGroups[pi]);
+  pickPreviewGroups[pi] = holder;
+  pickScene.add(holder);
+}
+
+// Tear the pick stage down (both models removed) — called when the picker
+// closes, whether it started the split or was cancelled back to settings.
+function clearPickStage() {
+  if (!pickScene) return;
+  for (let i = 0; i < 2; i++) {
+    if (pickPreviewGroups[i]) {
+      pickScene.remove(pickPreviewGroups[i]);
+      pickPreviewGroups[i] = null;
+    }
+  }
+}
+
+// Frame the camera so both cars always fit, whatever the window's aspect — a
+// narrow portrait phone pulls the camera back until the pair fits the width.
+function framePickCamera() {
+  if (!pickCamera) return;
+  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  if (pickCamera.aspect !== aspect) {
+    pickCamera.aspect = aspect;
+    pickCamera.updateProjectionMatrix();
+  }
+  const vfov = (pickCamera.fov * Math.PI) / 180;
+  const fitW = PICK_STAGE_X * 2 + 3.4;   // both cars plus breathing room
+  const fitH = 4.8;
+  const distW = (fitW / 2) / (Math.tan(vfov / 2) * aspect);
+  const distH = (fitH / 2) / Math.tan(vfov / 2);
+  const dist = Math.max(distW, distH) + 1.5;
+  pickCamera.position.set(0, PICK_LOOK_Y + dist * 0.24, dist);
+  pickCamera.lookAt(0, PICK_LOOK_Y, 0);
+}
+
+// Spin both models (and keep the showroom frame's clock alive while the picker
+// is up, since the normal frame clock is skipped in that branch).
+function updatePickStage() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - pickLastNow) / 1000) || 0;
+  pickLastNow = now;
+  for (const g of pickPreviewGroups) {
+    if (g) g.rotation.y += dt * OBJECT_SPIN;
+  }
+}
+
 buildSelectScene();
+buildPickScene();
 const gearBtn = document.getElementById('gear-btn');
 if (gearBtn) gearBtn.addEventListener('click', () => (selectMode ? exitSelectMode(false) : enterSelectMode()));
 const carHintEl = document.getElementById('car-hint');
@@ -6724,6 +7847,44 @@ const tabGraphicsBtn = document.getElementById('tab-graphics');
 if (tabGraphicsBtn) tabGraphicsBtn.addEventListener('click', () => setPickerTab('graphics'));
 const tabAboutBtn = document.getElementById('tab-about');
 if (tabAboutBtn) tabAboutBtn.addEventListener('click', () => setPickerTab('about'));
+const tabMpBtn = document.getElementById('tab-multiplayer');
+if (tabMpBtn) tabMpBtn.addEventListener('click', () => setPickerTab('multiplayer'));
+
+// Multiplayer tab. Two ways in: claim a controller/keyboard half each, or share
+// one touchscreen with two on-screen joysticks.
+const mpStartBtn = document.getElementById('mp-start');
+if (mpStartBtn) {
+  mpStartBtn.addEventListener('click', () => {
+    startClaimFlow();
+  });
+}
+const mpTouchBtn = document.getElementById('mp-touch');
+if (mpTouchBtn) {
+  mpTouchBtn.addEventListener('click', () => {
+    startTouchSplit();
+  });
+}
+const mpExitBtn = document.getElementById('mp-exit');
+if (mpExitBtn) mpExitBtn.addEventListener('click', () => exitSplitToSettings());
+
+// Car-pick screen: the arrow buttons beside each player's ride cycle the roster
+// (the mouse/touch equivalent of the keyboard and pad picking above), the Lock
+// In buttons commit a choice, and Back cancels to the settings.
+for (const [id, pi, dir] of [
+  ['pick-p1-prev', 0, -1], ['pick-p1-next', 0, 1],
+  ['pick-p2-prev', 1, -1], ['pick-p2-next', 1, 1],
+]) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => cyclePick(pi, dir));
+}
+for (const [id, pi] of [['pick-p1-lock', 0], ['pick-p2-lock', 1]]) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => confirmPick(pi));
+}
+const pickCancelBtn = document.getElementById('pick-cancel');
+if (pickCancelBtn) pickCancelBtn.addEventListener('click', () => cancelClaimFlow());
+const claimCancelBtn = document.getElementById('claim-cancel');
+if (claimCancelBtn) claimCancelBtn.addEventListener('click', () => cancelClaimFlow());
 
 // The chase defaults to the little blue car, so dress the chaser right away.
 applyChaseCar(chaseCarKind);
@@ -7438,6 +8599,7 @@ window.addEventListener('wheel', (event) => {
     selectOrbit.radius = THREE.MathUtils.clamp(selectOrbit.radius * factor, SELECT_ZOOM_MIN, SELECT_ZOOM_MAX);
     return;
   }
+  if (splitActive) return;   // the twin chase cameras are fixed in split mode
   cameraManualTimer = CAMERA_MANUAL_HOLD;
   // In top-down mode the wheel drives the plan view's own height, which is not
   // bounded by the chase cam's CAM_ZOOM_MAX 85 — the whole point of the mode is
@@ -7453,17 +8615,27 @@ window.addEventListener('wheel', (event) => {
 // Giant swinging hammers, the trebuchet, the rolling boulder and the wheel of
 // death's rim all get animated AND tested against the car here each frame.
 // Knocks are applied via playerKnock (a world-space slide + yaw spin + hop).
-function launchTrebuchet() {
+function launchTrebuchet(which = 0) {
   // Sling the car: set a large vertical velocity and compute a horizontal
   // speed that will carry the player roughly half-way across the world
   // in the throw direction, based on the approximate ballistic flight time.
-  jumpState.inAir = true;
+  // `which` 1 targets Player 2 (split mode) so either car can be slung.
+  const tCar = which === 1 && players[1] ? players[1].car : car;
+  const tVel = which === 1 && players[1] ? players[1].velocity : velocity;
   const yv = 30;
-  jumpState.yVelocity = yv;
+  if (which === 1 && players[1]) {
+    const p2 = players[1];
+    p2.jump = p2.jump || { inAir: false, yVelocity: 0 };
+    p2.jump.inAir = true;
+    p2.jump.yVelocity = yv;
+  } else {
+    jumpState.inAir = true;
+    jumpState.yVelocity = yv;
+  }
   // Approximate flight time for a symmetric vertical arc: t = 2*yv / g
   const flightTime = (2 * yv) / gravity;
   // Horizontal throw direction (world-space, flattened)
-  const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
+  const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(tCar.quaternion);
   fwd.y = 0; fwd.normalize();
   // Compute a half-map distance in that direction using the world's half
   // spans along X/Z so the trebuchet flings you about half the playable map.
@@ -7471,12 +8643,20 @@ function launchTrebuchet() {
   let desiredSpeed = desiredDist / Math.max(0.01, flightTime);
   // Clamp to sensible gameplay bounds so it never becomes absurd.
   desiredSpeed = THREE.MathUtils.clamp(desiredSpeed, 10, 140);
-  velocity.value = Math.max(velocity.value, desiredSpeed);
-  // Keep horizontal speed from decaying during the flight (small safety pad)
-  jumpState.trebuchetBoost = flightTime + 0.4;
-  car.rotation.z -= 0.3; // nose-up pitch as it's slung
-  wasOnRamp = null;
-  currentRamp = null;
+  tVel.value = Math.max(tVel.value, desiredSpeed);
+  if (which === 1 && players[1]) {
+    players[1].jump.trebuchetBoost = flightTime + 0.4;
+  } else {
+    // Keep horizontal speed from decaying during the flight (small safety pad)
+    jumpState.trebuchetBoost = flightTime + 0.4;
+  }
+  tCar.rotation.z -= 0.3; // nose-up pitch as it's slung
+  if (which === 1 && players[1]) {
+    players[1].wasOnRamp2 = false;
+  } else {
+    wasOnRamp = null;
+    currentRamp = null;
+  }
   shake.intensity = Math.max(shake.intensity, 0.7);
 }
 
@@ -7524,6 +8704,22 @@ function updateBoulder(delta) {
         knockBumperAside(bumperCar.position.x - b.x, bumperCar.position.z - b.z, 13, 3.2);
       }
     }
+    // Player 2 gets bowled over by the rock as well. P2 has no flat/pancake
+    // state (nothing squashes the twin yet), so this is the knock + hop only —
+    // the same impulse the rock gives P1, on P2's own knock slot.
+    const p2jump2 = players[1] && players[1].jump;
+    if (splitActive && car2 && !(players[1] && players[1].knock)) {
+      const cdx = car2.position.x - b.x;
+      const cdz = car2.position.z - b.z;
+      const cd = Math.hypot(cdx, cdz);
+      const cdirX = cd > 0.001 ? cdx / cd : -dirX;
+      const cdirZ = cd > 0.001 ? cdz / cd : -dirZ;
+      const rockOnTop2 = cd < b.hitRadius && Math.abs(car2.position.y - b.group.position.y) < 2.4;
+      if (rockOnTop2 && !(p2jump2 && p2jump2.inAir)) {
+        knockPlayerTwoAway(cdirX, cdirZ, 13, 3.0, 4.6);
+        b.state = 'retreat';
+      }
+    }
   } else if (b.state === 'retreat') {
     const hx = b.homeX - b.x;
     const hz = b.homeZ - b.z;
@@ -7543,6 +8739,49 @@ function updateBoulder(delta) {
   }
 }
 
+// Test one car against the wheel-of-death rim AND its paddles. Returns a unit
+// world-XZ knock direction if the car is being clipped this frame, else null.
+// Shared by both players so P2 is raked by the same blades P1 is.
+function wheelOfDeathHit(c, cx, cy, cz, wDef, spinAngle) {
+  const P = wheelOfDeathPaddles;
+  const dz = c.position.z - cz;
+  if (Math.abs(dz) >= 1.7) return null;
+  const rxy = Math.hypot(c.position.x - cx, c.position.y - cy);
+  // Bare rim clip (between the paddles).
+  if (Math.abs(rxy - wDef.R) < 1.5) {
+    let nx = c.position.x - cx;
+    let nz = dz;
+    const len = Math.hypot(nx, nz);
+    if (len < 0.4) {
+      // Directly under the hub the radial is vertical, so shove the car back
+      // the way it came instead.
+      const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(c.quaternion);
+      nx = -dir.x; nz = -dir.z;
+    } else { nx /= len; nz /= len; }
+    return { nx, nz };
+  }
+  // Paddles bolted around the rim sweep through the car as small boxes.
+  const padR = 1.2;   // inflate the paddle box by ~half the car
+  const rInner = wDef.R + P.radial - P.len / 2 - padR;
+  const rOuter = wDef.R + P.radial + P.len / 2 + padR;
+  const halfT = P.wid / 2 + padR;
+  const pdx = c.position.x - cx;
+  const pdy = c.position.y - cy;
+  for (let i = 0; i < P.count; i++) {
+    const ph = (i / P.count) * Math.PI * 2 + spinAngle;
+    const co = Math.cos(ph), si = Math.sin(ph);
+    const lr = pdx * co + pdy * si;    // radial offset from the centre
+    const lt = -pdx * si + pdy * co;   // tangential offset
+    if (lr > rInner && lr < rOuter && Math.abs(lt) < halfT) {
+      let nx = pdx, nz = dz;
+      const len = Math.hypot(nx, nz);
+      if (len < 0.4) { nx = 1; nz = 0; } else { nx /= len; nz /= len; }
+      return { nx, nz };
+    }
+  }
+  return null;
+}
+
 function updateRampWorldDanger(delta) {
   if (worldState !== 'ramp') return;
   const vt = clock.elapsedTime;
@@ -7553,7 +8792,6 @@ function updateRampWorldDanger(delta) {
     const phDot = h.sweep * h.freq * Math.cos(vt * h.freq + h.phase);   // arc speed
     h.pivot.rotation.z = ph;   // visual (head swings in a vertical arc across the road)
     h.cooldown -= delta;
-    if (h.cooldown > 0 || playerKnock) continue;
     // Mallet-head world position from the SAME swing angle (matches visual):
     // pivot + (armLen*sin(ph), -armLen*cos(ph)) — a crescent arc, tips up.
     const bx = h.x + Math.sin(ph) * h.armLen;
@@ -7564,7 +8802,8 @@ function updateRampWorldDanger(delta) {
     const rr = h.headRadius + playerCarRadius + 0.4;
     // Only hit when the head is actually near the car's height (it only dips
     // to car height at the bottom of its arc — the tips fly high overhead).
-    if (ddx * ddx + ddz * ddz < rr * rr && Math.abs(car.position.y - by) < h.headRadius + 2.2) {
+    const canHit = h.cooldown <= 0;
+    if (canHit && !playerKnock && ddx * ddx + ddz * ddz < rr * rr && Math.abs(car.position.y - by) < h.headRadius + 2.2) {
       // Very heavy mallet: fling the car along the direction the head is
       // SWINGING (the horizontal arc tangent — across the road), no matter
       // which way the car approached. d/dt of (sin ph, -cos ph) = phDot*(cos ph, sin ph).
@@ -7594,6 +8833,18 @@ function updateRampWorldDanger(delta) {
         h.cooldown = 1.4;
       }
     }
+    // P2 also gets clobbered — with their OWN knock state, so a P2 hit never
+    // flings P1 and vice versa.
+    const p2k = players[1] && players[1].knock;
+    if (canHit && splitActive && car2 && !p2k) {
+      const cdx = car2.position.x - bx;
+      const cdz = car2.position.z - bz;
+      if (cdx * cdx + cdz * cdz < rr * rr && Math.abs(car2.position.y - by) < h.headRadius + 2.2) {
+        const clen = Math.hypot(cdx, cdz) || 1;
+        knockPlayerTwoAway(cdx / clen, cdz / clen, 130, 5, 5.5);
+        h.cooldown = 1.4;
+      }
+    }
   }
 
   // --- The trebuchet: state machine + arm animation + launch ---
@@ -7603,14 +8854,27 @@ function updateRampWorldDanger(delta) {
     if (!jumpState.inAir && !playerKnock) {
       // The car's NOSE entering the cup zone (the cup sits on the ground in
       // front of the machine).
-      const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
-      const nx = car.position.x + dir.x * 2.15;
-      const nz = car.position.z + dir.z * 2.15;
-      const ddx = nx - t.cupRest.x;
-      const ddz = nz - t.cupRest.z;
-      if (ddx * ddx + ddz * ddz < t.cupRadius * t.cupRadius) {
+      const triggerLaunch = (c) => {
+        const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(c.quaternion);
+        const nx2 = c.position.x + dir.x * 2.15;
+        const nz2 = c.position.z + dir.z * 2.15;
+        const ddx = nx2 - t.cupRest.x;
+        const ddz = nz2 - t.cupRest.z;
+        return (ddx * ddx + ddz * ddz < t.cupRadius * t.cupRadius);
+      };
+      const p2Air = players[1] && players[1].jump && players[1].jump.inAir;
+      if (triggerLaunch(car)) {
         t.state = 'winding';
-        t.t = 0;
+        t.wind = 0;
+        t.target = 0;
+        t.arm.rotation.z = t.restAngle;
+        launchTrebuchet(0);
+      } else if (splitActive && car2 && !p2Air && !(players[1] && players[1].knock) && triggerLaunch(car2)) {
+        t.state = 'winding';
+        t.wind = 0;
+        t.target = 1;
+        t.arm.rotation.z = t.restAngle;
+        launchTrebuchet(1);
       }
     }
   } else if (t.state === 'winding') {
@@ -7620,7 +8884,7 @@ function updateRampWorldDanger(delta) {
     if (t.t >= 0.45) {
       t.state = 'firing';
       t.t = 0;
-      launchTrebuchet();   // sling at the start of the throw
+      launchTrebuchet(t.target || 0);   // sling at the start of the throw
     }
   } else if (t.state === 'firing') {
     t.t += delta;
@@ -7646,54 +8910,21 @@ function updateRampWorldDanger(delta) {
 
   // --- Wheel of death rim + paddles: clipping the rim or catching a paddle
   // sends you skidding — TWICE as far as a hammer does ---
-  if (!playerKnock) {
+  // Run this block whenever EITHER player is knock-free, so P2 can still be
+  // raked by the blades while P1 is mid-knock (and vice versa).
+  const p2Knocked = players[1] && players[1].knock;
+  if (!playerKnock || (splitActive && car2 && !p2Knocked)) {
     wheelOfDeath.cooldown -= delta;
     if (wheelOfDeath.cooldown <= 0) {
       const wDef = wheelOfDeathDef;
       const cx = wDef.x, cy = wheelOfDeath.spin.position.y, cz = wDef.z;
-      const rxy = Math.hypot(car.position.x - cx, car.position.y - cy);
-      const dz = car.position.z - cz;
-      // Bare rim clip (between the paddles).
-      if (Math.abs(dz) < 1.7 && Math.abs(rxy - wDef.R) < 1.5) {
-        let nx = car.position.x - cx;
-        let nz = dz;
-        const len = Math.hypot(nx, nz);
-        if (len < 0.4) {
-          // Directly under the hub the radial is vertical, so the horizontal
-          // knock would be ~zero. Shove the car back the way it came instead.
-          const dir = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
-          nx = -dir.x; nz = -dir.z;
-        } else {
-          nx /= len; nz /= len;
-        }
-        knockPlayerAway(nx, nz, WHEEL_KNOCK_POWER, 5, 5.5);
-        wheelOfDeath.cooldown = 1.5;
-      }
-      // The paddles bolted around the rim sweep and clobber you too — each
-      // is tested as a small box in the wheel's plane (inflated by roughly
-      // half the car) so a hit lands only when a blade swings through you.
-      if (wheelOfDeath.cooldown <= 0 && Math.abs(dz) < 1.7) {
-        const P = wheelOfDeathPaddles;
-        const padR = 1.2;   // inflate the paddle box by ~half the car
-        const rInner = wDef.R + P.radial - P.len / 2 - padR;
-        const rOuter = wDef.R + P.radial + P.len / 2 + padR;
-        const halfT = P.wid / 2 + padR;
-        const spinAngle = -vt * 2.4;   // matches wheelOfDeath.spin.rotation.z
-        const pdx = car.position.x - cx;
-        const pdy = car.position.y - cy;
-        for (let i = 0; i < P.count; i++) {
-          const ph = (i / P.count) * Math.PI * 2 + spinAngle;
-          const co = Math.cos(ph), si = Math.sin(ph);
-          const lr = pdx * co + pdy * si;    // radial offset from the centre
-          const lt = -pdx * si + pdy * co;   // tangential offset
-          if (lr > rInner && lr < rOuter && Math.abs(lt) < halfT) {
-            let nx = pdx, nz = dz;
-            const len = Math.hypot(nx, nz);
-            if (len < 0.4) { nx = 1; nz = 0; } else { nx /= len; nz /= len; }
-            knockPlayerAway(nx, nz, WHEEL_KNOCK_POWER, 5, 5.5);
-            wheelOfDeath.cooldown = 1.5;
-            break;
-          }
+      const spinAngle = -vt * 2.4;   // matches wheelOfDeath.spin.rotation.z
+      // P1: rim or paddle, whichever the car is touching this frame.
+      if (!playerKnock) {
+        const hit = wheelOfDeathHit(car, cx, cy, cz, wDef, spinAngle);
+        if (hit) {
+          knockPlayerAway(hit.nx, hit.nz, WHEEL_KNOCK_POWER, 5, 5.5);
+          wheelOfDeath.cooldown = 1.5;
         }
       }
       // The blue car gets clipped by the rim too.
@@ -7706,6 +8937,14 @@ function updateRampWorldDanger(delta) {
           const blen = Math.hypot(bnx, bnz);
           if (blen < 0.4) { bnx = 1; bnz = 0; } else { bnx /= blen; bnz /= blen; }
           knockBumperAside(bnx, bnz, 11, 3.2);
+        }
+      }
+      // P2: same rim + paddles, on P2's own knock slot.
+      if (splitActive && car2 && !(players[1] && players[1].knock) && wheelOfDeath.cooldown <= 0) {
+        const hit2 = wheelOfDeathHit(car2, cx, cy, cz, wDef, spinAngle);
+        if (hit2) {
+          knockPlayerTwoAway(hit2.nx, hit2.nz, WHEEL_KNOCK_POWER, 5, 5.5);
+          wheelOfDeath.cooldown = 1.5;
         }
       }
     }
@@ -8218,7 +9457,10 @@ function updateCamera(delta) {
   // ===== Levitation camera override =====
   // Same smooth technique as the mine dive: bypass the chase cam and ease the
   // camera to a fixed vantage just east of the hill, tilting up to follow the car.
-  if (buildingLevitate.active && buildingLevitate.levitating) {
+  // Only hijack P1's camera when P1 is the one riding the lift; if P2 is the
+  // rider (split-screen), P1 keeps its normal chase cam and P2's own chase cam
+  // follows the rising twin.
+  if (buildingLevitate.active && buildingLevitate.levitating && (buildingLevitate.rider || 0) === 0) {
     _levCamTarget.set(buildingLevitate.x + buildingLevitate.w / 2 + 7, PORTAL_HILL.height + 1.6, buildingLevitate.z);
     _levLookTarget.set(buildingLevitate.x, Math.max(1.5, car.position.y), buildingLevitate.z);
     const blend = 1 - Math.pow(0.004, delta);
@@ -8801,7 +10043,10 @@ function updateCamera(delta) {
 // because the car is not being simulated at all. Poll the world's published
 // pose; non-null means she has it.
 function gullHasTheCar() {
-  return worldState === 'beach' && beachWorld && beachWorld.carCarry;
+  // Only true when she has P1 (carryIndex 0); when she lifts P2 the twin is the
+  // one frozen and P1 keeps driving.
+  return worldState === 'beach' && beachWorld && beachWorld.carCarry &&
+    beachWorld.carryIndex === 0;
 }
 
 // Mirrors cityPowerOut() so the street lamp bulbs are only touched when the
@@ -8831,11 +10076,18 @@ function animate() {
   // updating so scroll-wheel zoom + drag orbit still work for screenshots,
   // and the frame keeps rendering so you can grab it.
   if (isPaused) {
+    // The side-by-side multiplayer picker freezes the world and draws both
+    // players' spinning cars on their own stage (no clock is consumed, so the
+    // world holds still whatever the pause state on the way in).
+    if (claimActive && claimPhase === 'pick' && pickScene) {
+      framePickCamera();
+      updatePickStage();
+      renderer.render(pickScene, pickCamera);
     // On the Graphics tab the panel is semi-transparent on purpose: the world
     // you actually play keeps rendering behind it, so the sliders (and the FPS
     // readout) show their effect on the real scene rather than on the empty
     // showroom stage.
-    if (selectMode && pickerTab !== 'graphics') {
+    } else if (selectMode && pickerTab !== 'graphics') {
       updateSelectCamera();
       updateSelectCar();
       renderer.render(selectScene, selectCamera);
@@ -8861,26 +10113,29 @@ function animate() {
   // shot of the car rolling in on its own, so the player must not steer or
   // throttle it. Without this the arrows would fight the cut, and a held
   // accelerator would carry the car past the door before the fade lands.
-  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active && !gullHasTheCar()) {
+  if (!robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active && !gullHasTheCar() && !claimActive) {
 
-  let forward = 0;
-  let reverse = 0;
-  if (keys['ArrowUp'] || keys['KeyW']) forward = 1;
-  if (keys['ArrowDown'] || keys['KeyS']) reverse = 1;
-  // The pad's triggers / stick / D-pad are analog and digital at once: any
-  // meaningful reading takes over from (or adds to) the keyboard.
-  if (pad.throttle > 0.05) forward = Math.max(forward, pad.throttle);
-  if (pad.reverse > 0.05) reverse = Math.max(reverse, pad.reverse);
+  // Per-frame controls resolve through the (single) player record: its device
+  // scheme picks the keys, and the pad / joystick fold in on top — the same
+  // merge this block used to do inline, so single-player cannot feel any
+  // different. The result is cached on the record so a second player can drive
+  // the same machinery in split-screen. In split-screen P1 reads only their
+  // claimed pad (pads[p.padIndex]) rather than the shared first pad.
+  const inp = splitActive
+    ? readInput(players[0], {
+        keys,
+        // A touch player drives purely with the on-screen stick: no keyboard
+        // half and no controller fold in.
+        pad: players[0].device === 'touch' ? emptyPad : (pads[players[0].padIndex] || emptyPad),
+        joy,
+      })
+    : readInput(players[0], { keys, pad, joy });
+  players[0].input = inp;
+  const forward = inp.forward;
+  const reverse = inp.reverse;
   // Hold Shift (or X on the pad) anywhere for a nitro-style 2× boost:
   // acceleration AND top speed both double, in either direction.
-  const boost = (keys['ShiftLeft'] || keys['ShiftRight'] || pad.boost) ? 2 : 1;
-  if (joy.active) {
-    // Analog joystick: push up = go, pull down = reverse
-    const f = Math.max(0, -joy.y);
-    const r = Math.max(0, joy.y);
-    if (f > 0.08) forward = Math.max(forward, f);
-    else if (r > 0.08) reverse = Math.max(reverse, r);
-  }
+  const boost = inp.boost ? 2 : 1;
 
   // The Indy racer tops out 1.5× faster than every other car (both directions).
   const speedMul = playerIndy ? 1.5 : 1;
@@ -8899,17 +10154,17 @@ function animate() {
     }
   }
 
-  if (joy.active) {
+  if (inp.joyActive) {
     // Analog joystick: push right = turn right, push left = turn left
-    steering.value += (-joy.x * 0.9 - steering.value) * Math.min(1, 12 * delta);
-  } else if (pad.steer) {
+    steering.value += (-inp.joyX * 0.9 - steering.value) * Math.min(1, 12 * delta);
+  } else if (inp.steerPad) {
     // Xbox left stick / D-pad steer the same way the touch joystick does —
     // positive is right, and the same easing keeps it from snapping.
-    steering.value += (-pad.steer * 0.9 - steering.value) * Math.min(1, 12 * delta);
+    steering.value += (-inp.steerPad * 0.9 - steering.value) * Math.min(1, 12 * delta);
   } else {
-    if (keys['ArrowLeft'] || keys['KeyA']) {
+    if (inp.wantLeft) {
       steering.value = Math.min(steering.value + turnRate * 1.2, 0.9);
-    } else if (keys['ArrowRight'] || keys['KeyD']) {
+    } else if (inp.wantRight) {
       steering.value = Math.max(steering.value - turnRate * 1.2, -0.9);
     } else {
       steering.value *= 0.8;
@@ -8984,7 +10239,7 @@ function animate() {
     ? false
     : (jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5));
   const canMove =
-    !buildingLevitate.levitating && (
+    !p1Levitating() && (
     worldState === 'ramp' ||
     elevated ||
     (!isPositionBlocked(nextCarPos.x, nextCarPos.z, playerCarRadius, true) &&
@@ -9005,7 +10260,7 @@ function animate() {
     // pinning you at full throttle. Only a nearly head-on impact bounces a
     // little (so you can never get glued to a building dead-on); glancing
     // hits keep sliding.
-    if (!buildingLevitate.levitating) {
+    if (!p1Levitating()) {
       const mvX = direction.x * velocity.value * delta;
       const mvZ = direction.z * velocity.value * delta;
       // The normal query adds a small epsilon because the anti-stuck pass parks
@@ -9069,7 +10324,7 @@ function animate() {
     } else {
       velocity.value *= 0.3;
     }
-    if (isInMineApproach() && forward > 0.05 && !buildingLevitate.levitating) {
+    if (isInMineApproach() && forward > 0.05 && !p1Levitating()) {
       // Mine wall-guide: nudge the nose TOWARD the tunnel axis (x=-55) so the
       // sliding car lines up with the entrance instead of gliding on past the
       // bank.
@@ -9079,7 +10334,7 @@ function animate() {
 
   // ===== Ramps: drive up the slope, launch off the top, fall back down =====
   // During building levitation, skip all ramp/ground physics — the car is rising.
-  if (buildingLevitate.levitating) {
+  if (p1Levitating()) {
     // Levitating: only vertical motion is controlled by the levitation code.
   } else if (worldState === 'ramp') {
     if (jumpState.inAir) {
@@ -9810,7 +11065,7 @@ function animate() {
   // shortest escape so being stuck can never persist. Airborne cars are
   // exempt (they fly over things and land ON tops via buildingTopAt), and so
   // is the ramp world (wide-open terrain, nothing solid to wedge against).
-  if (worldState !== 'ramp' && !buildingLevitate.levitating && !jumpState.inAir &&
+  if (worldState !== 'ramp' && !p1Levitating() && !jumpState.inAir &&
       buildingTopAt(car.position.x, car.position.z) <= 0 &&
       carIsOverlappingSolid()) {
     const fix = resolveStuck(car.position.x, car.position.z, playerSolids(), playerCarRadius);
@@ -9841,7 +11096,7 @@ function animate() {
   // the lattice, just a smooth soapy slide along the wall back into the middle.
   // A hard inner boundary still keeps the body from crossing the lattice.
   const washBay = undergroundWorld.carWash && undergroundWorld.carWash.bay;
-  if (worldState === 'underground' && !jumpState.inAir && !buildingLevitate.levitating &&
+  if (worldState === 'underground' && !jumpState.inAir && !p1Levitating() &&
       car.position.y < 2 && washBay &&
       Math.abs(car.position.x - washBay.cx) <= washBay.len / 2) {
     const half = washBay.wid / 2;             // wall centre-line offset from the bay centre
@@ -9883,6 +11138,24 @@ function animate() {
   else if (worldState === 'beach') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
 
   }  // end !robot.playerCaptured
+
+  // Player 2 knocks over the same props with their own body — including the
+  // heavy-only kit (above all the substation's transformer, whose fall blacks
+  // the city out) when the twin drives a steamroller / monster / fire engine.
+  // Deliberately OUTSIDE the robot gate so it still runs if the robot is holding
+  // Player 1.
+  if (splitActive && car2 && players[1]) {
+    const vehicle2 = {
+      kind: playerTwoCarKind, steamroller: playerTwoSteamroller, monster: playerTwoMonster,
+      firetruck: playerTwoFiretruck, heavy: playerTwoSteamroller || playerTwoMonster || playerTwoFiretruck,
+    };
+    const spd2 = players[1].velocity ? players[1].velocity.value : 0;
+    if (worldState === 'city') knockAt(car2.position, playerKnockRadius, worldSizeX, worldSizeZ, spd2, vehicle2);
+    else if (worldState === 'ramp') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
+    else if (worldState === 'underground') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
+    else if (worldState === 'house') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
+    else if (worldState === 'beach') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
+  }
 
 // ===== 2026-09-23 factory-floor attraction physics =====
   // This block runs EVERY frame (inside the robot/cinematic gate close above,
@@ -10390,6 +11663,25 @@ function animate() {
       }
     }
 
+    // Player 2's heavy rides crush traffic exactly the same way, using the twin's
+    // own heading and position. Without this the second steamroller/monster
+    // drove over the traffic with no effect — the drum was cosmetic.
+    if (splitActive && car2 && players[1] && playerTwoSteamroller &&
+        !(players[1].jump && players[1].jump.inAir)) {
+      const fwd2 = new THREE.Vector3(-1, 0, 0).applyQuaternion(car2.quaternion);
+      const reach2 = playerTwoMonster ? 2.9 : 2.3;
+      const drum2X = car2.position.x + fwd2.x * reach2;
+      const drum2Z = car2.position.z + fwd2.z * reach2;
+      const qdx = wrappedDeltaX(drum2X, t.mesh.position.x);
+      const qdz = wrappedDeltaZ(drum2Z, t.mesh.position.z);
+      if (qdx * qdx + qdz * qdz < 3.5 * 3.5 && !(t.flat && t.flat.phase === 'bounce')) {
+        if (!t.flat) t.flat = createFlatCarState(false);
+        t.flat.active = true;
+        t.flat.phase = 'flat';
+        t.flat.timer = 0;
+      }
+    }
+
     // A steamroller flattens the player car when its drum drives over it.
     // It's a ghost — no knock, no shove — the drum just rolls over the car
     // and squashes it flat. A player DRIVING a steamroller doesn't get
@@ -10480,6 +11772,17 @@ function animate() {
 
   }  // end city AI (worldState === 'city')
 
+  // Split-screen: step and frame Player 2 for this frame. Their twin physics
+  // and chase camera are isolated from P1's block above, so the single-player
+  // path is untouched.
+  if (splitActive && players[1]) {
+    stepTwoPlayer(players[1], delta);
+    // Outside the city the AI collision pass above never ran, so bump the two
+    // players apart here; inside the city resolveCarCollisions already did it.
+    if (worldState !== 'city') resolvePlayerPairCollision();
+    followCameraTwo(players[1], delta);
+  }
+
   // Chase camera — held in updateCamera() so it can also keep running while
   // the game is paused (scroll-wheel zoom + drag orbit stay live).
   updateCamera(delta);
@@ -10532,7 +11835,12 @@ function animate() {
   updateNwCornerArrow(delta);
 
   // Walk the pedestrians (they scream and scatter when you or the robot get close)
-  updatePeople(delta, { player: car.position, robot: robot.mesh.position, aiOnly: colliders.filter((c) => c.aiOnly) });
+  updatePeople(delta, {
+    player: car.position,
+    player2: splitActive && car2 ? car2.position : null,
+    robot: robot.mesh.position,
+    aiOnly: colliders.filter((c) => c.aiOnly),
+  });
   }  // end city ambience
 
   // Animate knockable props in BOTH worlds — the city's props and the ramp
@@ -10542,6 +11850,8 @@ function animate() {
   // The giant rolling rock can flatten the car; while flat, the car still
   // drives but settles lower to the ground and eventually rebounds taller.
   updateFlatCarState(delta);
+  // Player 2's pancake settles/pops on their own clock in split-screen.
+  if (splitActive) updateFlatCar2State(delta);
 
   // Underworld animation: the Glass City's mechanical birds flap and its blue
   // trees slowly turn (the update early-outs unless you're near the city).
@@ -10693,8 +12003,15 @@ function animate() {
   if (portalGrace <= 0 && worldState === 'ramp') {
     // Driving UNDER the vortex (grounded, near its centre) warps you back to
     // the city — dropping you in mid-air above the town centre.
-    if (!jumpState.inAir && isInVortexReturnZone(car.position.x, car.position.z, vortex.x, vortex.z, vortexReturnRadius)) {
+    const p2AirV = players[1] && players[1].jump && players[1].jump.inAir;
+    const t1 = (!jumpState.inAir && isInVortexReturnZone(car.position.x, car.position.z, vortex.x, vortex.z, vortexReturnRadius));
+    const t2 = (splitActive && car2 && !p2AirV && isInVortexReturnZone(car2.position.x, car2.position.z, vortex.x, vortex.z, vortexReturnRadius));
+    if (t1 || t2) {
       enterCityWorld();
+      if (splitActive && car2 && players[1]) {
+        players[1].velocity.value = 6;
+        players[1].steering.value = 0;
+      }
     }
   }
 
@@ -10773,7 +12090,8 @@ function animate() {
     // The world's update drives the shell as well as the sea and the wildlife,
     // and hands back whether the valves have just met.
     const shutNow = beachWorld.update(delta, car.position, playerCarRadius,
-      beachShellPortal.armed || beachShell.closing || beachShellPortal.fadeTimer >= 0);
+      beachShellPortal.armed || beachShell.closing || beachShellPortal.fadeTimer >= 0,
+      (splitActive && car2) ? car2.position : null);
 
     // ===== The sand castle =====
     // Drive into it and it comes down. The level flags the frame it happens;
@@ -10807,21 +12125,42 @@ function animate() {
     // applying all along - from the exact spot she let go of it.
     const carried = beachWorld.carCarry;
     if (carried) {
-      car.position.set(carried.x, carried.y, carried.z);
-      car.rotation.set(carried.pitch, carried.yaw, carried.roll, 'YXZ');
-      velocity.value = 0;
-      steering.value = 0;
-      jumpState.inAir = false;
-      jumpState.yVelocity = 0;
+      // She carries ONE car - the one she chose on the approach. `carryIndex`
+      // says which (0 = P1, 1 = P2); the other driver keeps full control.
+      const onP2 = beachWorld.carryIndex === 1 && splitActive && car2;
+      const ccar = onP2 ? car2 : car;
+      ccar.position.set(carried.x, carried.y, carried.z);
+      ccar.rotation.set(carried.pitch, carried.yaw, carried.roll, 'YXZ');
+      if (onP2) {
+        const p2 = players[1];
+        if (p2) {
+          p2.velocity.value = 0;
+          p2.steering.value = 0;
+          if (p2.jump) { p2.jump.inAir = false; p2.jump.yVelocity = 0; }
+          if (p2.knock) { p2.knock.t = 0; }
+        }
+      } else {
+        velocity.value = 0;
+        steering.value = 0;
+        jumpState.inAir = false;
+        jumpState.yVelocity = 0;
+      }
       // The chase camera is NOT nudged here. updateCamera() has already run this
       // frame, back at the top of the loop, and calling it a second time would
       // advance it at double rate for exactly as long as the theft lasts. It
       // follows the car every frame regardless, so it comes along for the ride
       // with a frame of lag, which at these speeds is invisible.
     }
-    if (portalGrace <= 0 && !beachShellPortal.armed && !beachShell.closing && !jumpState.inAir &&
-        BEACH_SHELL.inside(car.position.x, car.position.z)) {
+    // Either player can be the one the valves close on this trip. The shell's
+    // own open/close animation (and the gull flock) is still driven from P1's
+    // position below, but the hold/shrink here follows whoever is being taken.
+    const p1InShell = !jumpState.inAir && BEACH_SHELL.inside(car.position.x, car.position.z);
+    const p2InShell = splitActive && car2 &&
+      !(players[1] && players[1].jump && players[1].jump.inAir) &&
+      BEACH_SHELL.inside(car2.position.x, car2.position.z);
+    if (portalGrace <= 0 && !beachShellPortal.armed && !beachShell.closing && (p1InShell || p2InShell)) {
       beachShellPortal.armed = true;
+      beachShellPortal.rider = (p2InShell && !p1InShell) ? 1 : 0;
       beachShell.close();
     }
     if (shutNow && beachShellPortal.armed && beachShellPortal.fadeTimer < 0) {
@@ -10830,15 +12169,20 @@ function animate() {
       _fadeOverlay.style.opacity = '1';
     }
     if (beachShellPortal.armed) {
-      // The valves are closing on top of you, so hold the car still - otherwise
-      // it rolls back out of the dish through the closing gap.
-      velocity.value *= Math.max(0, 1 - 9 * delta);
-      steering.value = 0;
-      if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
+      const sr = beachShellPortal.rider || 0;
+      const svel = (sr === 1 && players[1]) ? players[1].velocity : velocity;
+      // The valves are closing on top of the rider, so hold that car still -
+      // otherwise it rolls back out of the dish through the closing gap.
+      svel.value *= Math.max(0, 1 - 9 * delta);
+      if (sr === 1 && players[1]) players[1].steering.value = 0;
+      else steering.value = 0;
+      if (Math.abs(svel.value) < 0.05) svel.value = 0;
       // Same shrink as the park shell: the car fits inside the valves as they
       // come together, then is full size again back in the city.
       const p = (beachShell.openAngle - beachShell.angle) / (beachShell.openAngle - beachShell.shutAngle);
-      portalCarScale = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
+      const shrink = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
+      if (sr === 1 && car2) car2.scale.setScalar(shrink);
+      else portalCarScale = shrink;
     }
     if (beachShellPortal.fadeTimer >= 0) {
       beachShellPortal.fadeTimer += delta;
@@ -10853,25 +12197,37 @@ function animate() {
 
   // ===== Hilltop portal trigger =====
   if (portalGrace <= 0 && worldState === 'city') {
-    const insideBuilding = isInsideLevitationHall(car.position.x, car.position.z, buildingLevitate, car.position.y);
-    const stillInArea = isStillWithinLevitationHall(car.position.x, car.position.z, buildingLevitate);
+    const p1InHall = isInsideLevitationHall(car.position.x, car.position.z, buildingLevitate, car.position.y);
+    const p2InHall = splitActive && car2 &&
+      isInsideLevitationHall(car2.position.x, car2.position.z, buildingLevitate, car2.position.y);
+    const insideBuilding = p1InHall || p2InHall;
+    // The rider being lifted is tracked across the whole sequence; while a car
+    // is in the air the "still within the hall" test must follow THAT car.
+    const riderId = buildingLevitate.rider || 0;
+    const riderCar = (riderId === 1 && car2) ? car2 : car;
+    const stillInArea = isStillWithinLevitationHall(riderCar.position.x, riderCar.position.z, buildingLevitate);
     if (insideBuilding) {
       if (!buildingLevitate.active) {
         buildingLevitate.active = true;
         buildingLevitate.timer = 0;
         buildingLevitate.levitating = false;
+        buildingLevitate.rider = (p2InHall && !p1InHall) ? 1 : 0;
       }
     } else if (!buildingLevitate.levitating && !stillInArea) {
       // Car drove well clear before levitation started — reset
       buildingLevitate.active = false;
       buildingLevitate.timer = 0;
+      buildingLevitate.rider = 0;
     }
     if (buildingLevitate.active) {
       buildingLevitate.timer += delta;
+      const rid = buildingLevitate.rider || 0;
+      const rc = (rid === 1 && car2) ? car2 : car;
+      const rvel = (rid === 1 && players[1]) ? players[1].velocity : velocity;
       if (buildingLevitate.timer >= 1.2 && !buildingLevitate.levitating) {
         // Start levitation
         buildingLevitate.levitating = true;
-        velocity.value = 0;
+        rvel.value = 0;
         shake.intensity = Math.max(shake.intensity, 0.3);
       }
       if (buildingLevitate.levitating) {
@@ -10881,7 +12237,7 @@ function animate() {
         buildingLevitate.levitateTime += delta;
         const t = Math.min(buildingLevitate.levitateTime / 4, 1);  // 0..1
         const speed = 70 * t * t;  // quadratic ease-in, peaks at 70 u/s
-        car.position.y += speed * delta;
+        rc.position.y += speed * delta;
         // After the car has threaded a couple of rings, gently steer it toward
         // the ring column's centre so the ascent always ends dead-centre no
         // matter where the car entered the hall. The pull ramps in with height
@@ -10891,27 +12247,28 @@ function animate() {
         const ringCz = PORTAL_HILL.z;
         const ringPullStart = 12;   // y past the 2nd ring — begin centering
         const ringPullFull = 60;    // y where the pull reaches full strength
-        if (car.position.y > ringPullStart) {
-          const pull = Math.min((car.position.y - ringPullStart) / (ringPullFull - ringPullStart), 1);
+        if (rc.position.y > ringPullStart) {
+          const pull = Math.min((rc.position.y - ringPullStart) / (ringPullFull - ringPullStart), 1);
           const strength = 7 * pull;   // u/s of horizontal convergence at full pull
-          const dx = ringCx - car.position.x;
-          const dz = ringCz - car.position.z;
+          const dx = ringCx - rc.position.x;
+          const dz = ringCz - rc.position.z;
           const dist = Math.hypot(dx, dz);
           if (dist > 0.01) {
             const step = Math.min(strength * delta, dist);
-            car.position.x += (dx / dist) * step;
-            car.position.z += (dz / dist) * step;
+            rc.position.x += (dx / dist) * step;
+            rc.position.z += (dz / dist) * step;
           }
         }
         // Slowly fade horizontal velocity to zero
-        velocity.value *= 0.95;
+        rvel.value *= 0.95;
         // Float SO high the car is barely visible before jumping to ramp world.
-        if (car.position.y > 110) {
+        if (rc.position.y > 110) {
           enterRampWorld();
           buildingLevitate.active = false;
           buildingLevitate.levitating = false;
           buildingLevitate.levitateTime = 0;
           buildingLevitate.timer = 0;
+          buildingLevitate.rider = 0;
         }
       }
     }
@@ -10924,13 +12281,15 @@ function animate() {
   // watches it shrink into the jewelled dark — then the fade-cut swaps to
   // the spiral-tunnel arrival cinematic in the underground world.
   if (portalGrace <= 0 && worldState === 'city') {
-    const inTunnel = isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir;
+    const p2AirM = players[1] && players[1].jump && players[1].jump.inAir;
+    const p2InTunnel = splitActive && car2 && !p2AirM && isInMineDiveTrigger(car2.position.x, car2.position.z, minePortal);
+    const inTunnel = (isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir)
+      || p2InTunnel;
     if (inTunnel) {
       if (!minePortal.active) {
         minePortal.active = true;
         minePortal.timer = 0;
-        minePortal.baseY = car.position.y;   // remember the surface height
-        // Keep whatever forward speed the driver had — the adit carries it down.
+        minePortal.baseY = car.position.y;
       }
     } else if (minePortal.active && minePortal.timer < 0.5) {
       // Car left the trigger zone before teleport — reset, but only in the
@@ -11021,7 +12380,15 @@ function animate() {
     }
   }
 
-  drawMinimap();
+  // Minimap(s). Split-screen draws two: Player 1's map (bottom-left) shows both
+  // cars with P1 brightest, and Player 2's map (bottom-right) flips that so P2's
+  // own arrow is the bright one. Single-player keeps the original single call.
+  if (splitActive && mm2Ctx && players[1]) {
+    drawMinimap(mmCtx, { self: players[0].car, selfColor: SPLIT_P1_COLOR, other: players[1].car, otherColor: SPLIT_P2_COLOR });
+    drawMinimap(mm2Ctx, { self: players[1].car, selfColor: SPLIT_P2_COLOR, other: players[0].car, otherColor: SPLIT_P1_COLOR });
+  } else {
+    drawMinimap(mmCtx);
+  }
 
   // House mirror: update throttled every 0.5s when in house
   if (worldState === 'house' && clock) {
@@ -11035,8 +12402,40 @@ function animate() {
     }
   }
 
-  renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
-  renderUnderwaterTint();
+  if (splitActive && camB) {
+    // Two viewports, one scene, via scissor rects: P1 left, P2 right. Shadow
+    // maps are updated once for the frame, not once per viewport.
+    const activeScene = activeWorldScene();
+    const rects = splitViewports(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.autoUpdate = false;
+    renderer.shadowMap.needsUpdate = true;
+    renderer.setScissorTest(true);
+    for (let i = 0; i < 2; i++) {
+      const vp = rects[i];
+      // Each half shows ONLY the other player's bubble: in P1's viewport (i=0)
+      // you see a tag floating over P2's car, and P2's viewport (i=1) floats one
+      // over P1's — never a tag over your own hat. Both cars stay distinguishable
+      // because each player is told which car the OTHER one is.
+      if (players[0].marker) players[0].marker.visible = (i !== 0);
+      if (players[1].marker) players[1].marker.visible = (i === 0);
+      renderer.setViewport(vp.x, vp.y, vp.width, vp.height);
+      renderer.setScissor(vp.x, vp.y, vp.width, vp.height);
+      renderer.render(activeScene, i === 0 ? camera : camB);
+    }
+    renderer.setScissorTest(false);
+    renderer.shadowMap.autoUpdate = true;
+    // Hand the renderer back to the FULL canvas. setViewport is sticky, so
+    // leaving it on the last half (P2's) meant the next NON-split frame — the
+    // picker, the settings showroom, or single-player — drew everything squashed
+    // into the right half. Resetting here keeps every non-split frame full-width.
+    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+    // The underwater tint is a single full-screen pass owned by the primary
+    // viewport; split mode skips it (see the plan's v1 caveats).
+  } else {
+    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
+    renderUnderwaterTint();
+  }
 }
 
 animate();
@@ -11789,6 +13188,7 @@ function onCanvasPointerDown(event) {
     selectDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: selectOrbit.yaw, phi: selectOrbit.phi };
     return;
   }
+  if (splitActive) return;   // no orbit drag in split mode: the twins keep their shot
   pinchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pinchPointers.size === 1) {
     // First finger: begin the orbit drag.
@@ -11882,6 +13282,16 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // Split-screen: P2's camera takes the other half, so its aspect is the
+  // halved width. The scissor rects are recomputed per frame, so they follow
+  // the new size on their own.
+  if (splitActive && camB) {
+    const halfW = window.innerWidth / 2;
+    camB.aspect = halfW / window.innerHeight;
+    camB.updateProjectionMatrix();
+    camera.aspect = halfW / window.innerHeight;
+    camera.updateProjectionMatrix();
+  }
   // The tab row can wrap to a different number of rows at the new width, so
   // re-seat the panels beneath it.
   syncPickerTabLayout();

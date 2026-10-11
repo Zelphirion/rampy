@@ -138,6 +138,8 @@ export function addPeople(scene) {
         if (d < trigger && (!closest || d < closest.dist)) closest = { dx, dz, dist: d };
       };
       consider(threats.player, FLEE_PLAYER_TRIGGER);
+      // Player 2's car in split-screen scares them just as much as Player 1's.
+      consider(threats.player2, FLEE_PLAYER_TRIGGER);
       consider(threats.robot, FLEE_ROBOT_TRIGGER);
 
       if (closest) {

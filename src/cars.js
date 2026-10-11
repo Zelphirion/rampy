@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 // Stamp matches main.js's import of this module — see the note in firetruck.js.
-import { makePerson } from './people.js?v=1791479956919';
+import { makePerson } from './people.js?v=1799999999999';
 
 // ===== Shared car materials =====
 const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa61e1e, roughness: 0.6 });
@@ -980,24 +980,30 @@ export function createSchoolBus() {
 
   // ===== Red marker "eyebrows": low over the windshield, and over the back =====
   // Little ROUND lamps (glowing red lenses with a chrome collar), tilted so
-  // the outer ends sit higher — two angry brows, front and rear. They live in
-  // the header panel right above the glass, not up on the roof.
-  const roundLamp = (x, y, z, rz) => {
+  // the outer ends sit higher — two angry brows, front and rear. The lens and
+  // its collar face straight OUT along the bus's length (front lamps forward,
+  // rear lamps rearward) rather than sideways; the `face` group aims them and
+  // the nested `pivot` rolls the ring so the outer end sits higher.
+  const roundLamp = (x, y, z, out, roll) => {
+    const face = new THREE.Group();
+    face.position.set(x, y, z);
+    face.rotation.y = out < 0 ? Math.PI : 0;   // front lamps point -X
     const pivot = new THREE.Group();
-    pivot.position.set(x, y, z);
-    pivot.rotation.z = rz;
+    pivot.rotation.x = roll;
+    face.add(pivot);
     const lens = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 8), busRed);
-    lens.position.x = 0.05;
+    lens.position.x = 0.13;
     lens.castShadow = true;
     pivot.add(lens);
     const collar = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.045, 8, 16), busChrome);
-    collar.position.set(0.05, 0, 0);
+    collar.rotation.y = Math.PI / 2;           // ring stands in the YZ plane, facing along X
+    collar.position.x = 0.1;
     pivot.add(collar);
-    group.add(pivot);
+    group.add(face);
   };
   for (const sz of [-1, 1]) {
-    roundLamp(-3.1, 2.66, sz * 0.5, sz * 0.3);
-    roundLamp(3.3, 2.66, sz * 0.5, -sz * 0.3);
+    roundLamp(-3.12, 2.66, sz * 0.5, -1, sz * 0.28);   // front, faces forward
+    roundLamp(3.36, 2.66, sz * 0.5, 1, sz * 0.28);      // rear, faces rearward
   }
 
   // ===== Rear emergency-exit door — two leaves on the BACK of the bus =====

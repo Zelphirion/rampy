@@ -386,7 +386,7 @@ test('cutscenes still win over the plan view', () => {
     'if (spiralCine.active) {',
     'if (tunnelAscentCine.active) {',
     'if (mineAscent.active) {',
-    'if (buildingLevitate.active && buildingLevitate.levitating) {',
+    'if (buildingLevitate.active && buildingLevitate.levitating && (buildingLevitate.rider || 0) === 0) {',
     'if (_postCineTimer > 0) {',
   ]) {
     const at = src.indexOf(marker);

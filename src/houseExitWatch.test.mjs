@@ -126,6 +126,9 @@ function harness() {
     jumpState: { inAir: false, yVelocity: 0 },
     groundHeight: 0,
     portalGrace: 0,
+    // updateHousePortal consults these for the split-screen (two-car) trigger.
+    splitActive: false,
+    car2: null,
     // Cinematic shrink state read/written by updateHousePortal (see main.js).
     portalCarScale: 1,
     PORTAL_CAR_SHRINK: 0.42,
@@ -153,6 +156,10 @@ function harness() {
     // is not what this test is about, so it is a no-op here rather than dragging
     // the whole house scene, ROOMS and the fog table into the sandbox.
     updateHouseGarageFog() {},
+    // completeHouseSwap now brings Player 2 along through the swap; single-player
+    // in this harness (splitActive:false, car2:null), so the real one would no-op
+    // anyway. Stub it so the eval'd body resolves the symbol.
+    placePlayerTwoNearP1() {},
   };
 
   // `worldState` is a module-scope `let` in main.js, so it has to be a `let` in
