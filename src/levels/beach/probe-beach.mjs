@@ -1,6 +1,10 @@
-// Headless runtime probe for the beach revision. Not part of the suite: it needs
-// the local three.js copy, so it is run by hand.
-//   node --import ./three-cdn-loader.mjs ../../probe-beach.mjs
+// Headless runtime probe for the beach revision. Not part of the suite: it
+// simulates minutes of crab/gull/mermaid time, so it is run by hand. From the
+// repo root:
+//   node --import ./src/objects/nodeShims.mjs src/levels/beach/probe-beach.mjs
+// nodeShims supplies the document/window globals the level modules touch at
+// import time and points the CDN three import at the local npm copy, so no
+// network and no --loader flags are needed.
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { createBeachWorld } from './index.js';
 import { beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_REEFS, REEF_COLLIDER_R, BEACH_RIM_Z, BEACH_SHORE_Z, BEACH_BASIN_Y, BEACH_SEA_Y, BEACH_MAP_X0, BEACH_MAP_X1 } from './layout.js';

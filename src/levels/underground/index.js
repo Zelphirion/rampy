@@ -7,7 +7,7 @@ import { MOUNT, coneRadiusAt, coneSkinSegments, spiralSegments, mountainBlockers
 // The Pneumatic Express Tube: pure path math (verified by expressTube.test.mjs).
 // This file turns the sampled centre line into a glass TubeGeometry and the
 // travelling air-jet rings; main.js imports the same module for the forced ride.
-import { EXPRESS_TUBE, expressTubeSamples, expressTubePoint, expressTubeTangent } from '../../modules/expressTube.js?v=1790708040365';
+import { EXPRESS_TUBE, expressTubeSamples, expressTubePoint, expressTubeTangent } from '../../modules/expressTube.js?v=1791479956919';
 
 export const UNDERGROUND_Y = -30;
 

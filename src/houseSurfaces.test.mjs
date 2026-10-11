@@ -87,15 +87,18 @@ test('surfacesAt lists every surface at a point, low to high', () => {
   assert.deepEqual(surfacesAt(list, 100, 100), []);
 });
 
-// The bathtub, as the level actually builds it: a tiled pad at floor height
-// running round the tub, and the tub itself as a bowl sunk below that floor with
-// its rim level with it.
+// A reference bathtub, of the shape the module was designed around: a tiled pad
+// at floor height running round the tub, and the tub itself as a bowl sunk below
+// that floor with its rim level with it.
+//
+// This is NOT a mirror of the live bathroom — that is authored in
+// levels/house/index.js and moves with the room. What this pins down is the
+// MATHS the live layout relies on: that the tile holds the car up, that once the
+// car is IN the tub it is on the dish, and that the surfboard (a wedge) carries
+// it up to the rim.
 //
 // The wall of the tub is NOT one of these surfaces — it is a collider the house
-// builder pushes, because a heightfield cannot express a vertical. What the
-// surfaces have to get right is everything else: that the tile holds the car up,
-// that once the car is IN the tub it is on the dish, and that the surfboard (a
-// wedge) carries it up to the rim.
+// builder pushes, because a heightfield cannot express a vertical.
 const TILE_Y = 0.6;                                  // the tiled surround
 const TUB = bowl(70, 30, 9, 5, TILE_Y, 4.5, { steep: 0.9 });
 // The tile is a RING, four pads, not one pad over everything. A single pad over the

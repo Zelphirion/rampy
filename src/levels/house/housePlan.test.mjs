@@ -22,7 +22,9 @@ const NAMES = Object.keys(ROOMS);
 //   kitchen | dining    the cased opening you cook across
 //   dining  | foyer     no wall between them at all
 //   living  | hall      one long room with the front rooms off it
-//   hall    | bathroom  the bathroom opens straight onto the hall
+//
+// The bathroom used to be open to the hall too; it now has a wall with a
+// doorway, because that is what a bathroom is.
 //
 // Spelled out here rather than inferred, because "there is no wall covering this
 // boundary" is not the same claim as "these two rooms are meant to be one
@@ -33,7 +35,6 @@ const OPEN_PLAN = [
   ['kitchen', 'dining'],
   ['dining', 'foyer'],
   ['living', 'hall'],
-  ['hall', 'bathroom'],
 ];
 const isOpenPlan = (a, b) => OPEN_PLAN.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
 
@@ -181,11 +182,11 @@ test('the house is a square', () => {
   assert.ok(w >= 176, `the house is only ${w} across`);
 });
 
-test('the arrival point is in the foyer, and the exit trigger in the dark garage', () => {
+test('the arrival point is in the dark garage, and the exit trigger too', () => {
   const inRoom = (r, p) => p.x > r.x0 && p.x < r.x1 && p.z > r.z0 && p.z < r.z1;
   const exitMid = { x: (HOUSE_EXIT.x0 + HOUSE_EXIT.x1) / 2, z: (HOUSE_EXIT.z0 + HOUSE_EXIT.z1) / 2 };
-  assert.ok(inRoom(ROOMS.foyer, HOUSE_START),
-    `the arrival point (${HOUSE_START.x}, ${HOUSE_START.z}) is not in the foyer`);
+  assert.ok(inRoom(ROOMS.darkGarage, HOUSE_START),
+    `the arrival point (${HOUSE_START.x}, ${HOUSE_START.z}) is not in the dark garage`);
   assert.ok(inRoom(ROOMS.darkGarage, exitMid),
     `the exit trigger (${exitMid.x}, ${exitMid.z}) is not in the dark garage`);
 });

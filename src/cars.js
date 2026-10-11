@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 // Stamp matches main.js's import of this module — see the note in firetruck.js.
-import { makePerson } from './people.js?v=1790712527620';
+import { makePerson } from './people.js?v=1791479956919';
 
 // ===== Shared car materials =====
 const bodyMat = new THREE.MeshStandardMaterial({ color: 0xa61e1e, roughness: 0.6 });
@@ -245,6 +245,13 @@ export function createFiretruck() {
   // ===== Big roof deck-gun nozzle (aimed by the firefighter AI) =====
   const nozzlePivot = new THREE.Group();
   nozzlePivot.position.set(1.45, 2.55, 0);
+  // Stowed pointing down the road. The barrel is built along +Y — that is the
+  // axis the AI lays on a target by rotating the pivot's +Y onto the shot — so
+  // it is the PIVOT that gets turned, a quarter turn about Z to bring that +Y
+  // round to -X, the truck's forward. Doing it here rather than in the barrel's
+  // own geometry keeps the aiming maths in firetruck.js honest: it still asks
+  // for "+Y onto the fire" and still gets it.
+  nozzlePivot.rotation.z = Math.PI / 2;
   const nozzleMount = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 0.4, 14), dark.clone());
   nozzleMount.position.y = 0.2;
   nozzleMount.castShadow = true;
@@ -257,6 +264,9 @@ export function createFiretruck() {
   nozzleCollar.position.y = 1.62;
   nozzlePivot.add(nozzleCollar);
   group.add(nozzlePivot);
+  // The stow pose as a quaternion, so the AI can ease back to it when the water
+  // is off instead of leaving the gun slewed at where the fire used to be.
+  group.userData.nozzleRest = nozzlePivot.quaternion.clone();
 
   // ===== Wheels: 3 axles, front pair steers =====
   const wheels = [];
@@ -1694,8 +1704,13 @@ export function createRaccoonHotRod() {
 // so it reads as a taco stand on wheels from any angle, which matters because
 // the showroom turns it.
 //
+// The back is the payoff: two big glazed doors, and a kitchen behind them — a
+// griddle running the length of one wall, a shelf of tinned beans and little
+// pots on the other, and a rail of chillies and garlic hanging over the middle
+// that swings with the truck.
+//
 // Faces -X like every other car here, and exposes the same { wheels,
-// wheelPivots } contract so the game loop spins and steers it like the rest.
+// wheelPivots, swing } contract so the game loop spins, steers and swings it.
 const tacoRed = new THREE.MeshStandardMaterial({ color: 0xd8451f, roughness: 0.55 });
 const tacoCream = new THREE.MeshStandardMaterial({ color: 0xf6e7c4, roughness: 0.5 });
 const tacoGreen = new THREE.MeshStandardMaterial({ color: 0x3f7d3a, roughness: 0.55 });
@@ -1705,22 +1720,69 @@ const tacoWheelGeometry = new THREE.CylinderGeometry(0.58, 0.58, 0.34, 18);
 
 export function createTacoTruck() {
   const group = new THREE.Group();
-  const box = (w, h, d, mat, x, y, z) => {
+  const mkBox = (parent, w, h, d, mat, x, y, z) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat.clone());
     m.position.set(x, y, z);
     m.castShadow = true;
     m.receiveShadow = true;
-    group.add(m);
+    parent.add(m);
     return m;
   };
+  const box = (w, h, d, mat, x, y, z) => mkBox(group, w, h, d, mat, x, y, z);
 
   // ===== Cab (front, faces -X) =====
-  box(2.5, 1.9, 2.2, tacoRed, -2.5, 1.45, 0);
-  box(2.4, 0.16, 2.1, tacoCream, -2.5, 2.5, 0);          // cab roof
-  const screen = box(1.7, 0.62, 1.9, glassMat.clone(), -3.2, 2.05, 0);
-  screen.rotation.z = 0.42;                              // raked windscreen
-  box(1.9, 0.5, 0.12, glassMat.clone(), -2.5, 1.85, 1.1); // side windows
-  box(1.9, 0.5, 0.12, glassMat.clone(), -2.5, 1.85, -1.1);
+  // Hollow, like the serving box behind it: the side and windscreen openings
+  // are real holes with glass in them, so these windows are see-through the
+  // way the rear door windows are. A solid block would put red bodywork right
+  // behind every pane, and a pane over bodywork reads as a painted panel —
+  // which is what the duplicated 0.72-opacity slabs below used to look like.
+  const tacoGlass = new THREE.MeshStandardMaterial({
+    color: 0xdff1fb, roughness: 0.12, transparent: true, opacity: 0.24,
+    side: THREE.DoubleSide,
+  });
+  const cwall = 0.14;
+  // Solid up to the floor line: the front wheels (top y 1.16) must stay buried
+  // under it, and from outside this band is just bodywork.
+  box(2.5, 0.7, 2.2, tacoRed, -2.5, 0.85, 0);              // lower solid, floor top 1.20
+  box(2.5, cwall, 2.2, tacoRed, -2.5, 2.33, 0);            // ceiling slab (2.26..2.40)
+  box(2.4, 0.16, 2.1, tacoCream, -2.5, 2.5, 0);            // cab roof
+  for (const s of [1, -1]) {
+    // Side wall around the window hole (hole x -3.45..-1.55, y 1.60..2.10).
+    box(2.22, 0.4, cwall, tacoRed, -2.5, 1.4, s * 1.03);   // below the window
+    box(2.22, 0.16, cwall, tacoRed, -2.5, 2.18, s * 1.03); // above the window
+    box(0.3, 0.5, cwall, tacoRed, -3.6, 1.85, s * 1.03);   // front pillar
+    box(0.16, 0.5, cwall, tacoRed, -1.47, 1.85, s * 1.03); // rear pillar
+    const pane = box(1.92, 0.52, 0.03, tacoGlass, -2.5, 1.85, s * 1.03);
+    pane.castShadow = false;
+  }
+  // Front wall around the windscreen hole (y 1.60..2.10, z -0.95..0.95).
+  box(cwall, 0.4, 2.2, tacoRed, -3.68, 1.4, 0);            // below
+  box(cwall, 0.16, 2.2, tacoRed, -3.68, 2.18, 0);          // above
+  for (const s of [1, -1]) box(cwall, 0.5, 0.15, tacoRed, -3.68, 1.85, s * 1.025);
+  const screen = box(0.04, 0.54, 1.94, tacoGlass, -3.68, 1.85, 0);
+  screen.castShadow = false;
+  box(cwall, 1.06, 2.2, tacoRed, -1.32, 1.73, 0);          // rear wall, cab -> box
+  // What you see through the glass: bench seat, dash, wheel.
+  const seatMat = new THREE.MeshStandardMaterial({ color: 0x2f3542, roughness: 0.85 });
+  box(0.6, 0.28, 1.5, seatMat, -2.1, 1.34, 0);             // cushion, top at 1.48
+  box(0.15, 0.6, 1.5, seatMat, -1.83, 1.78, 0);            // backrest
+  box(0.25, 0.24, 1.85, dark, -3.485, 1.32, 0);            // dash, flush to the front wall
+  // Wheel on a column that reaches back to the dash, leaning as a column does.
+  const wheelGrp = new THREE.Group();
+  wheelGrp.position.set(-3.1, 1.6, -0.45);
+  group.add(wheelGrp);
+  const rimLean = new THREE.Group();
+  rimLean.rotation.z = -0.45;                              // top leans back to the driver
+  wheelGrp.add(rimLean);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.035, 6, 14), dark.clone());
+  rim.rotation.y = Math.PI / 2;
+  rim.castShadow = true;
+  rimLean.add(rim);
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.4, 8), dark.clone());
+  column.position.set(-0.175, -0.1, 0);
+  column.rotation.z = 2.086;                               // axis: wheel centre -> dash
+  column.castShadow = true;
+  wheelGrp.add(column);
   box(0.2, 0.8, 1.6, tacoCream, -3.82, 0.95, 0);         // grille
   box(0.14, 0.3, 0.32, lightMat.clone(), -3.9, 1.25, -0.6);
   box(0.14, 0.3, 0.32, lightMat.clone(), -3.9, 1.25, 0.6);
@@ -1730,16 +1792,160 @@ export function createTacoTruck() {
   box(0.42, 0.5, 0.42, tacoSteel, -1.75, 2.82, -0.5);
 
   // ===== Serving box (rear) =====
-  // Taller and wider than the cab, with a cream serving hatch folded up on the
-  // +Z flank and a dark serving window behind it.
-  box(4.6, 2.5, 2.55, tacoRed, 0.95, 1.85, 0);
-  box(4.65, 0.2, 2.6, tacoCream, 0.95, 3.16, 0);         // box roof
+  // Built as a hollow shell rather than one solid block, because the back of
+  // this truck now has two big glazed doors in it and the whole point of the
+  // doors is that you can see the kitchen through them.
+  const BX0 = -1.35, BX1 = 3.25, BY0 = 0.6, BY1 = 3.1, BZ = 1.275;
+  const bcx = (BX0 + BX1) / 2, bw = BX1 - BX0;
+  const bh = BY1 - BY0, bcy = (BY0 + BY1) / 2;
+  const wall = 0.14;
+  box(bw, wall, BZ * 2, tacoRed, bcx, BY0 + wall / 2, 0);              // floor
+  box(bw, wall, BZ * 2, tacoRed, bcx, BY1 - wall / 2, 0);              // ceiling
+  box(bw, bh, wall, tacoRed, bcx, bcy, -(BZ - wall / 2));              // -Z wall
+  box(bw, bh, wall, tacoRed, bcx, bcy, +(BZ - wall / 2));              // +Z wall
+  box(wall, bh, BZ * 2, tacoRed, BX0 + wall / 2, bcy, 0);              // cab-side wall
+  box(4.65, 0.2, 2.6, tacoCream, 0.95, 3.16, 0);                       // box roof
+
+  // ===== Rear doors: two big leaves, each with a window you see through =====
+  // (tacoGlass is shared with the cab windows and lives up in the cab section.)
+  const DOOR_H = bh - 0.08;
+  const DOOR_W = (BZ * 2 - 0.14) / 2;
+  for (const s of [1, -1]) {
+    // Hinged on the outer jamb, so the leaf reads as a door and not a panel.
+    const hinge = new THREE.Group();
+    hinge.position.set(BX1, bcy, s * (BZ - 0.07));
+    group.add(hinge);
+    const leaf = new THREE.Group();
+    leaf.position.z = -s * DOOR_W / 2;
+    hinge.add(leaf);
+    const frameM = tacoCream;
+    const rail = 0.34, stile = 0.13;
+    mkBox(leaf, 0.1, rail, DOOR_W, frameM, 0, -DOOR_H / 2 + rail / 2, 0);
+    mkBox(leaf, 0.1, rail, DOOR_W, frameM, 0, DOOR_H / 2 - rail / 2, 0);
+    mkBox(leaf, 0.1, DOOR_H, stile, frameM, 0, 0, s * (DOOR_W / 2 - stile / 2));
+    mkBox(leaf, 0.1, DOOR_H, stile, frameM, 0, 0, -s * (DOOR_W / 2 - stile / 2));
+    // The window itself: most of the leaf is glass, which is what lets the
+    // grill and the shelf read from the street.
+    const pane = mkBox(leaf, 0.03, DOOR_H - rail * 2 - 0.1, DOOR_W - stile * 2 - 0.1,
+      tacoGlass, 0, 0, 0);
+    pane.castShadow = false;
+    // A bar handle on the inner stile, on the outside face.
+    mkBox(leaf, 0.16, 0.5, 0.1, tacoSteel, 0.1, 0, -s * (DOOR_W / 2 - stile - 0.16));
+  }
+
+  // ===== The kitchen you can now see through those windows =====
+  // A griddle running the length of the -Z wall — the "big long grill".
+  {
+    const gx = 0.85, gz = -0.7;
+    box(3.0, 0.85, 0.94, tacoSteel, gx, 1.1, gz);                  // body
+    box(3.06, 0.09, 0.86, new THREE.MeshStandardMaterial({ color: 0x2b2f36, roughness: 0.6, metalness: 0.4 }),
+      gx, 1.56, gz);                                               // hot plate
+    box(3.0, 0.5, 0.1, tacoSteel, gx, 1.82, -1.14);                // backsplash
+    for (let i = 0; i < 5; i++) {
+      const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.1, 10), tacoCream.clone());
+      knob.rotation.x = Math.PI / 2;
+      knob.position.set(gx - 1.1 + i * 0.55, 1.28, gz + 0.5);
+      group.add(knob);
+    }
+    // A couple of things cooking, so the plate is not bare.
+    for (let i = 0; i < 3; i++) {
+      const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.06, 14), tacoCream.clone());
+      shell.position.set(gx - 0.9 + i * 0.9, 1.63, gz + 0.1);
+      group.add(shell);
+    }
+  }
+
+  // A shelf of tinned beans and little pots against the +Z wall.
+  {
+    const sx = 1.2, sy = 1.72, sz = 0.92;
+    box(3.0, 0.09, 0.5, tacoCream, sx, sy, sz);
+    box(3.0, 0.07, 0.5, tacoCream, sx, sy + 0.72, sz);            // second shelf
+    const beanMats = [
+      new THREE.MeshStandardMaterial({ color: 0x9c2b22, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: 0x2f6f34, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: 0xd8a13a, roughness: 0.5 }),
+    ];
+    for (let i = 0; i < 6; i++) {
+      const can = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.4, 12),
+        beanMats[i % 3].clone());
+      can.position.set(sx - 1.2 + i * 0.46, sy + 0.25, sz - 0.06);
+      can.castShadow = true;
+      group.add(can);
+      // The label band, so they read as tins and not pills.
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.165, 0.165, 0.14, 12), tacoCream.clone());
+      band.position.copy(can.position);
+      group.add(band);
+    }
+    for (let i = 0; i < 4; i++) {
+      const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.16, 0.24, 12), tacoSteel.clone());
+      pot.position.set(sx - 1.0 + i * 0.6, sy + 0.99, sz - 0.04);
+      pot.castShadow = true;
+      group.add(pot);
+      const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.05, 12), tacoSteel.clone());
+      lid.position.set(pot.position.x, pot.position.y + 0.14, pot.position.z);
+      group.add(lid);
+    }
+  }
+
+  // ===== The hanging rail: chillies, garlic and a little pot on strings =====
+  // Everything on it hangs from its own pivot, and the frame loop swings those
+  // pivots with the truck's acceleration and its turn, so the stock swings
+  // toward whichever way the truck is heading.
+  const RAIL_Y = 2.6, RAIL_Z = 0.42;
+  box(3.0, 0.07, 0.07, tacoSteel, 1.1, RAIL_Y, RAIL_Z);
+  box(0.07, 0.5, 0.07, tacoSteel, -0.35, RAIL_Y + 0.25, RAIL_Z + 0.0);
+  box(0.07, 0.5, 0.07, tacoSteel, 2.55, RAIL_Y + 0.25, RAIL_Z + 0.0);
+  const hangers = [];
+  const hangAt = (x, build) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, RAIL_Y - 0.03, RAIL_Z);
+    group.add(pivot);
+    build(pivot);
+    hangers.push({ pivot, ax: 0, vx: 0, az: 0, vz: 0 });
+  };
+  const chiliM = new THREE.MeshStandardMaterial({ color: 0xc42230, roughness: 0.45 });
+  const garlicM = new THREE.MeshStandardMaterial({ color: 0xefe4d0, roughness: 0.6 });
+  for (let i = 0; i < 5; i++) {
+    hangAt(-0.1 + i * 0.5, (p) => {
+      // A short string, then a chilli hanging point-down.
+      const string = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6), tacoCream.clone());
+      string.position.y = -0.11;
+      p.add(string);
+      const pod = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.46, 7), chiliM.clone());
+      pod.rotation.x = Math.PI;
+      pod.position.y = -0.44;
+      pod.castShadow = true;
+      p.add(pod);
+    });
+  }
+  hangAt(2.35, (p) => {
+    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.18, 6), tacoCream.clone());
+    string.position.y = -0.09;
+    p.add(string);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), garlicM.clone());
+    bulb.position.y = -0.33;
+    bulb.castShadow = true;
+    p.add(bulb);
+  });
+  hangAt(0.0, (p) => {
+    const string = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.2, 6), tacoCream.clone());
+    string.position.y = -0.1;
+    p.add(string);
+    const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.12, 0.2, 10), tacoSteel.clone());
+    pot.position.y = -0.3;
+    pot.castShadow = true;
+    p.add(pot);
+  });
+
+  // The serving box's flank keeps its folded-up hatch and dark serving window
+  // as decoration — the doors in the back are what you actually see through.
   box(4.2, 1.15, 0.14, tacoCream, 0.95, 2.2, 1.34);      // hatch surround
   box(3.5, 0.8, 0.1, new THREE.MeshStandardMaterial({ color: 0x2a2016, roughness: 0.9 }),
       0.95, 2.2, 1.42);                                   // the serving window
   // The hatch awning, hinged up above the window.
   const awning = box(4.2, 0.1, 0.9, tacoGreen, 0.95, 3.0, 1.75);
   awning.rotation.x = -0.35;
+
 
   // A painted taco on the flank — three shell wedges and a filling stripe.
   for (let i = 0; i < 3; i++) {
@@ -1788,129 +1994,10 @@ export function createTacoTruck() {
   });
   group.userData.wheels = wheels;
   group.userData.wheelPivots = wheelPivots;
+  // The hanging chillies and pots on the rail, ticked by the frame loop while
+  // this truck is the one you are driving.
+  group.userData.swing = { hangers, prevV: 0 };
 
-  return group;
-}
-
-// ===== Crab (playable) =====
-// A beach crab at driveable scale: wide flat carapace, two big claws in front,
-// eight legs down the sides and two stalks for the eyes, plus little googly eyes
-// that face you. It is NOT a car, so it has no wheels — the legs scissor
-// sideways in userData.crabLegs, which main.js strides off the car's speed.
-const crabShellMat = new THREE.MeshStandardMaterial({ color: 0xd9502f, roughness: 0.62 });
-const crabUnderMat = new THREE.MeshStandardMaterial({ color: 0xf0b48a, roughness: 0.7 });
-const crabLegMat = new THREE.MeshStandardMaterial({ color: 0xb03a1e, roughness: 0.65 });
-const crabClawMat = new THREE.MeshStandardMaterial({ color: 0xe0603a, roughness: 0.6 });
-const crabEyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-
-export function createCrab() {
-  const group = new THREE.Group();
-
-  // Carapace: one wide flattened dome, wider than it is long, sitting on a
-  // paler underside so it reads as a crab from below as it scuttles past.
-  const shell = new THREE.Mesh(new THREE.SphereGeometry(1.5, 20, 12), crabShellMat.clone());
-  shell.scale.set(1.15, 0.5, 0.82);
-  shell.position.y = 0.72;
-  shell.castShadow = true;
-  shell.receiveShadow = true;
-  group.add(shell);
-
-  const under = new THREE.Mesh(new THREE.SphereGeometry(1.32, 16, 10), crabUnderMat.clone());
-  under.scale.set(1.14, 0.34, 0.8);
-  under.position.y = 0.5;
-  group.add(under);
-
-  // A ridge of spines along the back of the shell.
-  for (let i = 0; i < 5; i++) {
-    const spine = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 5), crabClawMat.clone());
-    spine.position.set(0.9 - i * 0.45, 1.24 - Math.abs(i - 2) * 0.03, 0);
-    spine.rotation.z = -0.3 + i * 0.14;
-    spine.castShadow = true;
-    group.add(spine);
-  }
-
-  // Two eye stalks, tipped with googly eyes.
-  const eyes = [];
-  for (const sz of [0.42, -0.42]) {
-    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 0.5, 8), crabLegMat.clone());
-    stalk.position.set(1.02, 1.16, sz);
-    stalk.rotation.z = -0.34;
-    group.add(stalk);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 10), crabEyeMat.clone());
-    ball.position.set(1.14, 1.42, sz);
-    group.add(ball);
-    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.4 }));
-    pupil.position.set(1.28, 1.44, sz);
-    group.add(pupil);
-    eyes.push(ball, pupil);
-  }
-
-  // The claws. Each is an upper arm, a forearm and a two-part pincer that opens
-  // and closes a little, so the crab looks alive rather than moulded.
-  const claws = [];
-  for (const sz of [1.35, -1.35]) {
-    const arm = new THREE.Group();
-    arm.position.set(0.85, 0.78, sz);
-    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.16, 0.95, 8), crabLegMat.clone());
-    upper.rotation.z = -1.05;
-    upper.position.set(0.42, 0.08, 0);
-    upper.castShadow = true;
-    arm.add(upper);
-    // The pincer body.
-    const palm = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), crabClawMat.clone());
-    palm.scale.set(1.15, 0.85, 0.8);
-    palm.position.set(1.05, 0.24, 0);
-    palm.castShadow = true;
-    arm.add(palm);
-    // Two jaws that pinch shut; `jaw` groups are held so the frame loop can
-    // snap them when the crab is moving.
-    const jaws = [];
-    for (const jy of [0.16, -0.16]) {
-      const jaw = new THREE.Group();
-      jaw.position.set(1.4, 0.24, 0);
-      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.5, 6), crabClawMat.clone());
-      tip.rotation.z = -Math.PI / 2;
-      tip.position.x = 0.22;
-      tip.castShadow = true;
-      jaw.add(tip);
-      arm.add(jaw);
-      jaws.push({ jaw, jy });
-    }
-    group.add(arm);
-    claws.push({ arm, jaws, sz });
-  }
-
-  // Eight legs, four a side. Each is two segments on a pivot so they can
-  // scissor: the group swings side to side about Y, exactly the rig the robot
-  // and the tarantula use for their walk.
-  const legs = [];
-  for (let i = 0; i < 8; i++) {
-    const sz = i < 4 ? 1 : -1;
-    const idx = i % 4;
-    const pivot = new THREE.Group();
-    pivot.position.set(0.6 - idx * 0.62, 0.66, sz * 1.12);
-    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 0.78, 6), crabLegMat.clone());
-    thigh.rotation.x = sz * 1.15;
-    thigh.position.set(0, -0.1, sz * 0.32);
-    thigh.castShadow = true;
-    pivot.add(thigh);
-    const shin = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.62, 6), crabLegMat.clone());
-    shin.position.set(0, -0.5, sz * 0.62);
-    shin.rotation.x = sz * 0.5;
-    shin.castShadow = true;
-    pivot.add(shin);
-    group.add(pivot);
-    legs.push(pivot);
-  }
-
-  group.userData.wheels = [];
-  group.userData.wheelPivots = [];
-  // The crab's own walk rig. `crabLegs` is what main.js strides off the car's
-  // speed; `crabClaws` lets it pinch while it scuttles.
-  group.userData.crabLegs = legs;
-  group.userData.crabClaws = claws;
-  group.userData.crabEyes = eyes;
   return group;
 }
 

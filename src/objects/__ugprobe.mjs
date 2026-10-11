@@ -1,6 +1,8 @@
 import './nodeShims.mjs';
-import * as THREE from 'three';
-import { addUnderground } from '../levels/underground/index.js';
+// Dynamic, for the same reason as __probe.mjs: the CDN-three redirect is only
+// in place once nodeShims has been evaluated.
+const THREE = await import('three');
+const { addUnderground } = await import('../levels/underground/index.js');
 
 const count = (o) => { let n = 0; o.traverse((m) => { if (m.isMesh) n++; }); return n; };
 const g = new THREE.Group();

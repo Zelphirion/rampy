@@ -57,6 +57,10 @@ const M = {
   doorDark: new THREE.MeshStandardMaterial({ color: 0x2b2622, roughness: 0.85 }),
   ventDark: new THREE.MeshStandardMaterial({ color: 0x3c4148, roughness: 0.6, metalness: 0.4 }),
   stonePale: new THREE.MeshStandardMaterial({ color: 0xb9b3a6, roughness: 0.9 }),
+  // Utility pipework on the service elevations. A blue water main and a yellow
+  // gas run are what a back wall is actually identified by.
+  pipeWater: new THREE.MeshStandardMaterial({ color: 0x4173a6, roughness: 0.55, metalness: 0.3 }),
+  pipeGas: new THREE.MeshStandardMaterial({ color: 0xd6b03c, roughness: 0.6, metalness: 0.25 }),
   // Metal
   metal: new THREE.MeshStandardMaterial({ color: 0x8f96a0, roughness: 0.4, metalness: 0.7 }),
   metalDark: new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.5, metalness: 0.6 }),
@@ -106,6 +110,248 @@ const blinkers = [];
 // two entries every time somebody opened the Objects tab. The geometry is the
 // same either way; only the world-facing registration is skipped.
 let standaloneBuild = false;
+
+// ============================================================================
+// City power
+// ============================================================================
+// The city is a night scene, so "the lights are on" is literally the emissive
+// term on a handful of shared materials. A blackout therefore does not need a
+// per-lamp switch: drop those materials' emissive intensity to zero and every
+// window, sign and lamp standard in the city goes out at once, then put the
+// saved values back when the power returns. `POWER_GLOW_KEYS` covers the glow
+// materials created through cached() rather than declared in M.
+const POWER_MATS = ['windowLit', 'windowCool', 'storefront', 'alarmRed', 'signRed',
+  'signGreen', 'signAmber', 'medicalRed', 'warning'];
+const POWER_GLOW_KEYS = ['lampGlow', 'canopyLamp'];
+const powerSaved = new Map();
+let cityPowerOn = true;
+
+function setCityPower(on) {
+  if (on === cityPowerOn) return cityPowerOn;
+  cityPowerOn = on;
+  const dim = (key, m) => {
+    if (!m || typeof m.emissiveIntensity !== 'number') return;
+    if (on) {
+      if (powerSaved.has(key)) m.emissiveIntensity = powerSaved.get(key);
+    } else {
+      powerSaved.set(key, m.emissiveIntensity);
+      m.emissiveIntensity = 0;
+    }
+  };
+  for (const key of POWER_MATS) dim(key, M[key]);
+  for (const key of POWER_GLOW_KEYS) dim(key, geoCache.get(key));
+  return cityPowerOn;
+}
+
+// True while the city is blacked out. main.js reads this to take the street
+// lamp bulbs out as well - they live in props.js and cannot see M.
+export function cityPowerOut() { return !cityPowerOn; }
+
+// The substation's transformer knockable and its spark shower, wired up by
+// substation() and driven by updateCityBuildings(). Both are null for a
+// standalone build, which registers no knockables.
+let xfmrKnock = null;
+let sparkFx = null;
+let substationDown = false;
+
+// ---- Substation demolition -------------------------------------------------
+// The station is one big rigged charge. Every piece of kit -- the transformer,
+// the gantry, the switchgear, the kiosk, the hazard band, the signs, the trench
+// covers and the bollards -- is armed behind a heavyweight knockable, so a heavy
+// ride touching ANY of it detonates the whole yard: the flashbang and arc-flash
+// shower go off, the city blacks out, and every piece of gear is blasted UP,
+// outward and scattered around the yard (a debris-pile, not the sandcastle's
+// slow fold into the middle). The gravel slab never moves -- it is the ground
+// you ride back over. `subTriggers` are the armed sensors, `subPieces` the
+// launch plan, and `subColliders` the yard's own world colliders, forced `soft`
+// the instant the charge goes up so the car drives straight through the ruin.
+let subPieces = null;
+let subTriggers = [];
+let subDust = null;
+let subColliders = [];
+let subState = 'standing';    // standing | exploding | blown
+let subT = -1;
+let subDustSeq = 0;
+let subBurstLeft = 0;
+let subBurstAcc = 0;
+let subLastT = 0;
+const SUB_BLAST = 1.4;        // seconds the kit is still tumbling
+const SUB_GRAV = 22;          // gravity pulling the flung gear back down
+const SUB_DUST_MAX = 240;
+
+let subDustTex = null;
+function subDustTexture() {
+  if (subDustTex) return subDustTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(158,153,143,0.85)');
+  grad.addColorStop(0.55, 'rgba(126,121,112,0.45)');
+  grad.addColorStop(1, 'rgba(104,100,93,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 32, 32);
+  subDustTex = new THREE.CanvasTexture(c);
+  return subDustTex;
+}
+
+function makeSubDust(parent) {
+  const tex = subDustTexture();
+  const pool = [];
+  for (let i = 0; i < SUB_DUST_MAX; i++) {
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0 });
+    const s = new THREE.Sprite(mat);
+    s.visible = false;
+    parent.add(s);
+    pool.push({ sprite: s, vx: 0, vy: 0, vz: 0, life: 0, maxLife: 1 });
+  }
+  return pool;
+}
+
+function spawnSubDust(cx, cy, cz, speed) {
+  if (!subDust) return;
+  const p = subDust[subDustSeq % SUB_DUST_MAX];
+  subDustSeq++;
+  p.sprite.visible = true;
+  p.sprite.position.set(cx, cy, cz);
+  const a = Math.random() * Math.PI * 2;
+  const out = 0.4 + Math.random() * 1.1;
+  p.vx = Math.cos(a) * out * speed;
+  p.vz = Math.sin(a) * out * speed;
+  p.vy = (0.7 + Math.random() * 1.5) * speed;
+  p.maxLife = 1.2 + Math.random() * 1.7;
+  p.life = p.maxLife;
+  const s = 0.6 + Math.random() * 1.2;
+  p.sprite.scale.set(s, s, 1);
+  p.sprite.material.opacity = 0.8;
+}
+
+// One-time launch plan: every piece of kit gets its own tray of DANGER. Up,
+// outward away from the blast epicentre, tumbling, so the yard flies apart and
+// scatters rather than folding in on itself like the sandcastle did.
+function planSubstationBlast(pieces, epiX, epiZ) {
+  return pieces.map((m) => {
+    const p = m.position;
+    const dx = p.x - epiX, dz = p.z - epiZ;
+    const dlen = Math.hypot(dx, dz) || 1;
+    const out = 5 + Math.random() * 8;
+    return {
+      m,
+      from: p.clone(),
+      fromQ: m.quaternion.clone(),
+      vel: new THREE.Vector3(
+        (dx / dlen) * out + (Math.random() - 0.5) * 2.5,
+        7 + Math.random() * 10,
+        (dz / dlen) * out + (Math.random() - 0.5) * 2.5,
+      ),
+      spin: new THREE.Vector3(
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+      ),
+      delay: Math.random() * 0.09,
+      // Every piece settles at the same low height so nothing is left floating
+      // mid-air the way a fraction of the tall pieces did when the rest height
+      // was pegged to a slice of the original (high) position.
+      restY: 0.2,
+      landed: false,
+    };
+  });
+}
+
+const _blastE = new THREE.Euler();
+const _blastQ = new THREE.Quaternion();
+
+function startSubstationBlast() {
+  if (subState !== 'standing' || !subPieces) return;
+  subState = 'exploding';
+  subT = 0;
+  subBurstLeft = 1.9;
+  subBurstAcc = 0;
+  // Hand the sensors back to physics in their resting pose so the knock system
+  // can never fight the blast; our launch owns the pieces from here on.
+  for (const k of subTriggers) {
+    k.state = 'fallen';
+    k.t = 1;
+  }
+  for (const c of subColliders) c.soft = true;
+  // The ground detonation kicks a wall of dust straight up as the gear flies.
+  for (let i = 0; i < 34; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.random() * 6;
+    spawnSubDust(Math.cos(a) * r, 0.4 + Math.random() * 1.4, Math.sin(a) * r, 2.2);
+  }
+}
+
+function advanceSubstationBlast(dt) {
+  subT += dt;
+  if (subPieces) {
+    for (const a of subPieces) {
+      if (a.landed) continue;
+      if (subT < a.delay) continue;
+      a.vel.y -= SUB_GRAV * dt;
+      a.m.position.addScaledVector(a.vel, dt);
+      _blastE.set(a.spin.x * dt, a.spin.y * dt, a.spin.z * dt);
+      a.m.quaternion.multiply(_blastQ.setFromEuler(_blastE));
+      if (a.m.position.y <= a.restY && a.vel.y < 0) {
+        a.m.position.y = a.restY;
+        a.vel.y = 0;
+        // A little skid before it settles, then it stays where it scattered.
+        if (Math.abs(a.vel.x) + Math.abs(a.vel.z) < 0.35 || subT >= SUB_BLAST) {
+          a.vel.set(0, 0, 0);
+          a.landed = true;
+        } else {
+          a.vel.x *= 0.4;
+          a.vel.z *= 0.4;
+        }
+      }
+    }
+  }
+  // Dust and smoking debris blow out of the yard on the way up.
+  if (subBurstLeft > 0) {
+    subBurstLeft -= dt;
+    subBurstAcc += dt * 140;
+    while (subBurstAcc >= 1) {
+      subBurstAcc -= 1;
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 7;
+      spawnSubDust(Math.cos(a) * r, 0.4 + Math.random() * 6, Math.sin(a) * r, 2.4);
+    }
+  }
+  if (subDust) {
+    for (const p of subDust) {
+      if (!p.sprite.visible) continue;
+      p.life -= dt;
+      if (p.life <= 0) { p.sprite.visible = false; continue; }
+      p.vy -= 4.6 * dt;
+      p.vx *= 1 - 1.4 * dt;
+      p.vz *= 1 - 1.4 * dt;
+      p.sprite.position.x += p.vx * dt;
+      p.sprite.position.y += p.vy * dt;
+      p.sprite.position.z += p.vz * dt;
+      if (p.sprite.position.y < 0.15) { p.sprite.position.y = 0.15; p.vy = 0; }
+      p.sprite.material.opacity = 0.8 * (p.life / p.maxLife);
+    }
+  }
+  if (subT >= SUB_BLAST) subState = 'blown';
+}
+
+function resetSubstationWreck() {
+  if (subPieces) {
+    for (const a of subPieces) {
+      a.m.position.copy(a.from);
+      a.m.quaternion.copy(a.fromQ);
+      a.vel.set(0, 0, 0);
+      a.landed = false;
+    }
+  }
+  for (const c of subColliders) c.soft = false;
+  if (subDust) for (const p of subDust) p.sprite.visible = false;
+  subState = 'standing';
+  subT = -1;
+  subBurstLeft = 0;
+  subBurstAcc = 0;
+}
 
 // Set by houseStandard() in the open bay's own local space, then exported to the
 // world by houseGarageTrigger() once the layout's origin and facing are known.
@@ -217,17 +463,75 @@ function flatPanel(parent, w, d, x, y, z, material) {
 // Architecture helpers
 // ============================================================================
 
+// The wall plane of one face at one storey, as a signed distance from the
+// group origin, for a row that runs from `lo` to `hi` along that wall.
+//
+// This used to be a hard-coded ±0.07, which is 0.07 from the group ORIGIN — the
+// middle of the building. Every pane windowRow hung was therefore buried inside
+// the mass where nothing could see it, which is why the city read as blank
+// slabs: the four-sided grids the builders already write were all drawn in the
+// middle of the block. dressRearWall was rewritten to measure the real planes;
+// this is the same fix for the helpers the builders call.
+//
+// Each face is measured at the height the row sits on, so a podium and the slab
+// stacked on it get their own plane instead of sharing one mass's. Two filters
+// decide what counts as "the wall" rather than trim standing in front of it:
+//
+//   * `minAlong` — anything much narrower than the row is a pilaster, a vent or
+//     a sign box, not the surface the row hangs on.
+//   * containment — the box's along-wall interval has to cover the WHOLE row,
+//     `lo` to `hi`. This is what stops City Hall's rear canopy (6 wide, centred
+//     on the back door) from being measured as the rear wall by the two rows
+//     that pass either side of it: the canopy does not reach out to the panes,
+//     so it is not what those panes are hung on.
+//
+// If nothing contains the row — a row deliberately straddling a recess, say —
+// the narrower filter alone decides, which is the behaviour everything had
+// before containment was added. Scaled or turned meshes are skipped because
+// their parameters are not their world extent.
+function wallFace(parent, face, y, lo, hi) {
+  const alongX = face === 'N' || face === 'S';
+  const out = face === 'N' || face === 'E' ? 1 : -1;
+  const minAlong = Math.max((hi - lo) * 0.6, 6);
+  const hits = [];
+  for (const child of parent.children) {
+    const p = child.geometry && child.geometry.parameters;
+    if (!p || p.width === undefined || p.height === undefined || p.depth === undefined) continue;
+    if (child.scale.x !== 1 || child.scale.y !== 1 || child.scale.z !== 1) continue;
+    if (child.rotation.x || child.rotation.y || child.rotation.z) continue;
+    if (y < child.position.y - p.height / 2 || y > child.position.y + p.height / 2) continue;
+    const along = alongX ? p.width : p.depth;
+    if (along < minAlong) continue;
+    const centre = alongX ? child.position.x : child.position.z;
+    hits.push({
+      ext: alongX
+        ? child.position.z + (face === 'N' ? p.depth / 2 : -p.depth / 2)
+        : child.position.x + (face === 'E' ? p.width / 2 : -p.width / 2),
+      spans: centre - along / 2 <= lo && centre + along / 2 >= hi,
+    });
+  }
+  const spanning = hits.filter((h) => h.spans);
+  const pool = spanning.length ? spanning : hits;
+  let plane = null;
+  for (const h of pool) {
+    if (plane === null || (out > 0 ? h.ext > plane : h.ext < plane)) plane = h.ext;
+  }
+  return (plane === null ? 0 : plane) + out * 0.07;
+}
+
 // A row of window panes across one wall. `face` is a local compass direction,
 // `spread` the total width the row covers, `y` the pane centre height. Panes sit
 // just proud of the wall so they read as glazing rather than decals. `centre`
 // slides the row sideways along the wall, for glazing that has to dodge a door.
 function windowRow(parent, face, y, spread, count, paneW, paneH, material, centre = 0) {
+  const lo = centre - spread / 2, hi = centre + spread / 2;
+  const at = wallFace(parent, face, y, lo, hi);
   for (let i = 0; i < count; i++) {
     const t = centre + (count === 1 ? 0 : (i / (count - 1) - 0.5) * spread);
     if (face === 'N' || face === 'S') {
-      panel(parent, paneW, paneH, t, y, face === 'N' ? 0.07 : -0.07, face === 'N' ? 0 : Math.PI, material);
+      panel(parent, paneW, paneH, t, y, at, face === 'N' ? 0 : Math.PI, material);
     } else {
-      panel(parent, paneW, paneH, face === 'E' ? 0.07 : -0.07, y, t, face === 'E' ? Math.PI / 2 : -Math.PI / 2, material);
+      panel(parent, paneW, paneH, at, y, t, face === 'E' ? Math.PI / 2 : -Math.PI / 2, material);
     }
   }
 }
@@ -300,11 +604,14 @@ function frontSteps(parent, width, steps, rise, run, z0, material) {
   return z0 - (steps - 1) * run;
 }
 
-// A classical column: base, slightly tapered shaft, capital.
-function column(parent, x, z, h, r, material) {
-  cyl(parent, r * 1.35, r * 1.35, h * 0.05, x, h * 0.025, z, material, 10);
-  cyl(parent, r * 0.92, r, h * 0.9, x, h * 0.5, z, material, 12);
-  cyl(parent, r * 1.4, r * 1.0, h * 0.05, x, h * 0.975, z, material, 10);
+// A classical column: base, slightly tapered shaft, capital. `y0` lifts the
+// whole thing off the ground plane, for columns that stand on a podium rather
+// than on the terrace — without it a column that starts at zero stops a storey
+// short of the entablature it is supposed to be carrying.
+function column(parent, x, z, h, r, material, y0 = 0) {
+  cyl(parent, r * 1.35, r * 1.35, h * 0.05, x, y0 + h * 0.025, z, material, 10);
+  cyl(parent, r * 0.92, r, h * 0.9, x, y0 + h * 0.5, z, material, 12);
+  cyl(parent, r * 1.4, r * 1.0, h * 0.05, x, y0 + h * 0.975, z, material, 10);
 }
 
 // A low clipped hedge: a run of overlapping spheres.
@@ -418,10 +725,75 @@ function chainFence(parent, x1, z1, x2, z2, h = 2.2) {
   const rail = cyl(parent, 0.05, 0.05, len, (x1 + x2) / 2, h, (z1 + z2) / 2, M.metal, 5);
   rail.rotation.z = Math.PI / 2;
   rail.rotation.y = Math.atan2(dz, -dx);
-  // Make fence knockable by heavy vehicles only (monster truck/steamroller)
+  // Make fence knockable by heavy vehicles only (monster truck/steamroller/firetruck)
   if (!standaloneBuild) {
-    addKnockable(mid, Math.max(1, len / 2), { mode: 'topple', toppleRadius: Math.max(1, len / 2), smashOnlyBy: 'monster' });
+    addKnockable(mid, Math.max(1, len / 2), { mode: 'topple', toppleRadius: Math.max(1, len / 2), smashOnlyBy: 'heavy' });
   }
+}
+
+// The substation's fence. A purpose-built rebuild of chainFence() for the yard.
+// A stock chain fence registers only its woven wire panel, so a heavy ride took
+// the mesh down but left the posts and the top rail standing like a row of
+// solid bars. Here each run is cut into short sections and EVERY section bundles
+// its two posts, its top rail and its wire into a single heavyweight knockable:
+// hit any part of the fence and the whole section (bars, rail and wire together)
+// goes over, piece by piece.
+//
+// Each section also reports a GATE collider: while the section stands it is a
+// real wall (light rides carry no `heavy` flag, so knockAt() skips it and the
+// fence holds them out), and the instant a heavy ride knocks the section over
+// its knockable leaves 'standing' and the collider frees itself — so the
+// monster truck bulldozes the fence down as it drives instead of ghosting
+// through it. Returns the collider specs so substation() can hand them to the
+// world.
+function smashFence(parent, x1, z1, x2, z2, h = 2.6) {
+  const dx = x2 - x1, dz = z2 - z1;
+  const len = Math.hypot(dx, dz);
+  if (len < 1e-4) return [];
+  const yaw = Math.atan2(-dz, dx);
+  const segs = Math.max(1, Math.round(len / 3.2));
+  const segLen = len / segs;
+  const mat = chainLinkMaterial();
+  mat.map = mat.map.clone();
+  mat.map.needsUpdate = true;
+  mat.map.repeat.set(segLen / 2, h / 2);
+  const cols = [];
+  for (let i = 0; i < segs; i++) {
+    const t = (i + 0.5) / segs;
+    const seg = new THREE.Group();
+    seg.userData.smashFence = true;
+    seg.position.set(x1 + dx * t, 0, z1 + dz * t);
+    seg.rotation.y = yaw;
+    parent.add(seg);
+    // A post at each end of the section.
+    for (const s of [-0.5, 0.5]) cyl(seg, 0.08, 0.08, h, s * segLen, h / 2, 0, M.metal, 6);
+    // Top rail spanning the section, laid flat along local X.
+    const rail = cyl(seg, 0.05, 0.05, segLen, 0, h - 0.08, 0, M.metal, 5);
+    rail.rotation.z = Math.PI / 2;
+    // Chain-link weave.
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(segLen, h), mat);
+    mesh.position.set(0, h / 2, 0);
+    mesh.receiveShadow = true;
+    seg.add(mesh);
+    let gate = null;
+    if (!standaloneBuild) {
+      gate = addKnockable(seg, Math.max(1, segLen * 0.6), { mode: 'fall', fallTime: 0.5, smashOnlyBy: 'heavy' });
+    }
+    // The substation's runs are all cardinal, so each section's collider is an
+    // axis-aligned strip of its own span; the gate frees it the moment the
+    // section is knocked over, and noRoof keeps it from ever being a rooftop.
+    const axisX = Math.abs(dz) < 1e-6;
+    cols.push({
+      x: seg.position.x,
+      z: seg.position.z,
+      halfW: axisX ? segLen / 2 : 0.35,
+      halfD: axisX ? 0.35 : segLen / 2,
+      h,
+      gate,
+      noRoof: true,
+    });
+  }
+  return cols;
 }
 
 // ============================================================================
@@ -447,21 +819,85 @@ function cityHall() {
   box(g, W - 2, 1.6, D - 2, 0, PODIUM + BODY + 1.35, -0.5, M.limestone);
   cornice(g, W - 2, D - 2, PODIUM + BODY + 2.45, 0.4, 0.6, M.limestoneDark);
 
-  // Tall window bays on the front, a plainer grid on the other three walls.
+  // Tall window bays on the front, a plainer grid on the flanks, and on the
+  // rear two groups either side of the back entrance rather than one run
+  // straight across it.
   windowGrid(g, 'N', {
     rows: 2, y0: PODIUM + 4.2, rowH: 4.4, spread: W - 12,
     count: 7, paneW: 1.7, paneH: 3.1, material: M.windowLit,
   });
-  for (const f of ['E', 'W', 'S']) {
+  for (const f of ['E', 'W']) {
     windowGrid(g, f, {
       rows: 2, y0: PODIUM + 4.4, rowH: 4.4, spread: D - 8,
       count: 5, paneW: 1.5, paneH: 2.6, material: M.windowCool,
     });
   }
+  for (let r = 0; r < 2; r++) {
+    const y = PODIUM + 4.2 + r * 4.4;
+    for (const c of [-8, 8]) windowRow(g, 'S', y, 8, 3, 1.7, 3.1, M.windowLit, c);
+  }
+
+  // A string course tying the three dressed walls to the front elevation.
+  const stringCourse = cornice(g, W, D, 2.6, 0.4, 0.35, M.limestoneDark);
+  stringCourse.position.z = -0.5;
+
+  // ---- Dressed stone on the flanks and rear ----
+  // The colonnade is what makes this building read as civic; the other three
+  // walls were plain ashlar with punched holes in it, so the whole thing looked
+  // like a stage flat with only one face finished. `dressWall` puts a pilaster
+  // in each gap between the panes — base, shaft, capital, standing proud of the
+  // wall — and hands it the along-wall positions explicitly so the stone lands
+  // beside the glazing and never through it. The corners are left to the
+  // quoins, which is where classical masonry puts them.
+  const dressWall = (face, ts) => {
+    const alongX = face === 'S';
+    const wall = alongX ? -0.5 - D / 2 : (face === 'E' ? W / 2 : -W / 2);
+    const dir = alongX ? -1 : (face === 'E' ? 1 : -1);
+    const put = (alongW, h, proj, t, y, m) => {
+      if (alongX) box(g, alongW, h, proj, t, y, wall + (dir * proj) / 2, m);
+      else box(g, proj, h, alongW, wall + (dir * proj) / 2, y, -0.5 + t, m);
+    };
+    for (const t of ts) {
+      put(1.6, 0.8, 0.9, t, PODIUM + 0.4, M.limestoneDark);
+      put(1.0, BODY - 1.5, 0.55, t, PODIUM + 0.8 + (BODY - 1.5) / 2, M.limestone);
+      put(1.6, 0.7, 0.9, t, PODIUM + BODY - 0.35, M.limestoneDark);
+    }
+  };
+  const between = (spread, count) => {
+    const pitch = spread / (count - 1);
+    return Array.from({ length: count + 1 }, (_, j) => -spread / 2 - pitch / 2 + j * pitch);
+  };
+  dressWall('E', between(D - 8, 5));
+  dressWall('W', between(D - 8, 5));
+  dressWall('S', [-10, -6, 6, 10]);
+
+  // ---- Quoins ----
+  // Staggered corner blocks, alternating long and short, running the height of
+  // the main block on all four corners.
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const cx = sx * W / 2, cz = -0.5 + sz * D / 2;
+      for (let i = 0; i * 1.3 + 1.6 < PODIUM + BODY - 0.4; i++) {
+        const long = i % 2 === 0;
+        box(g, long ? 1.3 : 0.8, 0.62, long ? 0.8 : 1.3, cx, 1.6 + i * 1.3, cz, M.limestoneDark);
+      }
+    }
+  }
+
+  // ---- Rear entrance ----
+  // A door with a lintel and a bracketed flat canopy, dropped in the gap the
+  // rear glazing leaves between its two groups.
+  const wallS = -0.5 - D / 2;
+  box(g, 2.6, 3.6, 0.2, 0, PODIUM + 1.8, wallS - 0.09, M.doorDark, false);
+  box(g, 3.0, 0.4, 0.3, 0, PODIUM + 3.75, wallS - 0.15, M.limestoneDark, false);
+  box(g, 6.0, 0.3, 1.4, 0, PODIUM + 4.3, wallS - 0.7, M.limestone, false);
+  for (const s of [-1, 1]) box(g, 0.3, 1.1, 1.2, s * 2.4, PODIUM + 3.6, wallS - 0.6, M.limestoneDark, false);
 
   // ---- Portico: six columns under an entablature and a pediment ----
+  // The columns stand ON the podium (y0 = PODIUM): built from zero they stopped
+  // a storey short of the entablature and left it hanging in the air.
   const colH = 9.5;
-  for (let i = 0; i < 6; i++) column(g, (i / 5 - 0.5) * (W - 6), frontZ + 1.1, colH, 0.52, M.trimWhite);
+  for (let i = 0; i < 6; i++) column(g, (i / 5 - 0.5) * (W - 6), frontZ + 1.1, colH, 0.52, M.trimWhite, PODIUM);
   box(g, W - 2, 1.3, 2.6, 0, PODIUM + colH + 0.65, frontZ + 1.1, M.trimWhite);
   box(g, W - 2, 0.35, 3.2, 0, PODIUM + colH + 1.45, frontZ + 1.1, M.trimWhite);
   const ped = new THREE.Shape();
@@ -803,11 +1239,52 @@ function bank() {
     box(g, 0.3, 0.3, 0.3, Math.cos(a) * 1.85, vaultY + Math.sin(a) * 1.85, frontZ - 0.85, M.metalDark, false);
   }
 
-  // Side and rear fenestration: tall, narrow, evenly spaced.
-  for (const f of ['E', 'W']) {
-    windowGrid(g, f, { rows: 2, y0: 4.4, rowH: 4.2, spread: D - 3, count: 5, paneW: 1.1, paneH: 2.8, material: M.windowCool });
-  }
-  windowGrid(g, 'S', { rows: 2, y0: 4.4, rowH: 4.2, spread: W - 4, count: 7, paneW: 1.1, paneH: 2.8, material: M.windowCool });
+  // ---- Flanks and rear: the same divided-light bays as the front ----
+  // The tall storefront panes between stone pillars are the whole identity of
+  // this building, so they run right round it rather than stopping at the
+  // corners. `flank` lays one run out along a wall: pilasters standing proud of
+  // it with their base and capital bands, a pane between each pair, and brass
+  // bars across the pane. `L` is the wall's length, `bays` how many panes split
+  // it into.
+  const BAY_H = BODY - 4.2;
+  const BAY_Y = 1.4 + (BODY - 1.4) / 2;
+  const SHAFT_H = BODY - 1.4;
+  const flank = (face, L, bays) => {
+    const alongX = face === 'S';
+    const wall = alongX ? -D / 2 : (face === 'E' ? W / 2 : -W / 2);
+    const dir = alongX ? -1 : (face === 'E' ? 1 : -1);
+    const ry = alongX ? Math.PI : (face === 'E' ? Math.PI / 2 : -Math.PI / 2);
+    const pitch = (L - 2) / bays;
+    const span = (L - 2) / 2;
+    // A box with its inner face on the wall plane and `proj` sticking out of it.
+    const put = (alongW, h, proj, t, y, m) => {
+      if (alongX) box(g, alongW, h, proj, t, y, wall + (dir * proj) / 2, m);
+      else box(g, proj, h, alongW, wall + (dir * proj) / 2, y, t, m);
+    };
+    const at = (t) => (alongX ? [t, BAY_Y, wall + dir * 0.12] : [wall + dir * 0.12, BAY_Y, t]);
+    for (let i = 0; i <= bays; i++) {
+      const t = -span + i * pitch;
+      put(1.1, SHAFT_H, 1.0, t, BAY_Y, M.limestone);
+      put(1.6, 0.4, 1.3, t, 1.6, M.granite);
+      put(1.6, 0.5, 1.3, t, BODY - 1.1, M.granite);
+    }
+    for (let i = 0; i < bays; i++) {
+      const t = -span + (i + 0.5) * pitch;
+      const gw = pitch - 1.1 - 0.3;
+      panel(g, gw, BAY_H, ...at(t), ry, M.storefront);
+      // Vertical mullion plus two transoms: the same divided light as the front.
+      if (alongX) {
+        box(g, 0.09, BAY_H, 0.1, t, BAY_Y, wall + dir * 0.2, M.brass, false);
+        for (const hy of [BAY_Y - BAY_H / 4, BAY_Y + BAY_H / 4]) box(g, gw, 0.09, 0.1, t, hy, wall + dir * 0.2, M.brass, false);
+      } else {
+        box(g, 0.1, BAY_H, 0.09, wall + dir * 0.2, BAY_Y, t, M.brass, false);
+        for (const hy of [BAY_Y - BAY_H / 4, BAY_Y + BAY_H / 4]) box(g, 0.1, 0.09, gw, wall + dir * 0.2, hy, t, M.brass, false);
+      }
+    }
+  };
+  flank('E', D, 3);
+  flank('W', D, 3);
+  flank('S', W, 5);
 
   // ---- ATM recessed into the +X flank ----
   box(g, 0.5, 2.3, 1.5, W / 2 - 0.1, 1.5, -3.2, M.metalDark, false);
@@ -872,6 +1349,36 @@ function bodega() {
   // Bollards by the door.
   for (const s of [-1, 1]) cyl(g, 0.13, 0.13, 0.9, s * 1.2, 0.45, frontZ + 1.3, M.metalDark, 8, false);
   newspaperRack(g, 3.4, frontZ + 0.9);
+
+  // ---- Rear elevation: the service side ----
+  // The -Z wall was the one face of the shop that had nothing on it at all. It
+  // now carries the three things a corner store is actually identified by from
+  // behind: a back door, the blue water main with its meter box, and the yellow
+  // gas run dropping into its own meter.
+  const rearZ = -D / 2;
+  // Back door: dark slab, surround, threshold, pull bar and a bulkhead lamp.
+  box(g, 1.7, 2.6, 0.2, -3.9, 1.3, rearZ - 0.1, M.doorDark, false);
+  box(g, 2.1, 0.18, 0.3, -3.9, 2.75, rearZ - 0.16, M.trimWhite, false);
+  box(g, 2.0, 0.16, 0.8, -3.9, 0.08, rearZ - 0.4, M.stonePale, false);
+  cyl(g, 0.05, 0.05, 0.5, -3.3, 1.3, rearZ - 0.24, M.metal, 6, false);
+  box(g, 0.7, 0.2, 0.35, -3.9, 2.95, rearZ - 0.2, M.metalDark, false);
+  panel(g, 0.5, 0.12, -3.9, 2.86, rearZ - 0.38, Math.PI, M.windowLit);
+  // Water main down the right-hand corner, with a valve box and two dials.
+  cyl(g, 0.12, 0.12, BODY, 4.6, BODY / 2, rearZ - 0.16, M.pipeWater, 8, false);
+  box(g, 0.6, 0.8, 0.34, 4.6, 1.5, rearZ - 0.17, M.pipeWater, false);
+  for (const dy of [1.75, 1.25]) {
+    cyl(g, 0.17, 0.17, 0.06, 4.6, dy, rearZ - 0.36, M.metalDark, 12, false).rotation.x = Math.PI / 2;
+    cyl(g, 0.13, 0.13, 0.07, 4.6, dy, rearZ - 0.4, M.porcelain, 12, false).rotation.x = Math.PI / 2;
+  }
+  // Gas run along the head of the wall — clear of the door opening — then a
+  // drop leg into a meter box with its own glass face.
+  cyl(g, 0.1, 0.1, 8.4, 1.8, 3.0, rearZ - 0.14, M.pipeGas, 8, false).rotation.z = Math.PI / 2;
+  cyl(g, 0.1, 0.1, 1.6, 2.0, 2.3, rearZ - 0.14, M.pipeGas, 8, false);
+  box(g, 0.9, 0.7, 0.4, 2.0, 1.4, rearZ - 0.2, M.metalDark, false);
+  cyl(g, 0.2, 0.2, 0.07, 2.0, 1.4, rearZ - 0.44, M.porcelain, 14, false).rotation.x = Math.PI / 2;
+  // Downpipe in the left corner, so the wall has a vertical at both ends.
+  cyl(g, 0.09, 0.09, BODY, -5.6, BODY / 2, rearZ - 0.13, M.metalDark, 8, false);
+  sph(g, 0.16, -5.6, BODY - 0.1, rearZ - 0.13, M.metalDark, false);
 
   colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY });
   // The bin area is solid too, so you cannot drive through the dumpster.
@@ -1064,8 +1571,9 @@ function hospital() {
       paneW: (spread / count) * 0.8, paneH: 1.9, material: M.windowCool,
     });
   }
-  // Glazed stair tower, so the end of the slab is not a blank white wall.
-  windowGrid(g, 'W', { rows: 3, y0: 6.6, rowH: 1.8, spread: D - 4, count: 3, paneW: 1.2, paneH: 1.1, material: M.windowLit });
+  // The slab's west end gets the same five-bay grid as the other three walls
+  // (there used to be a separate three-row "stair tower" stack here, but it sat
+  // on top of that grid at the same heights, so the panes landed on each other).
   // Glass corner columns, so the slab reads as a pavilion rather than a box.
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) box(g, 0.35, BODY - 5.5, 0.35, sx * (W / 2 - 0.4), 5.5 + (BODY - 5.5) / 2, sz * (D / 2 - 0.4), M.concrete, false);
@@ -1078,9 +1586,10 @@ function hospital() {
 
   // ---- Podium glazing -----------------------------------------------------
   // The ground floor is what people actually walk past, so it gets real
-  // windows on three sides. The front (local S) is left to the entrance and the
-  // ambulance bay, and only glazed in the two gaps between them.
-  for (const f of ['N', 'E', 'W']) {
+  // windows on three sides. The front (local +Z, which the entrance recess and
+  // the ambulance bay sit on) is left to them and only glazed in the two gaps
+  // between them.
+  for (const f of ['E', 'W', 'S']) {
     const isNS = f === 'N';
     const spread = isNS ? W - 2.4 : D - 2.4;
     const count = isNS ? 8 : 5;
@@ -1090,9 +1599,11 @@ function hospital() {
     });
   }
   // Front gaps only: two panes west of the entrance, two in the strip between
-  // the entrance and the ambulance bay.
-  windowRow(g, 'S', 1.9, 3.4, 2, 1.2, 1.35, M.windowCool, -8.1);
-  windowRow(g, 'S', 1.9, 3.2, 2, 1.2, 1.35, M.windowLit, 0.1);
+  // the entrance and the ambulance bay. Both rows are sized to the gap they sit
+  // in — the entrance recess runs x -6.3..-1.7 and the bay canopy starts at
+  // x 2.0 — so no pane is swallowed by either of them.
+  windowRow(g, 'N', 1.9, 1.6, 2, 1.2, 1.35, M.windowCool, -8.2);
+  windowRow(g, 'N', 1.9, 1.6, 2, 1.2, 1.35, M.windowLit, -0.1);
   // Spandrel band between the two podium rows, tying the glazing together. It
   // stops short of the entrance recess on the front so it does not spear it.
   box(g, W - 1.2, 0.22, 0.12, 0, 3.05, frontZ + 0.04, M.trimWhite, false);
@@ -1457,12 +1968,15 @@ function houseStandard() {
   // main.js reads it through houseGarageTrigger() and turns it into world
   // coordinates, so it is authored here in the same local frame as the geometry.
   //
-  // It is a box set back inside the mouth, short of the back wall, so clipping
-  // the threshold on the apron does not fire it - you have to actually be in the
-  // bay before the world changes.
+  // It is a box straddling the mouth: back to near the rear wall, and OUT onto
+  // the apron, so the world changes as you come at the garage rather than once
+  // you are already parked inside it. The shot that follows (see main.js
+  // houseFadeSwap) uses that extra apron depth to shrink the car over the last
+  // few metres as it rolls through the door. The outer edge stops short of the
+  // apron's end so a car returned to the apron on the way out does not re-trip it.
   houseGarageLocal = {
     x0: gx0 + 0.4, x1: gx1 - 0.4,
-    z0: gz0 + 0.5, z1: gz1 - 0.7,
+    z0: gz0 + 0.5, z1: gz1 + 3,
     // The mouth centre and the apron point just beyond it. main.js drops the
     // returning car here rather than hard-coding a spot in the street, so it
     // stays correct if this garage is ever moved or re-faced. Coming out of the
@@ -1526,6 +2040,62 @@ function apartments() {
     windowRow(g, 'S', y, W - 3, 6, 1.3, f === 0 ? 1.3 : 1.6, M.windowCool);
     for (const s of ['E', 'W']) windowRow(g, s, y, D - 3, 3, 1.2, f === 0 ? 1.3 : 1.6, M.windowCool);
   }
+
+  // ---- Rear balconies ----
+  // The front carries a balcony on every bay; the back had only its window rows
+  // and so read as one flat brick panel. Three stacks of balconies give the rear
+  // elevation the same depth, and they sit against the panes that are already
+  // there rather than in front of a blank stretch.
+  const rearZ = -D / 2;
+  for (let f = 1; f < FLOORS; f++) {
+    const y = f * FH + 0.5;
+    for (let i = 0; i < 3; i++) {
+      const bx = -6 + i * 6;
+      box(g, 4.0, 0.16, 1.4, bx, y - 1.1, rearZ - 0.75, M.concrete, false);
+      box(g, 4.0, 0.09, 0.12, bx, y - 0.25, rearZ - 1.45, M.metal, false);
+      for (let r = 0; r < 7; r++) {
+        box(g, 0.07, 0.85, 0.07, bx - 1.75 + r * (3.5 / 6), y - 0.7, rearZ - 1.45, M.metal, false);
+      }
+      // Return rails down both ends, so it reads as an enclosed cage.
+      for (const s of [-1, 1]) {
+        box(g, 0.07, 0.85, 1.3, bx + s * 1.95, y - 0.7, rearZ - 0.78, M.metal, false);
+      }
+    }
+  }
+
+  // ---- Fire escape on the west flank ----
+  // Three decks and two flights zig-zagging between them, in dark steel so it
+  // silhouettes against the brick. It hangs outside the building's collider,
+  // which is deliberate: it is steelwork, not a wall, and the hoops and hedges
+  // are uncollided too. `flight` takes the two ends of the run; the box's long
+  // axis is z, so tilting it about x lifts one end and drops the other, and
+  // `atan2(dy, -dz)` puts the lower end at +z for a run heading towards -z.
+  const escX = -W / 2 - 0.8;
+  const deck = (y, zc, len) => box(g, 1.6, 0.14, len, escX, y, zc, M.metalDark, false);
+  deck(0.5, 4.5, 4);
+  deck(3.45, 1.5, 3);
+  deck(6.45, -3.5, 3);
+  const flight = (y0, z0, y1, z1) => {
+    const dy = y1 - y0, dz = z1 - z0;
+    const L = Math.hypot(dy, dz);
+    const m = box(g, 1.0, 0.14, L, escX, (y0 + y1) / 2, (z0 + z1) / 2, M.metalDark, false);
+    m.rotation.x = Math.atan2(dy, -dz);
+    const rail = box(g, 0.07, 0.07, L, escX - 0.8, (y0 + y1) / 2 + 0.9, (z0 + z1) / 2, M.metal, false);
+    rail.rotation.x = Math.atan2(dy, -dz);
+    return m;
+  };
+  flight(0.5, 4.5, 3.45, 1.5);
+  flight(3.45, 1.5, 6.45, -3.5);
+  // Deck guard rails: a top rail on three posts a deck.
+  for (const [y, zc, len] of [[0.5, 4.5, 4], [3.45, 1.5, 3], [6.45, -3.5, 3]]) {
+    for (const off of [-len / 2 + 0.15, 0, len / 2 - 0.15]) {
+      box(g, 0.07, 0.9, 0.07, escX - 0.8, y + 0.07 + 0.45, zc + off, M.metal, false);
+    }
+    box(g, 0.07, 0.07, len, escX - 0.8, y + 0.07 + 0.9, zc, M.metal, false);
+  }
+  // Top ladder through the eaves.
+  for (const off of [-0.3, 0.3]) box(g, 0.07, 1.6, 0.07, escX - 0.8, 7.3, -3.5 + off, M.metal, false);
+  for (let i = 0; i < 4; i++) box(g, 0.07, 0.07, 0.6, escX - 0.8, 6.7 + i * 0.4, -3.5, M.metal, false);
   // Stairwell bulkhead, water tank and vents on the roof.
   box(g, 4.0, 2.4, 3.4, -4.5, BODY + 1.7, -1.0, M.concrete, false);
   box(g, 4.3, 0.2, 3.7, -4.5, BODY + 3.0, -1.0, M.concreteDark, false);
@@ -1580,14 +2150,16 @@ function school() {
   panel(g, 3.4, 0.3, 0, BODY + 1.0, (D - 8) / 2, 0, M.windowCool);
   panel(g, 3.4, 0.3, 0, BODY + 1.0, -(D - 8) / 2, Math.PI, M.windowCool);
 
-  // Classroom window bays: big, regular, with a transom over each.
+  // Classroom window bays: big, regular, one pair per bay on each long wall.
+  // Both panes go at ±W/2, just proud of the E/W wall they belong to — there
+  // used to be a second pane drawn at x = 0 for every bay, i.e. twenty windows
+  // sitting in the middle of the brickwork where nothing could see them, and a
+  // `face` that was computed and then never used.
   for (let i = 0; i < 5; i++) {
     const z = -(D - 6) / 2 + i * ((D - 6) / 4);
     for (const s of [-1, 1]) {
-      const face = s === 1 ? 'N' : 'S';
       for (let f = 0; f < 2; f++) {
         const y = 2.2 + f * 3.1;
-        panel(g, 2.6, 2.1, 0, y, z, 0, M.windowCool);
         const gx = s === 1 ? W / 2 + 0.03 : -W / 2 - 0.03;
         panel(g, 2.4, 2.0, gx, y, z, s * Math.PI / 2, M.windowCool);
       }
@@ -1629,8 +2201,9 @@ function school() {
   hip(belfryRoof, TW + 1.0, TW + 1.0, 2.6, M.shingle);
   const bell = cyl(tower, 0.28, 0.55, 0.8, 0, TH + 1.5, 0, M.brass, 12, false);
   box(tower, 0.1, 0.5, 0.1, 0, TH + 2.0, 0, M.metalDark, false);
-  // School name board over the doors.
-  panel(g, 3.6, 0.6, 0, 3.6, frontZ - 0.32, 0, M.signGreen);
+  // School name board over the doors. It sits proud of the wall, not 0.32
+  // inside it where the brick hid it.
+  panel(g, 3.6, 0.6, 0, 3.6, frontZ + 0.06, 0, M.signGreen);
   // Flagpole with a lazy pennant.
   cyl(g, 0.06, 0.06, 5.0, -4.5, 2.5, frontZ + 2.2, M.porcelain, 6, false);
   box(g, 0.06, 0.6, 1.4, -4.5, 4.6, frontZ + 2.9, M.signRed, false);
@@ -1730,7 +2303,25 @@ function library() {
     cyl(g, 0.1, 0.13, 3.0, px + s * 4.2, 1.5, frontZ + 1.4, M.metalDark, 6, false);
     sph(g, 0.28, px + s * 4.2, 3.2, frontZ + 1.4, M.signAmber, false);
   }
-  hedge(g, px, -D / 2 - 1.4, 12, 'x', 0.5);
+  // ---- Rear elevation ----
+  // The window band already runs the length of this wall; what it lacked was
+  // anything at ground level, so the back read as a texture. Delivery door in
+  // the middle of the centre gap, the rainwater pipe in the left corner, an
+  // extract grille above the upper panes and the condenser on the ground — and
+  // the hedge that ran the whole length of the wall is split so the door is not
+  // behind it.
+  const rearZ = -D / 2;
+  box(g, 1.3, 2.5, 0.2, 0, 1.25, rearZ - 0.09, M.doorDark, false);
+  box(g, 1.7, 0.18, 0.3, 0, 2.75, rearZ - 0.15, M.limestoneDark, false);
+  box(g, 1.6, 0.16, 0.8, 0, 0.08, rearZ - 0.42, M.granite, false);
+  cyl(g, 0.05, 0.05, 0.45, 0.5, 1.2, rearZ - 0.22, M.metal, 6, false);
+  cyl(g, 0.1, 0.1, BODY, -7.6, BODY / 2, rearZ - 0.14, M.metalDark, 8, false);
+  sph(g, 0.17, -7.6, BODY - 0.1, rearZ - 0.14, M.metalDark, false);
+  box(g, 1.4, 0.5, 0.2, 2.6, 4.6, rearZ - 0.1, M.ventDark, false);
+  box(g, 1.6, 1.0, 0.7, 6.6, 0.5, rearZ - 0.4, M.metal, false);
+  cyl(g, 0.32, 0.32, 0.06, 6.6, 0.5, rearZ - 0.78, M.metalDark, 12, false).rotation.x = Math.PI / 2;
+  hedge(g, -4.0, -D / 2 - 1.4, 5.0, 'x', 0.5);
+  hedge(g, 4.0, -D / 2 - 1.4, 5.0, 'x', 0.5);
 
   colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: BODY + 0.45 });
   return { group: g, colliders, h: BODY + 0.45 };
@@ -1748,22 +2339,29 @@ function substation() {
   const W = 14, D = 12;
   const colliders = [];
 
-  // Gravel yard.
-  flatPanel(g, W, D, 0, 0.02, 0, M.concreteDark);
-  box(g, W, 0.1, D, 0, 0.05, 0, M.concrete, false);
+  // Gravel yard. Built into its own group so it is the one thing the demolition
+  // leaves standing: the slab stays as the drivable ground you come back to.
+  const yard = new THREE.Group();
+  g.add(yard);
+  flatPanel(yard, W, D, 0, 0.02, 0, M.concreteDark);
+  box(yard, W, 0.1, D, 0, 0.05, 0, M.concrete, false);
   // Gravel patches, so it is not a flat plate.
   for (let i = 0; i < 10; i++) {
     const px = ((i * 47) % 100) / 100 * (W - 2) - (W - 2) / 2;
     const pz = ((i * 73) % 100) / 100 * (D - 2) - (D - 2) / 2;
-    sph(g, 0.5, px, 0.06, pz, M.concrete, false).scale.y = 0.2;
+    sph(yard, 0.5, px, 0.06, pz, M.concrete, false).scale.y = 0.2;
   }
 
   // ---- Perimeter fence with a gate on the +Z side ----
-  chainFence(g, -W / 2, -D / 2, W / 2, -D / 2, 2.6);
-  chainFence(g, -W / 2, D / 2, -1.2, D / 2, 2.6);
-  chainFence(g, 1.2, D / 2, W / 2, D / 2, 2.6);
-  chainFence(g, -W / 2, -D / 2, -W / 2, D / 2, 2.6);
-  chainFence(g, W / 2, -D / 2, W / 2, D / 2, 2.6);
+  // smashFence() builds these as heavy-knockable sections (posts, rails and wire
+  // together) and returns a GATE collider per section: a real wall to light
+  // rides, freed the moment a heavy ride knocks the section over, so the monster
+  // truck bulldozes straight through the fence line into the gear.
+  for (const fc of smashFence(g, -W / 2, -D / 2, W / 2, -D / 2, 2.6)) colliders.push(fc);
+  for (const fc of smashFence(g, -W / 2, D / 2, -1.2, D / 2, 2.6)) colliders.push(fc);
+  for (const fc of smashFence(g, 1.2, D / 2, W / 2, D / 2, 2.6)) colliders.push(fc);
+  for (const fc of smashFence(g, -W / 2, -D / 2, -W / 2, D / 2, 2.6)) colliders.push(fc);
+  for (const fc of smashFence(g, W / 2, -D / 2, W / 2, D / 2, 2.6)) colliders.push(fc);
   // Warning signs on the gate posts.
   for (const s of [-1, 1]) {
     box(g, 0.14, 1.5, 0.14, s * 1.4, 1.3, D / 2, M.metal, false);
@@ -1789,7 +2387,64 @@ function substation() {
     for (let d = 0; d < 5; d++) cyl(xfmr, 0.3, 0.3, 0.1, bx, 3.5 + d * 0.28, 0, M.porcelain, 10, false);
   }
   g.add(xfmr);
-  if (!standaloneBuild) addKnockable(xfmr, 3, { mode: 'topple', toppleRadius: 3, smashOnlyBy: 'monster' });
+  // The transformer is the mains switch the whole city's power hangs off, so
+  // taking the yard out blacks the town out (see updateCityBuildings). Only the
+  // heaviest rides may trip it: the steamroller, the monster truck and the fire
+  // engine all carry the `heavy` flag (set in main.js), and knockAt() skips any
+  // prop whose smashOnlyBy flag the vehicle does not carry. A light car that
+  // reaches it just thumps into the transformer's collider and stops. It is the
+  // flagship trigger -- but every other piece of kit is armed too (see below),
+  // so touching ANY of it detonates the station.
+  if (!standaloneBuild) {
+    xfmrKnock = addKnockable(xfmr, 3, { mode: 'fall', fallTime: 0.4, smashOnlyBy: 'heavy' });
+    subTriggers.push(xfmrKnock);
+  }
+  // The electrical explosion. Built hidden over the bushings and lit up by
+  // updateCityBuildings() the moment the yard detonates: a fan of spark
+  // fragments, two arc-flash shock rings that blow out once, and a hot point
+  // light that flashes white then settles to a steady arcing flicker. Big on
+  // purpose - it is the loudest thing that happens in the city.
+  let sparksGroup = null;
+  if (!standaloneBuild) {
+    const sparks = new THREE.Group();
+    sparks.position.set(tx, 4.6, tz);
+    sparks.visible = false;
+    const sparkMat = new THREE.MeshStandardMaterial({
+      color: 0xfff6cf, emissive: 0xffcf5a, emissiveIntensity: 6, roughness: 0.4,
+    });
+    const bits = [];
+    const BIT_N = 48;
+    for (let i = 0; i < BIT_N; i++) {
+      const m = new THREE.Mesh(boxGeo(0.11, 0.11, 0.11), sparkMat);
+      sparks.add(m);
+      bits.push({
+        m,
+        a: (i / BIT_N) * Math.PI * 2 + Math.random() * 0.6,
+        sp: 1.6 + Math.random() * 4.4,
+        up: 2.6 + Math.random() * 3.6,
+        ph: Math.random(),
+      });
+    }
+    // Two expanding blast rings, fired a beat apart, read as the arc flash.
+    const rings = [];
+    for (let i = 0; i < 2; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.85, 1.2, 40),
+        new THREE.MeshBasicMaterial({
+          color: 0xbfe6ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+        }));
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = -3.2;   // down around transformer-top height
+      sparks.add(ring);
+      rings.push(ring);
+    }
+    const light = new THREE.PointLight(0xffcf5a, 0, 34, 2);
+    light.position.set(tx, 4.6, tz);
+    g.add(sparks);
+    g.add(light);
+    sparkFx = { group: sparks, bits, light, rings, downAt: null };
+    sparksGroup = sparks;
+  }
   // The hazard band: the one piece of graphic that identifies a substation.
   box(g, 3.7, 0.5, 3.1, tx, 0.75, tz, M.warning, false);
   for (let i = 0; i < 5; i++) {
@@ -1842,10 +2497,71 @@ function substation() {
   // A row of bollards along the front inside the fence.
   for (let i = 0; i < 5; i++) cyl(g, 0.12, 0.12, 1.0, -5.0 + i * 2.2, 0.5, D / 2 - 0.6, M.warning, 8, false);
 
-  colliders.push({ x: 0, z: 0, halfW: W / 2, halfD: D / 2, h: 0.35 });
+  // ---- Arming the charge ----
+  // Every piece of kit gets a heavy sensor probe (an empty, meseless group at
+  // its spot), so a monster truck touching ANY of it -- the gantry, the
+  // switchgear, the kiosk, the bollards, the trench covers or the gate signs --
+  // lights the whole fuse exactly like tapping the transformer does. The probes
+  // carry no collider and no mesh of their own; they exist purely so knockAt()
+  // has something to trip, and the blast's pieces fly regardless of which probe
+  // you actually hit.
+  const arm = (px, pz, r) => {
+    const probe = new THREE.Group();
+    probe.position.set(px, 0, pz);
+    g.add(probe);
+    if (!standaloneBuild) subTriggers.push(addKnockable(probe, r, { mode: 'fall', fallTime: 0.4, smashOnlyBy: 'heavy' }));
+  };
+  arm(gx, 0, 2.4);
+  arm(-3.7, -4.0, 2.2);
+  arm(-4.4, 3.4, 2.0);
+  arm(-0.6, D / 2 - 0.6, 4.0);
+  arm(2.7, 2.0, 3.0);
+  arm(1.4, D / 2, 1.4);
+  arm(-1.4, D / 2, 1.4);
+  // One touch-probe over each real solid block, sized so its reach (2.6 + r)
+  // covers the farthest car centre that can physically touch that collider
+  // (footprint + car radius). Running into the transformer, the gantry leg,
+  // the kiosk or a switchgear cabinet at any speed -- however the collision
+  // resolves -- is therefore always inside this probe's reach, closing any gap
+  // the position sensors had when an edge-first bump had the car centre squat
+  // just out of their smaller circles.
+  arm(tx, tz, 4.0);
+  arm(gx, 0, 3.2);
+  arm(-4.4, 3.4, 2.5);
+  arm(-3.7, -4.0, 3.0);
+
+  // Only the kit blocks here — the fence's gate colliders were pushed above and
+  // the blast's soft pass covers those. These four rects are handed to the world
+  // so the whole yard can be softened the instant the blast goes up; until then
+  // a light car just thumps into the transformer (the fence held it in all the
+  // way).
   colliders.push({ x: tx, z: tz, halfW: 2.5, halfD: 2.0, h: 3.2 });
   colliders.push({ x: gx, z: 0, halfW: 1.4, halfD: 2.0, h: 6.4 });
   colliders.push({ x: -4.4, z: 3.4, halfW: 1.3, halfD: 1.1, h: 2.6 });
+  colliders.push({ x: -3.7, z: -4.0, halfW: 2.4, halfD: 0.6, h: 2.2 });
+
+  // ---- Plan the demolition ----
+  // Every mesh that is not the gravel slab, the spark FX or a fence section
+  // (each fence section is its own heavy knockable, so it keeps its group and
+  // topples by itself) is re-parented straight onto the group and given a
+  // launch plan: up, outward from the transformer epicentre, and tumbling, so
+  // the station blasts apart and scatters instead of folding in on itself.
+  if (!standaloneBuild) {
+    g.updateMatrixWorld(true);
+    const pieces = [];
+    g.traverse((o) => {
+      if (!o.isMesh) return;
+      for (let a = o; a; a = a.parent) {
+        if (a === yard || a === sparksGroup || a.userData.smashFence) return;
+      }
+      pieces.push(o);
+    });
+    for (const m of pieces) g.attach(m);
+    subPieces = planSubstationBlast(pieces, tx, tz);
+    subDust = makeSubDust(g);
+    subState = 'standing';
+    subT = -1;
+  }
   return { group: g, colliders, h: 0.35 };
 }
 
@@ -1955,6 +2671,12 @@ function placeCollider(c, originX, originZ, yaw, name) {
   if (c.soft) out.soft = true;
   if (c.ceiling) out.ceiling = true;
   if (c.bridge) out.bridge = true;
+  // A `gate` collider is live only while its knockable is standing: it blocks
+  // whoever cannot knock it down, and frees itself the instant a heavy ride
+  // trips it (the substation fence is the whole reason). `noRoof` marks pure
+  // barriers so buildingTopAt never treats a wall as a drivable rooftop.
+  if (c.gate) out.gate = c.gate;
+  if (c.noRoof) out.noRoof = true;
   return out;
 }
 
@@ -2145,6 +2867,19 @@ export function addCityBuildings(scene, colliders) {
   fireStationBayWorld = null;
   houseGarageLocal = null;
   houseGarageEntry = null;
+  xfmrKnock = null;
+  sparkFx = null;
+  substationDown = false;
+  subPieces = null;
+  subDust = null;
+  subTriggers.length = 0;
+  subColliders.length = 0;
+  subState = 'standing';
+  subT = -1;
+  subBurstLeft = 0;
+  subBurstAcc = 0;
+  subLastT = 0;
+  setCityPower(true);
 
   for (const entry of LAYOUT) {
     const built = entry.build();
@@ -2155,7 +2890,11 @@ export function addCityBuildings(scene, colliders) {
     g.rotation.y = yaw;
     scene.add(g);
     for (const c of built.colliders) {
-      colliders.push(placeCollider(c, entry.x, entry.z, yaw, entry.name));
+      const placed = placeCollider(c, entry.x, entry.z, yaw, entry.name);
+      colliders.push(placed);
+      // Keep the substation's own yard colliders so the whole pen can be opened
+      // up (set soft) the instant the demolition starts.
+      if (entry.name === 'substation') subColliders.push(placed);
     }
     // Where the front door ends up in world space, so map.js can run a
     // driveway ribbon from it to the nearest street.
@@ -2267,7 +3006,69 @@ export function cityDoorTargets() {
 // `blinkers`; everything else in the city is lit by emissive materials that
 // simply stay on.
 export function updateCityBuildings(t) {
+  const dt = Math.max(0, Math.min(0.05, t - subLastT));
+  subLastT = t;
+  // The substation is the city's mains switch. While the yard stands the lights
+  // are on; the moment a heavy ride trips ANY of the armed sensors the whole
+  // station detonates and everything emissive in the city goes out. Leaving the
+  // city resets every knockable (resetKnockables), which stands the sensors
+  // back up: that is the signal to rebuild the yard, so the state follows the
+  // props rather than latching forever.
+  if (sparkFx) {
+    if (subState === 'standing' && subTriggers.some((k) => k.state !== 'standing')) {
+      startSubstationBlast();
+    }
+    const down = subState !== 'standing';
+    if (down !== substationDown) {
+      substationDown = down;
+      setCityPower(!down);
+      sparkFx.group.visible = down;
+      if (down) sparkFx.downAt = t;   // start the arc flash on the hit frame
+    }
+    if (subState !== 'standing') {
+      // The blast owns the kit: every piece is still tumbling under its own
+      // velocity, whether the flash is over or not.
+      advanceSubstationBlast(dt);
+      if (subTriggers.every((k) => k.state === 'standing')) resetSubstationWreck();
+    }
+    if (substationDown) {
+      for (const b of sparkFx.bits) {
+        const u = (t * 0.9 + b.ph) % 1;
+        const r = b.sp * u;
+        b.m.position.set(Math.cos(b.a) * r, -u * u * 9 + b.up * u, Math.sin(b.a) * r);
+        b.m.scale.setScalar(Math.max(0.18, 1 - u * 0.7));
+        b.m.visible = Math.sin((t + b.ph) * 47) > -0.2;
+      }
+      // A hot white flash for the first second, then a steady arcing flicker.
+      const age = sparkFx.downAt == null ? 99 : t - sparkFx.downAt;
+      const flash = Math.exp(-age * 3.2);
+      for (let i = 0; i < sparkFx.rings.length; i++) {
+        const ring = sparkFx.rings[i];
+        const rt = Math.min(1, Math.max(0, (age - i * 0.16) / 0.85));
+        const live = rt > 0 && rt < 1;
+        ring.visible = live;
+        if (live) {
+          ring.scale.setScalar(1 + rt * 24);
+          ring.material.opacity = (1 - rt) * 0.7;
+        }
+      }
+      sparkFx.light.intensity =
+        (1.5 + 8 * Math.abs(Math.sin(t * 21)) * (Math.sin(t * 5.3) > 0 ? 1 : 0.2)) + 70 * flash;
+    } else {
+      sparkFx.light.intensity = 0;
+      for (const ring of sparkFx.rings) ring.visible = false;
+      sparkFx.downAt = null;
+    }
+  }
   for (const b of blinkers) {
+    // A blackout takes the animated beacons and alarm lights out too, and the
+    // sine has to yield to it - otherwise the fire station keeps flashing in a
+    // city with no power.
+    if (!cityPowerOn) {
+      if (b.light) b.light.intensity = 0;
+      if (b.mat) b.mat.emissiveIntensity = 0;
+      continue;
+    }
     const v = b.base + b.amp * Math.sin(t * b.speed + b.phase);
     if (b.light) b.light.intensity = v;
     if (b.mat) b.mat.emissiveIntensity = v;

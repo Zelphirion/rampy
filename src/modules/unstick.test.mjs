@@ -5,6 +5,7 @@ import {
   circlePushOut,
   resolveStuck,
   wallNormal,
+  collidersToSolids,
 } from './unstick.js';
 
 const R = 2.2;   // player car radius used throughout
@@ -87,3 +88,35 @@ test('wallNormal points away from the deepest surface', () => {
   assert.ok(Math.abs(n.nz + 1) < 1e-6);   // push back toward -z (away)
   assert.equal(wallNormal(0, 0, solids, R), null);
 });
+
+test('collidersToSolids maps disc colliders to circles, not NaN boxes', () => {
+  // The beach's coral / the underground platter arrive as `{ x, z, r }` with no
+  // halfW/halfD. Treating one as a rect is what used to write NaN into the car
+  // position (see unstick.js). The mapper must keep the disc a disc.
+  const solids = collidersToSolids([
+    { x: -38, z: -22, r: 5.59, noRoof: true },        // coral disc
+    { x: 0, z: 10, halfW: 4, halfD: 3 },              // a plain box
+    { x: 99, z: 99, halfW: 5, halfD: 5, soft: true }, // ignored
+    { x: -99, z: -99, r: 3, soapy: true },            // ignored
+  ], R);
+
+  assert.equal(solids.length, 2);
+  assert.deepEqual(solids[0], { kind: 'circle', x: -38, z: -22, r: 5.59 + R });
+  assert.deepEqual(solids[1], { kind: 'rect', x: 0, z: 10, hw: 4, hd: 3 });
+});
+
+test('a disc collider never makes resolveStuck return NaN', () => {
+  // Regression: on the beach, driving into a real wall fired the anti-stuck
+  // pass; it walked every collider, hit a coral disc mapped to a box (undefined
+  // halfW/halfD -> NaN), and wrote NaN into car.position — the car vanished
+  // from the minimap and the view filled with sand.
+  const solids = collidersToSolids([
+    { x: -80.03, z: 18.5, halfW: 4, halfD: 110 },   // the west cliff wall
+    { x: -38, z: -22, r: 5.59 },                    // a coral disc
+    { x: 26, z: -30, r: 6.88 },
+  ], R);
+  const fix = resolveStuck(-79, 18.5, solids, R);
+  assert.ok(Number.isFinite(fix.x) && Number.isFinite(fix.z), 'fix must stay finite');
+  assert.ok(Number.isFinite(fix.nx) && Number.isFinite(fix.nz), 'normal must stay finite');
+});
+

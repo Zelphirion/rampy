@@ -2,9 +2,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import {
   BEACH_HALF_W, BEACH_SEA_Y, BEACH_SHORE_Z, BEACH_RIM_Z, BEACH_BASIN_Y,
   BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_SHELF_Z0, BEACH_SHELF_Z1,
-  beachGroundOffsetAt, clamp01, cliffHash,
+  BEACH_ROCKS, beachGroundOffsetAt, clamp01, cliffHash,
   PERSON_H, animalSize,
-} from './layout.js?v=1791038381904';
+} from './layout.js?v=1791600000000';
 
 // ===== The wildlife =====
 //
@@ -59,6 +59,11 @@ const G = {
   box: new THREE.BoxGeometry(1, 1, 1),
   cone: new THREE.ConeGeometry(1, 1, 7),
   tail: new THREE.ConeGeometry(0.5, 1, 5),
+  // An icosahedron is triangles all the way down, so a flat-shaded one gives the
+  // "distinct geometric facets and sharp polygonal edges" that a lat-long sphere
+  // only gives you at the poles. Used for the mermaid's tail, where the facet
+  // pattern IS the texture.
+  ico: new THREE.IcosahedronGeometry(1, 1),
 };
 
 function part(geo, material, sx, sy, sz, x, y, z) {
@@ -511,6 +516,103 @@ const MERMAID_H = animalSize('mermaid');
 // lying flat like a dropped plank.
 const SWIM_TILT = 0.52;
 
+// Her tail does not run one colour from hip to fluke: it fades from its own
+// colour into lime and then yellow-green in the last third, the way a fish's
+// does. Both halves of that come out of HSL rather than out of a palette picker
+// - lightness up for the fade, hue dragged towards yellow for the green shift -
+// which is what keeps the second mermaid, plum, a recolour of the SAME animal
+// instead of a different species.
+const lift = (hex, dl) => {
+  const c = new THREE.Color(hex);
+  const hsl = { h: 0, s: 0, l: 0 };
+  c.getHSL(hsl);
+  c.setHSL(
+    (hsl.h - dl * 0.5 + 1) % 1,
+    Math.max(0, hsl.s - dl * 0.4),
+    Math.min(1, hsl.l + dl));
+  return c.getHex();
+};
+
+function chaikin(profile, passes) {
+  let p = profile;
+  for (let i = 0; i < passes; i++) {
+    const out = [p[0]];
+    for (let k = 0; k < p.length - 1; k++) {
+      const a = p[k], b = p[k + 1];
+      out.push({
+        y: a.y * 0.75 + b.y * 0.25,
+        rx: a.rx * 0.75 + b.rx * 0.25,
+        rz: a.rz * 0.75 + b.rz * 0.25,
+        z: a.z * 0.75 + b.z * 0.25,
+      });
+      out.push({
+        y: a.y * 0.25 + b.y * 0.75,
+        rx: a.rx * 0.25 + b.rx * 0.75,
+        rz: a.rz * 0.25 + b.rz * 0.75,
+        z: a.z * 0.25 + b.z * 0.75,
+      });
+    }
+    out.push(p[p.length - 1]);
+    p = out;
+  }
+  return p;
+}
+
+function loft(profile, material, opts = {}) {
+  const { seg = 12, passes = 2, capLow = 0.04, capHigh = 0.04, colorAt = null } = opts;
+  const rings = chaikin(profile, passes);
+  const pos = [];
+  const col = [];
+  const idx = [];
+  const pushCol = (y) => {
+    if (!colorAt) return;
+    const c = colorAt(y);
+    col.push(c[0], c[1], c[2]);
+  };
+  for (const r of rings) {
+    for (let s = 0; s < seg; s++) {
+      const a = (s / seg) * TAU;
+      pos.push(Math.cos(a) * r.rx, r.y, r.z + Math.sin(a) * r.rz);
+      pushCol(r.y);
+    }
+  }
+
+  const fall = rings.length > 1 && rings[rings.length - 1].y < rings[0].y;
+  const tri = (a, b, c) => { if (fall) idx.push(a, c, b); else idx.push(a, b, c); };
+  // Side wall, wound so the outward normal points away from the axis.
+  for (let i = 0; i < rings.length - 1; i++) {
+    for (let s = 0; s < seg; s++) {
+      const s1 = (s + 1) % seg;
+      const a = i * seg + s, b = i * seg + s1;
+      const c = (i + 1) * seg + s, d = (i + 1) * seg + s1;
+      tri(a, c, b);
+      tri(b, c, d);
+    }
+  }
+  const low = rings[0], high = rings[rings.length - 1];
+  if (capLow) {
+    const apex = pos.length / 3;
+    pos.push(0, low.y - capLow, low.z);
+    pushCol(low.y);
+    for (let s = 0; s < seg; s++) tri(apex, s, (s + 1) % seg);
+  }
+  if (capHigh) {
+    const base = (rings.length - 1) * seg;
+    const apex = pos.length / 3;
+    pos.push(0, high.y + capHigh, high.z);
+    pushCol(high.y);
+    for (let s = 0; s < seg; s++) tri(apex, base + ((s + 1) % seg), base + s);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  if (colorAt) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const mesh = new THREE.Mesh(g, material);
+  mesh.castShadow = true;
+  return mesh;
+}
+
 export function makeMermaid(tailHex, finHex, hairHex) {
   const g = new THREE.Group();
   const roll = new THREE.Group();
@@ -521,7 +623,14 @@ export function makeMermaid(tailHex, finHex, hairHex) {
   pitch.add(model);
 
   const skin = mat(0xf2cfae, { roughness: 0.55 });
-  const tailMat = mat(tailHex, { roughness: 0.38, metalness: 0.12 });
+  // The tail is ONE mesh now, so its ramp cannot be four materials any more.
+  // Instead the material carries the base colour - which the tests read to
+  // check the shells are cut from the same cloth - and the ramp rides along as
+  // vertex colours multiplied into it: lightness up, hue dragged towards
+  // yellow, exactly the way lift() used to make the four segment materials.
+  const tailMat = new THREE.MeshStandardMaterial({
+    color: tailHex, roughness: 0.38, metalness: 0.12, flatShading: true, vertexColors: true,
+  });
   const finMat = mat(finHex, { roughness: 0.32, metalness: 0.12 });
   // The shells are the SAME colour as the tail, deliberately: they are cut from
   // it. Matching them to the tail is what makes the whole thing read as one
@@ -530,91 +639,171 @@ export function makeMermaid(tailHex, finHex, hairHex) {
   const shellLip = mat(0xf7eddf, { roughness: 0.4 });
   const hairMat = mat(hairHex, { roughness: 0.8 });
   const dark = mat(0x2a1c18, { roughness: 0.4 });
+  // The tail's own ramp: deep green at the hip, lime through the middle,
+  // yellow-green for the last third, then back to a green for the peduncle.
+  // Stored as COLOURS (not materials) and turned into per-vertex ratios of the
+  // base colour below.
+  const rampCols = [
+    new THREE.Color(tailHex),
+    new THREE.Color(lift(tailHex, 0.10)),
+    new THREE.Color(lift(tailHex, 0.20)),
+    new THREE.Color(lift(tailHex, 0.30)),
+  ];
+  // Sample the ramp along the tail by height (tail-local y), as ratios of the
+  // base colour so the vertex colours multiply back into the original hues.
+  const base = rampCols[0];
+  const rampAt = (y) => {
+    // stops: hip base -> lime -> yellow-green -> back to green at the tip
+    const stops = [
+      [-0.10, 0], [-0.35, 1], [-0.55, 2], [-0.70, 3], [-0.80, 2],
+    ];
+    let i = 0;
+    while (i < stops.length - 1 && y < stops[i][0]) i++;
+    const a = stops[Math.max(0, i - 1)], b = stops[Math.min(i, stops.length - 1)];
+    const t = a === b || b[0] === a[0] ? 0 : Math.min(1, Math.max(0, (y - a[0]) / (b[0] - a[0])));
+    const lo = rampCols[a[1]], hi = rampCols[b[1]];
+    const mix = (ch) => (lo[ch] + (hi[ch] - lo[ch]) * t) / Math.max(base[ch], 1e-4);
+    return [mix('r'), mix('g'), mix('b')];
+  };
 
-  // ---- the human half, built up from the hips ----
-  // Hips, then a waist NARROWER than both the hips and the bust. That single
-  // pinch is most of what separates a female figure from a lozenge, and it is
-  // the difference between "person" and "fish with arms".
-  model.add(part(G.sphere, skin, 0.2, 0.17, 0.16, 0, 0.28, 0));
-  model.add(part(G.sphere, skin, 0.135, 0.15, 0.11, 0, 0.46, 0));
-  model.add(part(G.sphere, skin, 0.185, 0.16, 0.135, 0, 0.63, 0));
-  // The bust, as two rather than one lump, so the chest has a front and a
-  // shoulder either side of it.
-  for (const sx of [-0.1, 0.1]) {
-    model.add(part(G.sphere, skin, 0.1, 0.095, 0.09, sx, 0.665, 0.06));
+
+  const BODY = [
+    { y: 0.160, rx: 0.260, rz: 0.190, z: 0.012 },  // seam - buried in the tail
+    { y: 0.210, rx: 0.268, rz: 0.196, z: 0.016 },
+    { y: 0.260, rx: 0.275, rz: 0.201, z: 0.022 },
+    { y: 0.310, rx: 0.275, rz: 0.205, z: 0.025 },  // abdomen, proud of the waist
+    { y: 0.370, rx: 0.256, rz: 0.197, z: 0.022 },
+    { y: 0.420, rx: 0.237, rz: 0.185, z: 0.014 },
+    { y: 0.475, rx: 0.225, rz: 0.175, z: 0.010 },  // the waist pinch
+    { y: 0.530, rx: 0.234, rz: 0.177, z: 0.006 },
+    { y: 0.590, rx: 0.247, rz: 0.179, z: 0.002 },
+    { y: 0.640, rx: 0.255, rz: 0.180, z: 0.000 },  // chest - the shells cover it
+    { y: 0.700, rx: 0.242, rz: 0.167, z: 0.000 },
+    { y: 0.755, rx: 0.270, rz: 0.150, z: 0.000 },  // shoulders
+    { y: 0.790, rx: 0.259, rz: 0.144, z: 0.000 },
+    { y: 0.815, rx: 0.237, rz: 0.132, z: 0.000 },
+    { y: 0.850, rx: 0.177, rz: 0.111, z: 0.011 },  // the jaw rides forward here
+    { y: 0.880, rx: 0.117, rz: 0.123, z: 0.007 },
+    { y: 0.900, rx: 0.123, rz: 0.128, z: 0.005 },
+    { y: 0.950, rx: 0.130, rz: 0.135, z: 0.005 },  // head
+    { y: 1.000, rx: 0.123, rz: 0.128, z: 0.005 },
+    { y: 1.050, rx: 0.101, rz: 0.105, z: 0.005 },
+    { y: 1.090, rx: 0.063, rz: 0.065, z: 0.000 },
+    { y: 1.105, rx: 0.022, rz: 0.023, z: 0.000 },  // crown
+  ];
+  model.add(loft(BODY, skin, { seg: 12, passes: 2, capLow: 0.05, capHigh: 0.02 }));
+  // Two dark eyes - at 7.5 tall she is a person-sized figure and the eyes are
+  // the difference between a head and an egg.
+  for (const sx of [-0.05, 0.05]) {
+    model.add(part(G.sphereLo, dark, 0.026, 0.032, 0.024, sx, 0.955, 0.125));
   }
-  // Shoulders and neck.
-  model.add(part(G.sphere, skin, 0.21, 0.11, 0.12, 0, 0.75, 0));
-  model.add(part(G.sphere, skin, 0.06, 0.09, 0.06, 0, 0.84, 0));
-  // Head, with a jaw so it is not a ball, hair swept back off the face, and two
-  // dark eyes - at 7.5 tall she is a person-sized figure and the eyes are the
-  // difference between a head and an egg.
-  model.add(part(G.sphere, skin, 0.115, 0.145, 0.12, 0, 0.95, 0.005));
-  model.add(part(G.sphereLo, skin, 0.085, 0.07, 0.09, 0, 0.885, 0.02));
-  model.add(part(G.sphere, hairMat, 0.125, 0.135, 0.1, 0, 0.965, -0.055));
-  model.add(part(G.sphere, hairMat, 0.09, 0.16, 0.07, 0, 0.87, -0.085));
-  for (const sx of [-0.045, 0.045]) {
-    model.add(part(G.sphereLo, dark, 0.022, 0.028, 0.02, sx, 0.965, 0.1));
-  }
-  // Arms, trailing back alongside the body in the classic swim.
+
+  // ---- hair: bright, long, and in BLOCKS ----
+  // Angular boxes rather than spheres, because a smooth cap reads as a helmet
+  // and this model is meant to have facets. The two front falls go OVER the
+  // shoulders and stop at the chest, which is the silhouette people actually
+  // draw a mermaid with.
+  model.add(part(G.box, hairMat, 0.30, 0.23, 0.24, 0, 1.04, -0.045));
+  model.add(part(G.box, hairMat, 0.27, 0.11, 0.13, 0, 1.065, 0.055));
+  model.add(part(G.box, hairMat, 0.28, 0.22, 0.17, 0, 0.87, -0.085));
+  model.add(part(G.box, hairMat, 0.24, 0.16, 0.14, 0, 0.70, -0.09));
   for (const sx of [-1, 1]) {
-    model.add(part(G.sphere, skin, 0.055, 0.15, 0.055, sx * 0.235, 0.6, -0.015));
-    model.add(part(G.sphereLo, skin, 0.048, 0.13, 0.048, sx * 0.265, 0.44, -0.05));
-    model.add(part(G.sphereLo, skin, 0.05, 0.055, 0.04, sx * 0.275, 0.33, -0.06));
+    model.add(part(G.box, hairMat, 0.115, 0.17, 0.135, sx * 0.135, 0.955, 0.025));
+    model.add(part(G.box, hairMat, 0.125, 0.18, 0.145, sx * 0.185, 0.80, 0.05));
+    model.add(part(G.box, hairMat, 0.115, 0.155, 0.135, sx * 0.19, 0.65, 0.075));
+  }
+
+  // ---- arms, held out in an A-pose ----
+  // One lofted piece per arm now - shoulder, forearm and hand used to be three
+  // ellipsoids with two visible joins down each arm. Still on a pivot at the
+  // shoulder, so the A-pose is ONE number: 0.58 rad, about 33 degrees off
+  // vertical, enough for the hands to clear the hips by a hand's width. The
+  // top of each arm is buried in the shoulder the same way the waist seam is
+  // buried in the tail.
+  const ARM_ANGLE = 0.58;
+  const ARM = [
+    { y: -0.02, rx: 0.085, rz: 0.085, z: 0.000 },  // in the shoulder
+    { y: -0.13, rx: 0.090, rz: 0.090, z: 0.000 },  // deltoid
+    { y: -0.30, rx: 0.077, rz: 0.077, z: 0.006 },
+    { y: -0.42, rx: 0.072, rz: 0.072, z: 0.012 },
+    { y: -0.52, rx: 0.066, rz: 0.066, z: 0.017 },
+    { y: -0.58, rx: 0.058, rz: 0.058, z: 0.020 },  // wrist
+    { y: -0.63, rx: 0.045, rz: 0.045, z: 0.020 },  // hand
+  ];
+  for (const sx of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.position.set(sx * 0.24, 0.77, 0.01);
+    arm.rotation.z = sx * ARM_ANGLE;
+    arm.add(loft(ARM, skin, { seg: 8, passes: 1, capLow: 0.03, capHigh: 0.05 }));
+    model.add(arm);
   }
 
   // ---- the shells ----
-  // Two scallop halves over the bust, in the tail's colour, each with a pale
-  // lip along its edge so they read as shell rather than as beads.
-  for (const sx of [-1, 1]) {
+    for (const sx of [-1, 1]) {
+    const n = new THREE.Vector3(sx * 0.30, 0.15, 0.94).normalize();
+    const sink = 0.05;
+    const P = new THREE.Vector3(sx * 0.105, 0.66, 0.160);
+    const C = P.clone().addScaledVector(n, -sink);
     const sh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.108, 12, 7, 0, Math.PI * 2, 0, Math.PI * 0.55), shellMat);
-    sh.position.set(sx * 0.1, 0.672, 0.045);
-    sh.rotation.set(Math.PI * 0.42, 0, sx * 0.5);
-    sh.scale.set(1, 1, 0.72);
+      new THREE.SphereGeometry(0.135, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.55), shellMat);
+    sh.position.copy(C);
+    sh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
+    sh.scale.set(1, 0.82, 1);
+    sh.castShadow = true;
+    sh.userData.bikini = 'cup';
     model.add(sh);
-    const lip = new THREE.Mesh(
-      new THREE.TorusGeometry(0.102, 0.017, 5, 12, Math.PI), shellLip);
-    lip.position.set(sx * 0.1, 0.648, 0.082);
-    lip.rotation.set(Math.PI * 0.42 + Math.PI / 2, 0, sx * 0.5);
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(0.134, 0.017, 4, 16), shellLip);
+    lip.position.copy(C).addScaledVector(n, 0.0154);
+    lip.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    lip.castShadow = true;
+    lip.userData.bikini = 'lip';
     model.add(lip);
   }
 
-  // ---- the tail, on its own group so it can sweep ----
+  
   const tail = new THREE.Group();
-  tail.position.set(0, 0.3, 0);
-  tail.add(part(G.sphere, tailMat, 0.165, 0.22, 0.135, 0, -0.16, 0));
-  tail.add(part(G.sphere, tailMat, 0.145, 0.24, 0.115, 0, -0.42, 0));
-  tail.add(part(G.sphereLo, tailMat, 0.1, 0.2, 0.085, 0, -0.62, 0));
-  // THE FLUKE: two lobes splayed back and out. It is far TWICE as wide as it was
-  // - the tail is the whole silhouette of a mermaid at this distance, and at the
-  // old width she read as an eel with a fin on the end.
+  tail.position.set(0, 0.10, 0.01);
+  model.add(tail);
+  const TAIL = [
+    { y: 0.16, rx: 0.315, rz: 0.235, z: 0.012 },  // top ring - swallows the seam
+    { y: 0.06, rx: 0.335, rz: 0.245, z: 0.010 },  // hips: her widest point
+    { y: -0.02, rx: 0.335, rz: 0.245, z: 0.008 },
+    { y: -0.10, rx: 0.330, rz: 0.242, z: 0.006 },
+    { y: -0.20, rx: 0.305, rz: 0.225, z: 0.004 },  // seat
+    { y: -0.30, rx: 0.278, rz: 0.203, z: 0.006 },
+    { y: -0.42, rx: 0.240, rz: 0.175, z: 0.008 },
+    { y: -0.55, rx: 0.205, rz: 0.155, z: 0.010 },
+    { y: -0.65, rx: 0.172, rz: 0.131, z: 0.010 },
+    { y: -0.75, rx: 0.140, rz: 0.107, z: 0.009 },
+    { y: -0.84, rx: 0.105, rz: 0.081, z: 0.006 },
+    { y: -0.90, rx: 0.072, rz: 0.055, z: 0.003 },
+    { y: -0.95, rx: 0.040, rz: 0.030, z: 0.001 },
+  ];
+  tail.add(loft(TAIL, tailMat, {
+    seg: 14, passes: 2, capLow: 0.03, capHigh: 0.07, colorAt: rampAt,
+  }));
+  // THE FLUKE: two lobes splayed out in the plane of her back, so the fin is a
+  // PLATE rather than a cone - "flat-shaded low poly" has to apply to the
+  // silhouette too. But a plate still needs DEPTH: at 5% of its own size the
+  // lobe came out 0.17 units thick against a 7.8-unit animal, which is a
+  // hairline edge-on and vanishes altogether at a grazing angle. At 11% it is
+  // nearly half a unit - flat enough to read as a fin from above, solid enough
+  // to keep an edge from every other angle.
+  // Each lobe is a cone squashed thin and swung out from the peduncle, so it
+  // widens AWAY from the tail the way a caudal fin does, and the two meet at
+  // the tip to make one symmetrical dual fluke resting flat.
   //
-  // The lobes also sweep BACK (`rotation.x`), not just out. A fluke that only
-  // spreads sideways is a fan; swept back it is a tail being dragged through
-  // water, which is what she is doing, and it is also what keeps her span down
-  // to something a 7.5-long body can carry - get the spread wrong and she ends
-  // up wider nose-to-fluke than she is long, which reads as a butterfly.
+  // The spread is deliberately limited: get it wrong and she ends up wider
+  // nose-to-fluke than she is long, which reads as a butterfly.
   const fluke = new THREE.Group();
-  fluke.position.set(0, -0.7, 0);
+  fluke.position.set(0, -0.97, 0.005);
   for (const sx of [-1, 1]) {
     const lobe = new THREE.Group();
-    lobe.rotation.z = sx * 0.55;
-    lobe.rotation.x = 0.85;
-    lobe.add(part(G.tail, finMat, 0.26, 0.5, 0.05, 0, -0.25, 0));
+    lobe.rotation.z = sx * 0.78;
+    lobe.add(part(G.tail, finMat, 0.34, 0.62, 0.11, 0, -0.28, 0));
     fluke.add(lobe);
   }
   tail.add(fluke);
-  // A pair of small side fins low on the tail, which is what stops her reading
-  // as a bare cone from behind.
-  for (const sx of [-1, 1]) {
-    const f = new THREE.Group();
-    f.position.set(sx * 0.13, -0.44, 0);
-    f.rotation.z = sx * 1.15;
-    f.add(part(G.tail, finMat, 0.2, 0.24, 0.05, 0, -0.12, 0));
-    tail.add(f);
-  }
-  model.add(tail);
 
   // ---- sizing, then the pose ----
   // Built head-up, so the extent that matters is her height. She is going to be
@@ -647,12 +836,10 @@ export function addBeachLife(parent, baseY = 0) {
   parent.add(group);
 
   // ---- crabs, one tucked behind each boulder ----
+  // Read straight off the boulder list so a rock and its crab can never drift
+  // apart: move a rock in layout.js and its crab moves with it.
   const crabs = [];
-  const rocks = [
-    [-33, 22], [12, 30], [26, 14], [-44, 24], [4, 14],
-    [36, 34], [-20, 42], [-8, 36], [46, 18], [-28, 8],
-  ];
-  rocks.forEach(([rx, rz], i) => {
+  BEACH_ROCKS.forEach(([rx, rz], i) => {
     const c = makeCrab(rx - 2.4 - (i % 3), rz - 1.6, { x: rx, z: rz });
     group.add(c.group);
     crabs.push(c);
@@ -816,8 +1003,11 @@ export function addBeachLife(parent, baseY = 0) {
         // ...and then the swim itself, on the two inner nodes. She leans into
         // her turns and bobs with each beat of the tail, which is what stops a
         // correctly-posed mermaid from looking like a model on a turntable.
-        s.m.roll.rotation.z = Math.sin(t * 0.8 + s.angle * 2) * 0.22;
-        s.m.pitch.rotation.x = (Math.PI / 2 - SWIM_TILT) + Math.sin(t * 0.7) * 0.07;
+        // Both amplitudes are capped by her own proportions: rolled over, her
+        // A-pose arms and her swept fluke rotate into the vertical and she
+        // measures as deep as she is long, which is a slab by any definition.
+        s.m.roll.rotation.z = Math.sin(t * 0.8 + s.angle * 2) * 0.15;
+        s.m.pitch.rotation.x = (Math.PI / 2 - SWIM_TILT) + Math.sin(t * 0.7) * 0.05;
         s.m.tail.rotation.y = Math.sin(t * 1.4 + s.angle) * 0.42;
       }
     },

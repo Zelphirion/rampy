@@ -120,6 +120,13 @@ function makeStopSign(scene, x, z, rotY) {
 const lampBulbMat = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 1.4 });
 const lampBulbMatDark = new THREE.MeshStandardMaterial({ color: 0xfff2c2, emissive: 0xffd98a, emissiveIntensity: 0 });
 
+// Street lamps go out with the rest of the city when the substation is
+// knocked over. They are the one lot of emissive props that does not live in
+// cityBuildings.js, so main.js has to hand the blackout across here.
+export function setStreetLights(on) {
+  lampBulbMat.emissiveIntensity = on ? 1.4 : 0;
+}
+
 export function buildLampPost(x, z) {
   const group = new THREE.Group();
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.13, 3.3, 8), poleMat);
@@ -1059,48 +1066,50 @@ function addPark(scene) {
   return makeClamShell(scene, PARK_CLAM);
 }
 
-// Add a giant open scallop (pecten) shell near pond - like Botticelli's Birth of Venus
+// Add a giant open scallop (pecten) shell near the pond - like Botticelli's
+// Birth of Venus.
 //
-// A scallop is a ribbed fan hinged at its umbo - the pointed "nose" at the base
-// of the fan - and the two valves swing apart about that hinge. Each valve is a
-// patch of a surface of revolution (the polar sweep runs umbo -> margin) cut to
-// a ~200 degree fan, then corrugated by SHELL_RIBS flutes that radiate out of
-// the hinge and deepen toward the wavy edge, so the ribs are strongest exactly
-// where a pecten's are and vanish at the solid hinge. Both valves get real
+// The shell is a single FLATTENED SPHERE split across its equator into two
+// matching halves. Closed, the halves meet and it reads as one ribbed disc;
+// open (the pose you find it in) the upper half is swung up about a hinge at
+// the back, which is the open-scallop silhouette. Each half is corrugated by
+// SHELL_RIBS-like flutes that radiate from the solid umbo at the pole and bite
+// deepest at the wavy, scalloped rim - the same as a real pecten, whose ribs
+// vanish at the hinge and are strongest at the edge. Both halves get real
 // thickness and a capped rim: a single sheet reads as a shell but goes
 // invisible edge-on, which is what made the old lip vanish from low angles.
 //
-// The valve is now squashed in Y (cfg.flat) and the lower one is squashed hard,
-// so instead of two hemispheres hinged on the lawn it is a shallow dish sunk
-// into the park with a tall fan leaning back behind it. Every dimension and the
-// ground's idea of where the floor is come out of clam.js, because the turf has
-// to be cut along this exact silhouette.
+// Only the drawing changed. The pit the car drives into, the hole cut in the
+// turf and the trigger all still come out of clam.js, and the lower half is
+// sized with the same `flat`/`squash` as that bowl, so the dish and the ground
+// it sits in still describe the same surface.
 
-// Mid-surface of one valve. t: 0 at the umbo -> 1 at the margin.
-// a: angle across the fan, -SHELL_SPAN..+SHELL_SPAN.
-// cup: +1 = a bowl whose cavity faces +Y, -1 = a dome (the upper valve).
-// flat: Y squash. The two valves carry different values, so the shell can be a
-// shallow dish at the bottom and a full sweep on top.
-function shellPoint(t, a, cfg, out) {
-  const phi = t * Math.PI * 0.5;
-  const flute = 0.5 * (1 + Math.cos((a * SHELL_RIBS * Math.PI) / SHELL_SPAN));
-  const sp = Math.sin(phi) * (1 + cfg.ribAmp * flute);
-  out[0] = cfg.size * sp * Math.sin(a);
-  out[1] = cfg.size * cfg.cup * (1 - Math.cos(phi)) * cfg.flat;
-  out[2] = cfg.size * sp * Math.cos(a) * SHELL_SQUASH;
+// Mid-surface of one half. u: 0 at the rim (the equator) -> 1 at the pole
+// (the umbo). phi: 0..2PI around the vertical axis.
+// cup: -1 = the lower half (the dish the car sits in, cavity up),
+//      +1 = the upper half (the dome, cavity down).
+function shellDomePoint(u, phi, cfg, out) {
+  const theta = (1 - u) * Math.PI * 0.5;
+  const flute = 0.5 * (1 + Math.cos(phi * cfg.ribs));
+  // Ribs vanish at the umbo and bite deepest at the margin, where a pecten's
+  // are strongest - and where they turn the rim into a wavy, scalloped edge.
+  const bump = 1 + cfg.ribAmp * (1 - u) * (flute - 0.5) * 2;
+  const sinT = Math.sin(theta);
+  out[0] = cfg.wide * bump * sinT * Math.sin(phi);
+  out[1] = cfg.cup * cfg.tall * Math.cos(theta);
+  out[2] = cfg.deep * bump * sinT * Math.cos(phi);
   return out;
 }
 
-function shellNormal(t, a, cfg, out) {
-  const e = 0.004;
-  const p0 = shellPoint(Math.max(0, t - e), a, cfg, [0, 0, 0]);
-  const p1 = shellPoint(Math.min(1, t + e), a, cfg, [0, 0, 0]);
-  // At the umbo every angle collapses onto one point, so the da tangent is
-  // zero there and the cross product would come back as a null vector. Sample
-  // it just inside the pole instead; the limit is the same normal everywhere.
-  const tc = t < 0.05 ? 0.05 : t;
-  const a0 = shellPoint(tc, Math.max(-SHELL_SPAN, a - e), cfg, [0, 0, 0]);
-  const a1 = shellPoint(tc, Math.min(SHELL_SPAN, a + e), cfg, [0, 0, 0]);
+function shellDomeNormal(u, phi, cfg, out) {
+  const e = 0.006;
+  const p0 = shellDomePoint(Math.max(0, u - e), phi, cfg, [0, 0, 0]);
+  const p1 = shellDomePoint(Math.min(1, u + e), phi, cfg, [0, 0, 0]);
+  // The azimuthal tangent collapses on the pole axis, so sample it just inside
+  // the pole where the meridian still swings; the limit is the same normal.
+  const uc = Math.min(1 - e, Math.max(e, u));
+  const a0 = shellDomePoint(uc, phi - e, cfg, [0, 0, 0]);
+  const a1 = shellDomePoint(uc, phi + e, cfg, [0, 0, 0]);
   const ux = p1[0] - p0[0], uy = p1[1] - p0[1], uz = p1[2] - p0[2];
   const vx = a1[0] - a0[0], vy = a1[1] - a0[1], vz = a1[2] - a0[2];
   const nx = vy * uz - vz * uy;
@@ -1113,11 +1122,11 @@ function shellNormal(t, a, cfg, out) {
   return out;
 }
 
-function shellValveGeometry(cfg) {
-  const segT = 20;
-  const segA = 120;
-  const rowLen = segA + 1;
-  const perLayer = (segT + 1) * rowLen;
+function shellDomeGeometry(cfg) {
+  const segU = 20;     // rim -> pole
+  const segP = 120;    // around the axis
+  const rowLen = segP + 1;
+  const perLayer = (segU + 1) * rowLen;
   const half = cfg.thickness * 0.5;
   const pos = [];
   const nrm = [];
@@ -1128,71 +1137,56 @@ function shellValveGeometry(cfg) {
   const inside = new THREE.Color(0xfff4e6);   // pearly interior
   const outside = new THREE.Color(0xe4c193);  // tan exterior
   const edge = new THREE.Color(0xf3e0b6);     // the cut rim
-  // The hinge is solid, so the two faces meet at the umbo instead of leaving a
+  // The umbo is solid, so the two faces meet at the pole instead of leaving a
   // slot there for the ground to show through.
-  const offsetAt = (t) => half * Math.min(1, t / 0.14);
-  // Which layer faces the cavity flips with the sign of `cup` (a bowl and a
-  // dome curve opposite ways about the same pole), so don't hard-code a layer
-  // index: the cavity side is the one the surface turns away from, which is +n
-  // for a dome and -n for a bowl.
-  const innerLayer = cfg.cup > 0 ? 1 : 0;
+  const offsetAt = (u) => half * Math.min(1, (1 - u) / 0.14);
+  // Which layer faces the cavity flips with the sign of `cup`: the dish opens
+  // upward and the dome opens downward, so the inside face is the upper layer
+  // of the dish and the lower layer of the dome.
+  const innerLayer = cfg.cup > 0 ? 0 : 1;
 
   for (let layer = 0; layer < 2; layer++) {
     const sgn = layer === 0 ? 1 : -1;
     const tint = layer === innerLayer ? inside : outside;
-    for (let i = 0; i <= segT; i++) {
-      const t = i / segT;
-      const d = offsetAt(t) * sgn;
-      for (let j = 0; j <= segA; j++) {
-        const a = (j / segA) * 2 * SHELL_SPAN - SHELL_SPAN;
-        shellPoint(t, a, cfg, p);
-        shellNormal(t, a, cfg, n);
+    for (let i = 0; i <= segU; i++) {
+      const u = i / segU;
+      const d = offsetAt(u) * sgn;
+      for (let j = 0; j <= segP; j++) {
+        const phi = (j / segP) * Math.PI * 2;
+        shellDomePoint(u, phi, cfg, p);
+        shellDomeNormal(u, phi, cfg, n);
         pos.push(p[0] + n[0] * d, p[1] + n[1] * d, p[2] + n[2] * d);
         nrm.push(n[0] * sgn, n[1] * sgn, n[2] * sgn);
         col.push(tint.r, tint.g, tint.b);
       }
     }
     const base = layer * perLayer;
-    for (let i = 0; i < segT; i++) {
-      for (let j = 0; j < segA; j++) {
+    for (let i = 0; i < segU; i++) {
+      for (let j = 0; j < segP; j++) {
         const v0 = base + i * rowLen + j;
         idx.push(v0, v0 + 1, v0 + rowLen + 1, v0, v0 + rowLen + 1, v0 + rowLen);
       }
     }
   }
 
-  // Walk the patch border and bridge the two faces with a rim strip. Without it
-  // the margin is an open slot and the valve thins to nothing edge-on.
+  // Walk the rim (the equator) and bridge the two faces with a capped strip.
+  // Without it the margin is an open slot and the valve thins to nothing
+  // edge-on.
   const rimBase = pos.length / 3;
-  const loop = [];
-  for (let i = 0; i <= segT; i++) loop.push([i, 0, 0]);
-  for (let j = 1; j <= segA; j++) loop.push([segT, j, 1]);
-  for (let i = segT - 1; i >= 0; i--) loop.push([i, segA, 0]);
-  for (let j = segA - 1; j >= 1; j--) loop.push([0, j, 0]);
-
   const q = [0, 0, 0];
+  const q0 = [0, 0, 0];
   const e = 0.01;
-  for (const [i, j, along] of loop) {
-    const t = i / segT;
-    const a = (j / segA) * 2 * SHELL_SPAN - SHELL_SPAN;
-    shellPoint(t, a, cfg, p);
-    shellNormal(t, a, cfg, n);
+  for (let j = 0; j <= segP; j++) {
+    const phi = (j / segP) * Math.PI * 2;
+    shellDomePoint(0, phi, cfg, p);
+    shellDomeNormal(0, phi, cfg, n);
     // Tangent along the rim, so the cut face normal is perpendicular to both
     // the rim and the valve surface.
-    let tx, ty, tz;
-    if (along) {
-      shellPoint(t, Math.min(SHELL_SPAN, a + e), cfg, q);
-      const q0 = shellPoint(t, Math.max(-SHELL_SPAN, a - e), cfg, [0, 0, 0]);
-      tx = q[0] - q0[0];
-      ty = q[1] - q0[1];
-      tz = q[2] - q0[2];
-    } else {
-      shellPoint(Math.min(1, t + e), a, cfg, q);
-      const q0 = shellPoint(Math.max(0, t - e), a, cfg, [0, 0, 0]);
-      tx = q[0] - q0[0];
-      ty = q[1] - q0[1];
-      tz = q[2] - q0[2];
-    }
+    shellDomePoint(0, phi + e, cfg, q);
+    shellDomePoint(0, phi - e, cfg, q0);
+    const tx = q[0] - q0[0];
+    const ty = q[1] - q0[1];
+    const tz = q[2] - q0[2];
     let rx = ty * n[2] - tz * n[1];
     let ry = tz * n[0] - tx * n[2];
     let rz = tx * n[1] - ty * n[0];
@@ -1200,16 +1194,15 @@ function shellValveGeometry(cfg) {
     rx /= len;
     ry /= len;
     rz /= len;
-    const d = offsetAt(t);
+    const d = offsetAt(0);
     pos.push(p[0] + n[0] * d, p[1] + n[1] * d, p[2] + n[2] * d);
     pos.push(p[0] - n[0] * d, p[1] - n[1] * d, p[2] - n[2] * d);
     nrm.push(rx, ry, rz, rx, ry, rz);
     col.push(edge.r, edge.g, edge.b, edge.r, edge.g, edge.b);
   }
-  for (let k = 0; k < loop.length; k++) {
-    const k2 = (k + 1) % loop.length;
+  for (let k = 0; k < segP; k++) {
     const v0 = rimBase + k * 2;
-    const v2 = rimBase + k2 * 2;
+    const v2 = v0 + 2;
     idx.push(v0, v0 + 1, v2 + 1, v0, v2 + 1, v2);
   }
 
@@ -1227,37 +1220,59 @@ function shellValveGeometry(cfg) {
 // same builder produces the park shell and the beach shell and both are
 // guaranteed to line up with the hole cut in their ground.
 export function makeClamShell(scene, site = PARK_CLAM) {
-  const { x, z, umboY, surfaceY, open, shut } = site;
+  const { x, z, umboY, surfaceY } = site;
+  // Lid pose, in this mesh's frame. The valves meet flat at 0; the dome swings
+  // up off the equator to a little past vertical to sit like an open lid.
+  const open = -1.6;
+  const shut = 0;
   const g = new THREE.Group();
   const shellMat = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.6, metalness: 0.04,
     side: THREE.DoubleSide,
   });
 
-  // park-spine runs along the park's east side, so face the opening that way:
-  // the fan opens east and you drive straight west into the bowl off the road.
+  // The lid hinges on the rear rim (-Z) and stands up on that side, so the open
+  // mouth of the bowl is the +Z half. The ground's drivable fan is fixed to +X
+  // regardless of yaw, so we turn the drawn mesh a further 180 deg past it: the
+  // hinged back then faces away from the approach and the open mouth faces the
+  // car, instead of the raised lid presenting its back first.
   const yaw = new THREE.Group();
-  yaw.rotation.y = site.yaw;
+  yaw.rotation.y = site.yaw + Math.PI;
   g.add(yaw);
 
-  // The lower valve is squashed to a shallow dish and the umbo is dropped half
-  // a unit under the lawn, so the dish sits down inside its own hole in the
-  // turf. The upper valve keeps nearly its full sweep and leans away to the
-  // west, which is the classic open-scallop silhouette and leaves the whole
-  // mouth of the bowl facing the road.
-  const lowerCfg = { size: site.size, flat: site.flat, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: 1 };
-  const upperCfg = { size: site.upperSize, flat: site.upperFlat, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: -1 };
-  const lower = new THREE.Mesh(shellValveGeometry(lowerCfg), shellMat);
-  const upper = new THREE.Mesh(shellValveGeometry(upperCfg), shellMat);
-  // Both valves hinge on the umbo, so the open/close is a single rotation of
-  // the upper valve about X.
+  // Closed, the two halves describe one flattened sphere: the lower half is the
+  // dish sunk into the park, the upper half the ribbed dome. Both are built with
+  // the same wide/deep/tall, so their rims meet exactly along the equator. The
+  // dome swings up and back about a hinge at the rear rim - the open pose it is
+  // found in - which leaves the whole mouth of the bowl facing the road.
+  const wide = site.size;
+  const deep = site.size * SHELL_SQUASH;
+  const tall = site.size * site.flat;        // == the drivable bowl depth
+  // One rib per ~15 deg, the same density the old fan had at SHELL_RIBS/SHELL_SPAN.
+  const ribs = Math.max(2, Math.round((SHELL_RIBS * Math.PI) / SHELL_SPAN));
+  const lowerCfg = { wide, deep, tall, ribs, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: -1 };
+  const upperCfg = { wide, deep, tall, ribs, ribAmp: site.ribAmp, thickness: SHELL_THICK, cup: 1 };
+  // The dish is built pole-down, so lift it to sit its umbo on the group origin.
+  const lower = new THREE.Mesh(shellDomeGeometry(lowerCfg), shellMat);
+  lower.position.y = tall;
+  const upper = new THREE.Mesh(shellDomeGeometry(upperCfg), shellMat);
+  // The hinge is the rear point of the equator: swing about it and the dome
+  // comes up off the dish like a lid.
   const swing = new THREE.Group();
-  swing.rotation.x = open;
+  swing.position.set(0, tall, -deep);
+  upper.position.set(0, 0, deep);
   swing.add(upper);
+  swing.rotation.x = open;
   yaw.add(lower, swing);
 
-  const hinge = new THREE.Mesh(new THREE.SphereGeometry(0.24, 16, 12), shellMat);
-  hinge.scale.set(1, 0.7, 1.3);
+  // The ligament: a square block at the hinge, the way a real scallop's valves
+  // meet at a tooth at the umbo.
+  const hingeMat = new THREE.MeshStandardMaterial({ color: 0xd9b184, roughness: 0.7, metalness: 0.05 });
+  const hinge = new THREE.Mesh(
+    new THREE.BoxGeometry(deep * 0.8, SHELL_THICK * 3.2, SHELL_THICK * 3.2),
+    hingeMat,
+  );
+  hinge.position.set(0, tall, -deep);
   yaw.add(hinge);
 
   for (const mesh of [lower, upper, hinge]) {
@@ -1302,6 +1317,8 @@ export function makeClamShell(scene, site = PARK_CLAM) {
     x, z,
     angle: open,
     target: open,
+    openAngle: open,
+    shutAngle: shut,
     closing: false,
     shut: false,
     // Snap shut. Called by main.js the moment the car is down in the bowl.

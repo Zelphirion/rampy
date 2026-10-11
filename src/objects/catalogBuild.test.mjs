@@ -8,12 +8,19 @@
 //
 // So: run the real catalogue.js against a stub three and call every builder.
 //
+// The catalogue also imports the game's real modules (props, cars, the levels),
+// and those both import three from the CDN and touch `document` at import time.
+// nodeShims.mjs covers both — the DOM globals and the https -> local three
+// redirect — which keeps the suite runnable with a plain
+// `node --test "src/**/*.test.mjs"` and no special flags.
+//
 // Run: node --test src/objects/catalogBuild.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import './nodeShims.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

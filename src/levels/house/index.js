@@ -13,6 +13,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { HOUSE, ROOMS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, MAP_ITEMS, DRIVE, FIREPLACE } from './layout.js';
 import { addKnockable } from '../../physics.js';
+import { pad, bowl, wedge } from './surfaces.js';
 
 // Re-exported so main.js (and anyone poking at the level) has one import site.
 export { HOUSE, ROOMS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, MAP_ITEMS, DRIVE, FIREPLACE };
@@ -51,12 +52,22 @@ const MAT = {
   rugLiving: new THREE.MeshStandardMaterial({ color: 0xb8563f, roughness: 0.98 }),
   rugBed:    new THREE.MeshStandardMaterial({ color: 0x8a7fa8, roughness: 0.98 }),
   rugHall:   new THREE.MeshStandardMaterial({ color: 0x5c7a52, roughness: 0.98 }),
+  // The oriental rug: madder ground, gold field, indigo guard band. Three flat
+  // colours is all a woven pattern can be here — there are no textures in this
+  // house — and it is the banding that reads as a rug rather than as a painted
+  // rectangle from the far side of the room.
+  rugOrient: new THREE.MeshStandardMaterial({ color: 0x7d2f2a, roughness: 0.98 }),
+  rugGold:   new THREE.MeshStandardMaterial({ color: 0xd9a441, roughness: 0.98 }),
+  rugGuard:  new THREE.MeshStandardMaterial({ color: 0x2f4f4a, roughness: 0.98 }),
 
   // Fittings.
   cabinet:   new THREE.MeshStandardMaterial({ color: 0x3f4a52, roughness: 0.6 }),
   counter:   new THREE.MeshStandardMaterial({ color: 0x40474f, roughness: 0.42 }),
   counterTop:new THREE.MeshStandardMaterial({ color: 0x2f343a, roughness: 0.3 }),
   porcelain: new THREE.MeshStandardMaterial({ color: 0xf2f5f7, roughness: 0.22 }),
+  // The tub's end skins are open half cylinders: one face is the outside of the
+  // bath and the other the inside of the bowl, so both have to draw.
+  porcelainSkin: new THREE.MeshStandardMaterial({ color: 0xf2f5f7, roughness: 0.22, side: THREE.DoubleSide }),
   chrome:    new THREE.MeshStandardMaterial({ color: 0xdfe6ec, roughness: 0.12, metalness: 0.9 }),
   rubber:    new THREE.MeshStandardMaterial({ color: 0x1e1e20, roughness: 1 }),
   warning:   new THREE.MeshStandardMaterial({ color: 0xf2c200, roughness: 0.6, emissive: 0x5a4400, emissiveIntensity: 0.5 }),
@@ -213,6 +224,19 @@ function wall(g, C, axis, at, a0, a1, y0, y1, thick, mat, gap, meshOnly = false)
 function window_(g, C, axis, at, a0, a1, y0, y1, thick) {
   const mid = (a0 + a1) / 2, my = (y0 + y1) / 2;
   const w = a1 - a0, h = y1 - y0;
+  // The shell run cuts out the WHOLE span (floor to ceiling), so the sill/header
+  // alone leave a real hole in the wall: a floor-to-waist gap under each window
+  // you can see straight out of, and another above the header. Fill the masonry
+  // back in below the sill and above the header so a window is a window and not
+  // an opening. The collider pushed below is still the full panel — see the
+  // C.push at the end, which is the invisible barrier that keeps the car in.
+  if (axis === 'x') {
+    box(g, w, y0, thick, mid, y0 / 2, at, MAT.plaster).userData.structure = true;                       // wall under the sill
+    box(g, w, HOUSE.ceil - y1, thick, mid, (y1 + HOUSE.ceil) / 2, at, MAT.plaster).userData.structure = true; // wall over the header
+  } else {
+    box(g, thick, y0, w, at, y0 / 2, mid, MAT.plaster).userData.structure = true;
+    box(g, thick, HOUSE.ceil - y1, w, at, (y1 + HOUSE.ceil) / 2, mid, MAT.plaster).userData.structure = true;
+  }
   if (axis === 'x') {
     box(g, w + 1.2, 0.7, thick + 0.4, mid, y0 - 0.35, at, MAT.trim);         // sill
     box(g, w + 1.2, 0.7, thick + 0.4, mid, y1 + 0.35, at, MAT.trim);         // header
@@ -369,28 +393,15 @@ function counterRun(g, x, z, len, ry, axis = 'x', sink = false) {
     try {
       if (typeof window !== 'undefined') {
         if (!window.__HOUSE_SURFACES) window.__HOUSE_SURFACES = [];
-        // Left basin
-        window.__HOUSE_SURFACES.push({
-          kind: 'bowl',
-          x: -1.75,
-          z: 0,
-          rx: 1.5,
-          rz: 1.8,
-          y: 5.8,
-          depth: 1.8,
-          steep: 0.9
-        });
-        // Right basin
-        window.__HOUSE_SURFACES.push({
-          kind: 'bowl',
-          x: 1.75,
-          z: 0,
-          rx: 1.5,
-          rz: 1.8,
-          y: 5.8,
-          depth: 1.8,
-          steep: 0.9
-        });
+        // Two bowl-shaped basins like in ramp world, placed in WORLD space by
+        // running each basin's local offset through the run's own yaw. (They
+        // used to be pushed at their LOCAL coordinates, which dropped a pair of
+        // invisible counter-height dishes in the middle of the living room.)
+        const c = Math.cos(ry), s = Math.sin(ry);
+        for (const f of [-1, 1]) {
+          window.__HOUSE_SURFACES.push(bowl(
+            x + f * 1.75 * c, z - f * 1.75 * s, 1.5, 1.8, 5.8, 1.8, { steep: 0.9 }));
+        }
       }
     } catch (e) {}
     box(b, 7, 0.5, 4.4, 0, 5.45, 0, MAT.metal, false);
@@ -436,11 +447,46 @@ function tub(g, x, z, ry) {
   b.name = 'tub';
   b.position.set(x, 0, z);
   b.rotation.y = ry;
-  box(b, 12, 5, 7, 0, 2.5, 0, MAT.porcelain);
-  box(b, 10.4, 4, 5.4, 0, 4.2, 0, MAT.tile);          // the water, a little low
-  box(b, 12.6, 0.6, 7.6, 0, 5.2, 0, MAT.porcelain);   // rim
-  cyl(b, 0.3, 0.3, 2.6, 0, 6.4, -3.2, MAT.chrome, 8);
-  cyl(b, 0.26, 0.26, 1.6, 0, 7.5, -2.6, MAT.chrome, 8).rotation.x = Math.PI / 2.4;
+  // A deep freestanding bath on a stadium plan: straight sides, rounded ends,
+  // an open top so the water is actually visible, and the taps at the FOOT end
+  // instead of on the long side. R is the end radius and S the straight run, so
+  // the bowl is S + 2R long and 2R across — 16 x 8, big enough that a car can
+  // actually drive into it and sit down in the bowl.
+  const R = 4, S = 8, H = 5.5, T = 0.4;
+  // The two straight sides, standing on the outer line.
+  for (const f of [-1, 1]) box(b, S, H, T, 0, H / 2, f * (R - T / 2), MAT.porcelain);
+  // The two rounded ends: a half cylinder each, open-ended so the bowl is a bowl.
+  for (const e of [-1, 1]) {
+    const arc = new THREE.Mesh(
+      new THREE.CylinderGeometry(R, R, H, 22, 1, true, e > 0 ? 0 : Math.PI, Math.PI),
+      MAT.porcelainSkin);
+    arc.position.set(e * S / 2, H / 2, 0);
+    arc.castShadow = arc.receiveShadow = true;
+    b.add(arc);
+  }
+  // Floor and water, each a straight slab with a disc under each rounded end so
+  // the plan matches the walls all the way round.
+  box(b, S, 0.5, 2 * (R - 0.1), 0, 0.3, 0, MAT.porcelain);
+  for (const e of [-1, 1]) cyl(b, R - 0.1, R - 0.1, 0.5, e * S / 2, 0.3, 0, MAT.porcelain, 22);
+  box(b, S, 3.4, 2 * (R - 0.4), 0, 2.0, 0, MAT.tile, false);
+  for (const e of [-1, 1]) cyl(b, R - 0.4, R - 0.4, 3.4, e * S / 2, 2.0, 0, MAT.tile, 22, false);
+  // The rim: a rail down each straight side and a rounded cap over each end,
+  // both on the same line, so the two meet instead of stepping.
+  for (const f of [-1, 1]) box(b, S + 0.4, 0.5, 0.9, 0, H, f * R, MAT.porcelain, false);
+  for (const e of [-1, 1]) {
+    const geo = new THREE.TorusGeometry(R, 0.45, 8, 20, Math.PI);
+    geo.rotateZ(e > 0 ? -Math.PI / 2 : Math.PI / 2);   // the arc faces outward
+    const cap = new THREE.Mesh(geo, MAT.porcelain);
+    cap.rotation.x = -Math.PI / 2;
+    cap.position.set(e * S / 2, H, 0);
+    cap.castShadow = true;
+    b.add(cap);
+  }
+  // The taps, at the foot end: a riser out of the rim and a spout turned down
+  // into the bowl. They sit on the arc of the rim, not over the water.
+  cyl(b, 0.3, 0.3, 3.4, -S / 2 - 3.2, H + 1.7, 0, MAT.chrome, 8);
+  const spout = cyl(b, 0.26, 0.26, 1.6, -S / 2 - 2.5, H + 3.1, 0, MAT.chrome, 8);
+  spout.rotation.z = -Math.PI / 2 - 0.5;
   g.add(b);
   return b;
 }
@@ -450,9 +496,26 @@ function toilet(g, x, z, ry) {
   b.name = 'toilet';
   b.position.set(x, 0, z);
   b.rotation.y = ry;
-  box(b, 5, 2.4, 6.5, 0, 1.2, 0.4, MAT.porcelain);
-  box(b, 4.2, 1.2, 4.6, 0, 2.7, 1.2, MAT.porcelain);
-  box(b, 5, 8, 1.4, 0, 4, -2.9, MAT.porcelain);
+  // Rounded, in three parts that say so from across the room: a foot on the
+  // floor, a bowl swelling out of it, and a ring lying over the top. The bowl is
+  // a squashed sphere and the ring a torus — three flat boxes in a row read as a
+  // crate, not a WC. The plate under everything is what gives the piece a real
+  // floor footprint; the bowl and the ring are not boxes and so are invisible to
+  // the furniture audit.
+  box(b, 5, 0.8, 7.4, 0, 0.4, 0.6, MAT.porcelain, false);
+  const pedestal = cyl(b, 1.7, 2.2, 2.6, 0, 1.5, 1.4, MAT.porcelain, 20);
+  pedestal.scale.x = 1.15;
+  const bowl = sph(b, 2.5, 0, 3.1, 1.4, MAT.porcelain);
+  bowl.scale.set(1, 0.66, 1.42);
+  const seat = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.4, 8, 26), MAT.porcelain);
+  seat.rotation.x = -Math.PI / 2;
+  seat.position.set(0, 4.5, 1.4);
+  seat.scale.set(1, 1.45, 1);
+  seat.castShadow = true;
+  b.add(seat);
+  box(b, 5, 7.6, 1.8, 0, 4.6, -3.0, MAT.porcelain);            // the cistern
+  box(b, 5.4, 0.5, 2.2, 0, 8.6, -3.0, MAT.porcelain, false);   // its lid
+  cyl(b, 0.5, 0.5, 0.3, 0, 8.95, -3.0, MAT.chrome, 12, false);  // the flush button
   g.add(b);
   return b;
 }
@@ -516,15 +579,50 @@ function rug(g, x, z, w, d, mat) {
   return flat(g, w, d, x, 0.12, z, mat);
 }
 
+// A lozenge: a square lying on the floor with one corner turned to the room.
+// Spun in GEOMETRY space, not with `rotation.z` — the object Euler order is
+// XYZ, so an object-level Z rotation is applied before the lay-down rotation
+// and the shape would end up standing on edge instead of lying flat.
+function lozenge(g, size, x, y, z, mat) {
+  const m = flat(g, size, size, x, y, z, mat);
+  m.geometry.rotateZ(Math.PI / 4);
+  return m;
+}
+
+// The living room's oriental rug. Stacked flat panels a hair apart in y, from
+// the ground up: madder border, gold field, indigo guard band, gold centre, and
+// a medallion with a motif in each corner of the border. Every inset is taken
+// off the SHORT side and kept under a fifth of it, so the bands still fit on
+// whatever rug is passed in.
+function orientalRug(g, x, z, w, d) {
+  const r = unit(g, 'orientalRug', x, z);
+  const m = Math.min(w, d);
+  const b1 = m * 0.10, b2 = m * 0.055, b3 = m * 0.05;
+  flat(r, w, d, 0, 0.10, 0, MAT.rugOrient);
+  flat(r, w - b1 * 2, d - b1 * 2, 0, 0.13, 0, MAT.rugGold);
+  flat(r, w - (b1 + b2) * 2, d - (b1 + b2) * 2, 0, 0.16, 0, MAT.rugGuard);
+  flat(r, w - (b1 + b2 + b3) * 2, d - (b1 + b2 + b3) * 2, 0, 0.19, 0, MAT.rugGold);
+  lozenge(r, m * 0.16, 0, 0.22, 0, MAT.rugOrient);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    lozenge(r, b1 * 0.9, sx * (w / 2 - b1), 0.16, sz * (d / 2 - b1), MAT.rugGuard);
+  }
+  return r;
+}
+
 function pottedPlant(g, x, z, s = 1) {
-  cyl(g, 2.4 * s, 1.8 * s, 3.4 * s, x, 1.7 * s, z, MAT.pot, 12);
-  cyl(g, 2.1 * s, 2.1 * s, 0.4 * s, x, 3.4 * s, z, MAT.soil, 12, false);
+  // A plant is one piece of furniture on one patch of floor, so it is wrapped
+  // in a unit and returned — which is also what lets the caller make the whole
+  // thing jiggle as a single object instead of seven leaves drifting apart.
+  const p = unit(g, 'pottedPlant', x, z);
+  cyl(p, 2.4 * s, 1.8 * s, 3.4 * s, 0, 1.7 * s, 0, MAT.pot, 12);
+  cyl(p, 2.1 * s, 2.1 * s, 0.4 * s, 0, 3.4 * s, 0, MAT.soil, 12, false);
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * Math.PI * 2;
-    const leaf = sph(g, 1.5 * s, x + Math.cos(a) * 1.5 * s, 4.6 * s + (i % 3) * 0.7 * s, z + Math.sin(a) * 1.5 * s, MAT.plant);
+    const leaf = sph(p, 1.5 * s, Math.cos(a) * 1.5 * s, 4.6 * s + (i % 3) * 0.7 * s, Math.sin(a) * 1.5 * s, MAT.plant);
     leaf.scale.y = 1.5;
   }
-  sph(g, 1.7 * s, x, 5.2 * s, z, MAT.plant).scale.y = 1.3;
+  sph(p, 1.7 * s, 0, 5.2 * s, 0, MAT.plant).scale.y = 1.3;
+  return p;
 }
 
 // A ceiling fitting with a real light under it. `h` is the drop from the
@@ -633,13 +731,24 @@ function buildFireplace(g, lights) {
 // The living room's big bookcase. 22 wide fits the gap between the two
 // bookcase-side doorways, and it stands against the wall's face rather than
 // its centre line, so its back edge is not inside the plaster.
+//
+// The carcass used to be ONE solid 22 x 18 x 3 block, with the shelves and the
+// books drawn inside the same block — so from the room you saw a blank board
+// and never a single spine. It is now a back panel, two cheeks, a top and a
+// base with the FRONT left open, and the books stand in the opening where you
+// can see them, just proud of the back panel.
 function buildBookcase(g, x, z) {
   const bc = unit(g, 'bookcase', x, z);
-  box(bc, 22, 18, 3, 0, 9, 0, MAT.woodPale);
+  const W = 22, D = 3, T = 0.6, H = 18;
+  box(bc, W, H, T, 0, H / 2, -D / 2 + T / 2, MAT.woodPale);                 // back
+  for (const s of [-1, 1]) box(bc, T, H, D, s * (W / 2 - T / 2), H / 2, 0, MAT.woodPale);
+  box(bc, W, T, D, 0, H - T / 2, 0, MAT.woodPale);                          // top
+  box(bc, W, T, D, 0, T / 2, 0, MAT.woodPale);                              // base
   for (let s = 0; s < 3; s++) {
-    box(bc, 21, 0.5, 3.4, 0, 3.5 + s * 5.5, 0, MAT.wood, false);
+    const sy = 3.5 + s * 5;
+    box(bc, W - T * 2, 0.5, D - T, 0, sy, T / 2, MAT.wood, false);          // shelf
     for (let i = 0; i < 10; i++) {
-      box(bc, 1.5, 3.8, 2.4, -9 + i * 2, 5.4 + s * 5.5, 0,
+      box(bc, 1.5, 3.4, 2.4, -9 + i * 2, sy + 1.95, T / 2,
         [MAT.quilt, MAT.quilt2, MAT.wood, MAT.paper][i % 4], false);
     }
   }
@@ -709,11 +818,28 @@ function buildFrontDoor(g, shellT) {
 
 // The foyer's boot bench with the coat hooks on the wall above it and the
 // umbrella stand at the door end.
+//
+// The coats used to be pinned at `z + 37` — 37 units north of the bench, which
+// is through the shell and out of the house. They hang here instead: on pegs at
+// the foyer's south wall, in the strip between the plaster and the back of the
+// bench, which is where coat hooks go.
 function buildCoatRack(g, x, z) {
   table(g, x, z, 20, 8, 2.6, 0, MAT.woodPale);
   for (const s of [-1, 1]) box(g, 3, 4, 1, x + s * 7, 2, z, MAT.wood, false);
+  const wz = 48.25;                    // the strip between wall face and bench
   for (let i = 0; i < 4; i++) {
-    box(g, 2, 11, 3, x + 6 + i * 3, 11, z + 37, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2][i], false);
+    const coat = unit(g, 'coat', x - 7.5 + i * 5, wz);
+    const fabric = [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2][i];
+    // The peg, going back into the wall it is screwed to. A cylinder, so the
+    // furniture audit — which measures boxes — never sees it inside the plaster.
+    const peg = cyl(coat, 0.3, 0.3, 2.4, 0, 15.6, -1.2, MAT.metal, 8, false);
+    peg.rotation.x = Math.PI / 2;
+    // Shoulders, body and sleeves: a coat, not a slab on a hook. 4.9 wide on a
+    // 5 pitch so no two of them touch, and 1.4 deep because the strip they hang
+    // in is only 1.5 deep.
+    box(coat, 4.4, 1.4, 1.4, 0, 14.4, 0, MAT.metalDark, false);
+    box(coat, 3.6, 11, 1.4, 0, 8.6, 0, fabric, false);
+    for (const s of [-1, 1]) box(coat, 1.1, 6.5, 1.4, s * 1.9, 10.4, 0, fabric, false);
   }
   cyl(g, 0.5, 0.5, 10, x - 10, 5, z - 1, MAT.woodDark, 8, false);
   cyl(g, 1.2, 1.2, 4, x - 10, 2, z - 1, MAT.metalDark, 10, false);
@@ -825,6 +951,9 @@ export async function addHouse(parent, opts = {}) {
   parent.add(g);
   const C = [];        // colliders
   const lights = [];  // PointLights, for :debug
+  // Start the driveable-surface list clean, so a second build (a restart, a hot
+  // reload) does not stack a duplicate deck, dish and ramp on top of the first.
+  if (typeof window !== 'undefined') window.__HOUSE_SURFACES = [];
   // The fire is built deep inside the living-room block but has to be reachable
   // from the return, so it is declared here and filled in down there. main.js
   // drives its flicker off the clock every frame.
@@ -836,6 +965,11 @@ export async function addHouse(parent, opts = {}) {
   const { minX, maxX, minZ, maxZ, ceil } = HOUSE;
   const shellT = HOUSE.wall;   // shell wall thickness
   const T = shellT;            // interior wall thickness (same as the shell)
+  // No window sill sits below a grown-up's waist. The house's people stand 7-8
+  // tall and their waist is around 4, so the sills start at 13 — high on the
+  // wall, where a window belongs — and the glass runs up to 24, leaving 6 of
+  // plaster under the 30 ceiling for the header.
+  const WIN_Y0 = 13, WIN_Y1 = 24;
 
   const phase = async (frac, label) => {
     if (typeof opts.onHousePhase === 'function') {
@@ -846,6 +980,14 @@ export async function addHouse(parent, opts = {}) {
       else setTimeout(res, 0);
     });
   };
+
+  // The house's furniture jiggles on a bump, exactly like the little shops in
+  // the city: it rocks around the axis of the hit and springs back upright,
+  // never falling. `r` is the collision reach of the piece, so driving down
+  // the middle of a room rattles the things you graze and nothing further.
+  const jiggle = (piece, r) => addKnockable(piece, r, {
+    mode: 'wobble', wobbleAmp: 0.3, wobbleFreq: 8, wobbleDamping: 5,
+  });
 
   // ---- Sky + light -------------------------------------------------------
   // The background is the sunny sky, so every window frames the same blue.
@@ -885,8 +1027,7 @@ export async function addHouse(parent, opts = {}) {
   // really a hole with a door drawn over it. The east wall is now continuous
   // masonry with a locked door drawn on the room side of it, and the only way
   // out of this building is 90 metres of dark garage away.
-  const WIN_Y0 = 10, WIN_Y1 = 22;
-  const OPEN_TOP = 4.6;   // clear height under the dark garage's roller door
+  const OPEN_TOP = 20;    // clear height under the dark garage's roller door
   // `inward` is which way the room side faces, so the skirting can be pushed
   // onto the wall's inner face instead of being buried inside it.
   //
@@ -970,7 +1111,7 @@ export async function addHouse(parent, opts = {}) {
   }
   // Rugs. The living room is enormous now, so its rug is enormous too — it is
   // what stops 90x60 of bare floorboards reading as a car park.
-  rug(g, -50, 16, 74, 50, MAT.rugLiving);
+  orientalRug(g, -50, 16, 74, 50);
   rug(g, 27, 70, 34, 26, MAT.rugLiving);
   rug(g, 70, 70, 22, 30, MAT.rugHall);
   rug(g, 22, 6, 30, 24, MAT.rugHall);
@@ -1009,12 +1150,15 @@ export async function addHouse(parent, opts = {}) {
   await phase(0.5, 'the kitchen');
 
   // ---- The roller door: the only way out ----------------------------------
-  // Wound OPEN in its hood, in the west wall of the dark garage. It has to be
-  // open, because this is the one hole in the building and the car goes out
-  // through it; it is drawn high and dark because there is no light out there
-  // to see it by. Everything here is decoration on the opening cut above - the
-  // shell is what actually seals the sides of the hole, and the lintel over the
-  // top is mesh-only so the car can pass under it.
+  // Drawn SHUT, in the west wall of the dark garage. The opening is a real hole
+  // in the shell (the car leaves through it), but it must not read as one: the
+  // garage is meant to be a sealed, pitch-black box, and a hole you can see the
+  // street through ruins that. So the door is rolled all the way down over the
+  // opening, filling it with slats. The car still gets out - the exit is a
+  // scripted roll (see main.js) that passes through the door and then cuts - so
+  // the door is decorative glass-none: it blocks the view, not the shot. The
+  // lintel over the top is mesh-only so house collision (which ignores height)
+  // never walls the opening shut.
   {
     const o = { a0: HOUSE_EXIT.z0, a1: HOUSE_EXIT.z1 };
     const ow = o.a1 - o.a0, oc = (o.a0 + o.a1) / 2;
@@ -1025,12 +1169,34 @@ export async function addHouse(parent, opts = {}) {
     for (const s of [-1, 1]) {
       box(g, 0.5, OPEN_TOP, 0.5, ox + shellT / 2, OPEN_TOP / 2, oc + s * (ow / 2 - 0.1), MAT.metal, false);
     }
-    // The coiled-up door: stacked slats in the hood, with the bottom one hanging
-    // slightly proud the way a door does when it is not wound quite tight.
-    for (let i = 0; i < 4; i++) {
-      box(g, 1.2, 0.55, ow - 0.4, ox, OPEN_TOP - 0.4 + i * 0.6, oc,
+    // The door itself, rolled all the way DOWN: a full-height ribbed roller
+    // door filling the whole opening, so no daylight and no outside shows
+    // through the hole behind it. Alternating shades read as the ribs, twin
+    // horizontal rails break it into panels the way a real sectional door is
+    // built, and a row of dark lites near the top finishes the inside face.
+    const n = Math.ceil(OPEN_TOP / 0.75);
+    const sh = OPEN_TOP / n;
+    for (let i = 0; i < n; i++) {
+      box(g, 1.1, sh * 0.98, ow - 0.3, ox, (i + 0.5) * sh, oc,
         i % 2 ? MAT.metal : MAT.metalDark, false);
     }
+    // Horizontal rails, so the inside face reads as panelled rather than striped.
+    for (const y of [OPEN_TOP * 0.5, OPEN_TOP - 1.1]) {
+      box(g, 1.24, 0.6, ow - 0.2, ox, y, oc, MAT.metal, false);
+    }
+    // A row of lites across the top panel, framed in metal, dark so the sealed
+    // garage never shows the outside through them.
+    {
+      const winN = 4;
+      const ww = 3.2, wh = 2.2, wy = OPEN_TOP - 3.4;
+      for (let k = 0; k < winN; k++) {
+        const wz = oc + (k - (winN - 1) / 2) * (ow / winN);
+        box(g, 1.3, wh + 0.5, ww + 0.5, ox, wy, wz, MAT.metal, false);
+        box(g, 1.34, wh, ww, ox, wy, wz, MAT.tv, false);
+      }
+    }
+    // A rubber bottom seal, because you drive over this one.
+    box(g, 1.4, 0.5, ow - 0.1, ox + 0.1, 0.32, oc, MAT.rubber, false);
     // Hazard tape on the threshold, because you drive over this one.
     box(g, 1.4, 0.12, ow, ox + shellT / 2 - 0.2, 0.06, oc, MAT.warning, false);
     // The control box and its lamp, on the wall beside the door at hand height.
@@ -1063,9 +1229,9 @@ export async function addHouse(parent, opts = {}) {
     // ---- North wall: the working run -------------------------------------
     // The fridge is 7.2 wide, so its west edge has to be clear of the west
     // wall's inner face at x=-44.5 — at -42 it was 1.1 inside the plaster.
-    fridge(g, -40.5, 90.5, Math.PI);
-    counterRun(g, -22, 92.45, 20, 0, 'x', true);
-    stove(g, -4, 91.4, 0);
+    jiggle(fridge(g, -40.5, 90.5, Math.PI), 4.6);
+    jiggle(counterRun(g, -22, 92.45, 20, 0, 'x', true), 10.5);
+    jiggle(stove(g, -4, 91.4, 0), 4);
     // Add dark mouse hole in kitchen floor
     try {
       if (typeof window !== 'undefined') {
@@ -1077,7 +1243,7 @@ export async function addHouse(parent, opts = {}) {
     const mouseHole = cyl(g, 1.2, 1.2, 0.1, -22, 0.05, 88, new THREE.MeshStandardMaterial({ color: 0x111111 }), 12, false);
     mouseHole.receiveShadow = true;
     // ---- West wall: a short run, stopping short of the garage doorway -----
-    counterRun(g, r.x0 + 3.1, 54, 12, 0, 'z', false);
+    jiggle(counterRun(g, r.x0 + 3.1, 54, 12, 0, 'z', false), 7);
     // ---- South wall: the hutch, east of the living-room opening ------------
     // Measured off the wall's FACE at z=47.5, not its centre line at 46.
     {
@@ -1085,14 +1251,21 @@ export async function addHouse(parent, opts = {}) {
       box(hutch, 13, 14, 2, 0, 7, 0, MAT.woodPale);
       box(hutch, 13.6, 0.6, 2.6, 0, 14.2, 0, MAT.wood);
       for (let i = 0; i < 4; i++) box(hutch, 3, 2.6, 0.3, -4.5 + i * 3, 9, 1.2, MAT.metal, false);
+      jiggle(hutch, 6);
     }
     // ---- The island, with stools down the kitchen side of it -------------
     // The stools sit clear of the island's edge rather than tucked under it —
     // tucked-under seating is intentional, a stool half inside the worktop it
     // belongs to is not.
-    table(g, -19, 64, 20, 16, 4.6, 0, MAT.woodPale);
-    for (let i = 0; i < 3; i++) chair(g, -26 + i * 7, 53, 0);
-    sph(g, 2.4, -19, 5.8, 64, MAT.quilt).scale.y = 0.5;     // fruit bowl
+    const kt = table(g, -19, 64, 20, 16, 4.6, 0, MAT.woodPale);
+    jiggle(kt, 4.6);
+    for (let i = 0; i < 3; i++) {
+      const kc = chair(g, -26 + i * 7, 53, 0);
+      jiggle(kc, 2);
+    }
+    const kb = sph(g, 2.4, -19, 5.8, 64, MAT.quilt);
+    kb.scale.y = 0.5;
+    jiggle(kb, 1.3);     // fruit bowl
     // ---- East wall: a dresser in the solid stretch below the dining opening -
     // x=4.5 is that wall's inner face; the dresser is 3.1 wide with its handles
     // on the left, so it has to start at 9.6 to clear it.
@@ -1101,9 +1274,10 @@ export async function addHouse(parent, opts = {}) {
       box(dr, 2, 12, 8, 0, 6, 0, MAT.woodPale);
       box(dr, 2.6, 0.6, 8.6, 0, 12.2, 0, MAT.wood, false);
       for (let i = 0; i < 2; i++) box(dr, 1, 1, 5, -1.3, 4 + i * 4, 0, MAT.metalDark, false);
+      jiggle(dr, 3.5);
     }
-    pottedPlant(g, r.x0 + 7, r.z0 + 8, 1.2);
-    pottedPlant(g, -14, r.z1 - 7, 1.0);
+    jiggle(pottedPlant(g, r.x0 + 7, r.z0 + 8, 1.2), 1.6);
+    jiggle(pottedPlant(g, -14, r.z1 - 7, 1.0), 1.4);
     ceilingLight(g, lights, -19, 84, 8, 34, 70);
     ceilingLight(g, lights, -19, 62, 8, 30, 64);
     ceilingLight(g, lights, -30, 76, 7, 24, 48);
@@ -1121,11 +1295,16 @@ export async function addHouse(parent, opts = {}) {
     // it: a chair pushed 3 in under a worktop is seating, a chair pushed 3 in
     // under a dining table just intersects it, and the house's own rule is that
     // nothing overlaps anything.
-    table(g, 27, 70, 24, 16, 4.4, 0, MAT.wood);
+    const dt = table(g, 27, 70, 24, 16, 4.4, 0, MAT.wood);
+    jiggle(dt, 5.5);
     for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
-      chair(g, 27 + s * 14, 62 + i * 8, s > 0 ? -Math.PI / 2 : Math.PI / 2);
+      const dc = chair(g, 27 + s * 14, 62 + i * 8, s > 0 ? -Math.PI / 2 : Math.PI / 2);
+      jiggle(dc, 2.2);
     }
-    for (let i = 0; i < 2; i++) chair(g, 21 + i * 12, 82, Math.PI);
+    for (let i = 0; i < 2; i++) {
+      const dc2 = chair(g, 21 + i * 12, 82, Math.PI);
+      jiggle(dc2, 2.2);
+    }
     // A fruit bowl and a candle on the table, because someone eats here.
     sph(g, 2.6, 27, 5.8, 70, MAT.quilt2).scale.y = 0.5;
     cyl(g, 0.5, 0.5, 3, 27, 6.2, 70, MAT.porcelain, 10, false);
@@ -1135,7 +1314,8 @@ export async function addHouse(parent, opts = {}) {
     // centred on z=60 stood straight across the middle of it. It also has to
     // clear that wall's inner face at x=50.5 — it is 9.8 wide with the doors on
     // the left, so x=45.5 is as far east as it goes.
-    buildSideboard(g, 45.5, 87);
+    const sb = buildSideboard(g, 45.5, 87);
+    jiggle(sb, 3.6);
     vert(g, 16, 12, r.x1 - 0.6, 15, 86, -Math.PI / 2, MAT.mirror);
     // A dresser/hutch on the west side, facing the cased opening — and clear of
     // it. The kitchen|dining opening is z 54..84, so this has to start at z=84.
@@ -1146,29 +1326,39 @@ export async function addHouse(parent, opts = {}) {
       box(hw, 2, 16, 9, 0, 8, 0, MAT.woodPale);
       for (let s = 0; s < 3; s++) {
         box(hw, 2.4, 0.5, 8, 0, 4 + s * 5, 0, MAT.wood, false);
-        for (let i = 0; i < 3; i++) box(hw, 1.6, 2.4, 2, 1.2, 6 + s * 5, -3 + i * 3,
-          [MAT.paper, MAT.quilt, MAT.woodDark][i], false);
+        for (let i = 0; i < 3; i++) {
+          box(hw, 1.6, 2.4, 2, 1.2, 6 + s * 5, -3 + i * 3,
+            [MAT.paper, MAT.quilt, MAT.woodDark][i], false);
+        }
       }
+      jiggle(hw, 3);
     }
-    pottedPlant(g, 14, 52, 1.1);
+    const dp = pottedPlant(g, 14, 52, 1.1);
+    jiggle(dp, 1.6);
     ceilingLight(g, lights, 27, 70, 9, 30, 60);
     ceilingLight(g, lights, 27, 54, 7, 22, 42);
   }
 
   await phase(0.64, 'the foyer');
 
-  // ---- Foyer: where you arrive, and the locked front door -----------------
-  // You are put down here facing west, with the front door at your back. The
-  // only way on is through the dining room, so the first thing you see is how
-  // much house there is.
+  // ---- Foyer: the locked front door, and where you USED to arrive -------------
+  // The arrival point moved to the dark garage, so this is the first room you
+  // reach on foot rather than the one you are dropped in. The door still reads
+  // as a front door, and it still does not open; there is solid plaster behind
+  // it.
   {
     const r = ROOMS.foyer;
     // A console table under the fanlight, and a long runner.
-    table(g, 83, 70, 8, 30, 3.4, 0, MAT.wood);
-    for (let i = 0; i < 3; i++) sph(g, 0.7, 83, 5, 60 + i * 10, MAT.quilt2, false);
+    const foyerTable = table(g, 83, 70, 8, 30, 3.4, 0, MAT.wood);
+    jiggle(foyerTable, 5);
+    for (let i = 0; i < 3; i++) {
+      const orb = sph(g, 0.7, 83, 5, 60 + i * 10, MAT.quilt2, false);
+      jiggle(orb, 0.9);
+    }
     vert(g, 14, 12, r.x1 - 0.6, 16, 70, -Math.PI / 2, MAT.mirror);
     buildCoatRack(g, 68, 53);
-    pottedPlant(g, 60, 87, 1.3);
+    const fp = pottedPlant(g, 60, 87, 1.3);
+    jiggle(fp, 1.6);
     // A mat inside the door, and the house number on the wall.
     rug(g, 70, 66, 22, 18, MAT.rugHall);
     box(g, 0.4, 3, 5, r.x1 - 0.5, 8, 88, MAT.lockRed, false);
@@ -1184,17 +1374,23 @@ export async function addHouse(parent, opts = {}) {
   // were fighting each other for floor.
   {
     const r = ROOMS.living;
-    // Seating group, all facing the TV. The TV is on the EAST wall's solid
-    // stretch, not on the north one: the north wall (z=46) is cut through by the
-    // open-plan kitchen/living divide at x -36..-10, and a 20-wide TV unit
-    // standing against it was sitting in that opening. Turned 90 degrees it is a
-    // 3.6-wide, 20-deep cabinet running down the wall from z=22 to z=42, which
-    // also puts it clear of the hall doorway at z -6..18.
-    sofa(g, -72, 24, -Math.PI / 2);
-    sofa(g, -72, 2, Math.PI / 2);
-    sofa(g, -30, 34, 0);
-    table(g, -50, 14, 20, 15, 2.2, 0, MAT.woodDark);
-    tvUnit(g, 2.5, 32, Math.PI / 2);
+    // The TV is on the EAST wall's solid stretch, not on the north one: the
+    // north wall (z=46) is cut through by the open-plan kitchen/living divide at
+    // x -36..-10, and a 20-wide TV unit standing against it was sitting in that
+    // opening. Turned 90 degrees it is a 3.6-wide, 20-deep cabinet running down
+    // the wall from z=22 to z=42, which also puts it clear of the hall doorway
+    // at z -6..18.
+    // Two couches facing each other across the coffee table, on the north and
+    // south sides of it, so the fireplace on the west wall stays open and both
+    // seats look across the table (and, off to the side, at the fire).
+    const s1 = sofa(g, -46, -2, 0);
+    jiggle(s1, 5);
+    const s2 = sofa(g, -46, 30, Math.PI);
+    jiggle(s2, 5);
+    const lt = table(g, -46, 14, 20, 15, 2.2, 0, MAT.woodDark);
+    jiggle(lt, 4.5);
+    const tv = tvUnit(g, 2.5, 32, Math.PI / 2);
+    jiggle(tv, 4.6);
     // A stone fireplace on the west wall, with a real fire in it. One `unit`,
     // because the boxes that make it up overlap each other by design — two jambs,
     // a header, a back and a lintel around a recess — and the audit reads a group
@@ -1211,7 +1407,8 @@ export async function addHouse(parent, opts = {}) {
     // them. 22 wide fits the gap between them with room to spare, and it stands
     // against the wall's FACE (z -18.5) rather than its centre line (z -20):
     // 3.4 deep centred on -17.5 put its back edge inside the plaster.
-    buildBookcase(g, -42, -16);
+    const bc = buildBookcase(g, -42, -16);
+    jiggle(bc, 5);
     // A grand piano in the corner nobody sits in. Pulled in off both the solid
     // darkGarage|living wall at z=46 and the sofa to its east.
     {
@@ -1219,10 +1416,14 @@ export async function addHouse(parent, opts = {}) {
       box(pi, 12, 4, 18, 0, 3, 0, MAT.woodDark);
       box(pi, 12.6, 0.5, 18.6, 0, 5.2, 0, MAT.paper, false);
       for (let i = 0; i < 5; i++) box(pi, 0.5, 0.4, 3, -5 + i * 2.4, 5.6, -8, MAT.trim, false);
+      jiggle(pi, 5);
     }
-    pottedPlant(g, -80, 38, 1.3);
-    pottedPlant(g, -8, 0, 1.1);
-    pottedPlant(g, 0, 40, 1.0);
+    const pp1 = pottedPlant(g, -80, 38, 1.3);
+    jiggle(pp1, 1.6);
+    const pp2 = pottedPlant(g, -8, 0, 1.1);
+    jiggle(pp2, 1.5);
+    const pp3 = pottedPlant(g, 0, 40, 1.0);
+    jiggle(pp3, 1.4);
     ceilingLight(g, lights, -50, 20, 9, 34, 76);
     ceilingLight(g, lights, -24, 34, 7, 26, 52);
     ceilingLight(g, lights, -70, -6, 7, 24, 48);
@@ -1236,18 +1437,23 @@ export async function addHouse(parent, opts = {}) {
   // turned 90 degrees: lying across the south strip it ran straight through the
   // garment rail below it, and there is no room in that corner for both.
   {
-    bed(g, -68, -58, 16, 22, 0, MAT.quilt);
-    bed(g, -81, -33, 11, 14, Math.PI / 2, MAT.quilt2);
+    const b1 = bed(g, -68, -58, 16, 22, 0, MAT.quilt);
+    jiggle(b1, 5.2);
+    const b2 = bed(g, -81, -33, 11, 14, Math.PI / 2, MAT.quilt2);
+    jiggle(b2, 4.2);
     // Wardrobes belong ON a wall: this one is 3.6 deep turned 90 degrees, so it
     // has to come back to x=-85.5 to be within 3.5 of the west wall at -90.
-    wardrobe(g, -85.5, -70, 12, Math.PI / 2);
+    const w1 = wardrobe(g, -85.5, -70, 12, Math.PI / 2);
+    jiggle(w1, 3.6);
     // The rail runs along the room's long axis against the south wall, and stops
     // short of the wall at x=-46, which it used to poke straight through.
-    shelfRack(g, -70, -83, 26, 0, 'x');
+    const sr1 = shelfRack(g, -70, -83, 26, 0, 'x');
+    jiggle(sr1, 6);
     // ry stays 0: the table is authored 10 wide by 16 deep, and rotating it put
     // the 16 across the wall it is supposed to be standing against. It is on the
     // west wall now, clear of the small bed.
-    table(g, -66, -34, 10, 16, 3.2, 0, MAT.wood);
+    const nt = table(g, -66, -34, 10, 16, 3.2, 0, MAT.wood);
+    jiggle(nt, 3.6);
     tableLamp(g, lights, -70, 3.2, -34, 14);
     pottedPlant(g, -52, -30, 1.1);
     ceilingLight(g, lights, -68, -54, 7, 26, 56);
@@ -1301,9 +1507,10 @@ export async function addHouse(parent, opts = {}) {
       }
       const cup = box(g, 2, 0.8, 2, castleX, 0.2 + 4.5, castleZ, MAT.woodPale, false);
       addKnockable(cup, 1.5, { fallTime: 0.3 });
-      // Train set - simple circular track
+      // Train set - simple circular track. south of the bed1|walkin doorway,
+      // because at -50 it sat half across the x=-46 wall and inside the opening.
       const trackGroup = new THREE.Group();
-      trackGroup.position.set(-50, 0.01, -65);
+      trackGroup.position.set(-55, 0.01, -75);
       g.add(trackGroup);
       for (let i = 0; i < 8; i++) {
         const ang = i*Math.PI/4;
@@ -1317,12 +1524,14 @@ export async function addHouse(parent, opts = {}) {
 
   // ---- Bedroom 2 ----------------------------------------------------------
   {
-    bed(g, 28, -58, 16, 22, 0, MAT.quilt2);
+    const b3 = bed(g, 28, -58, 16, 22, 0, MAT.quilt2);
+    jiggle(b3, 5.2);
     // The wardrobe is in the south-east corner. It cannot stand on that wall
     // anywhere north of z=-70: the bed2|closetA opening is z -70..50 and the car
     // needs 3.7 of clear floor each side of the wall's centre line to swing
     // through it, so the south strip is the only place on this wall it fits.
-    wardrobe(g, 48.2, -78, 12, -Math.PI / 2);
+    const w2 = wardrobe(g, 48.2, -78, 12, -Math.PI / 2);
+    jiggle(w2, 3.6);
     // Add a dresser against the east wall in bedroom 2
     {
       const dr = unit(g, 'dresser_bed2', 48, -34);
@@ -1332,6 +1541,7 @@ export async function addHouse(parent, opts = {}) {
       for (let i = 0; i < 3; i++) {
         box(dr, 1.2, 1.2, 6, -1.3, 2 + i * 2, 0, MAT.metalDark, false);
       }
+      jiggle(dr, 3.5);
       // Make dresser top knockable items
       const topY = dresserHeight + 0.5;
       // Mini figurines
@@ -1383,8 +1593,10 @@ export async function addHouse(parent, opts = {}) {
     // Turned on its side and stood along the north wall's south face, which is
     // where a desk belongs. Authored 16 wide by 10 deep for it: centred on z=-20
     // at its old 16-deep it straddled the bed2|hall wall outright.
-    table(g, 30, -27, 16, 10, 3.2, 0, MAT.wood);
-    chair(g, 30, -35, Math.PI);
+    const dt2 = table(g, 30, -27, 16, 10, 3.2, 0, MAT.wood);
+    jiggle(dt2, 3.6);
+    const dc3 = chair(g, 30, -35, Math.PI);
+    jiggle(dc3, 2.2);
     // Guitar ramp leaning against the dresser to reach the top - create surface for ramp
     try {
       if (typeof window !== 'undefined') {
@@ -1394,7 +1606,8 @@ export async function addHouse(parent, opts = {}) {
       }
     } catch (e) {}
     // Shortened, and moved in off the south wall, which it was crossing.
-    shelfRack(g, 32, -82, 20, 0, 'x');
+    const sr2 = shelfRack(g, 32, -82, 20, 0, 'x');
+    jiggle(sr2, 5.2);
     pottedPlant(g, 12, -28, 1.0);
     ceilingLight(g, lights, 28, -54, 7, 26, 56);
     ceilingLight(g, lights, 28, -78, 6, 20, 42);
@@ -1418,15 +1631,21 @@ export async function addHouse(parent, opts = {}) {
     // to get through into the living room, which leaves a 25-deep slot. 22 fits
     // it with room to spare, and 3.5 in from the side wall so it counts as being
     // against one.
-    shelfRack(g, r.x0 + 3.5, -36.7, 22, 0, 'z');
-    shelfRack(g, r.x1 - 3.5, -36.7, 22, 0, 'z');
+    const wr1 = shelfRack(g, r.x0 + 3.5, -36.7, 22, 0, 'z');
+    jiggle(wr1, 5);
+    const wr2 = shelfRack(g, r.x1 - 3.5, -36.7, 22, 0, 'z');
+    jiggle(wr2, 5);
     // Island: a low table with folded piles and a couple of open boxes.
     box(g, 24, 4, 9, mx, 2, mz, MAT.woodPale);
     box(g, 25, 0.5, 10, mx, 4.2, mz, MAT.wood);
     for (let i = 0; i < 4; i++) {
-      box(g, 5, 2, 5, mx - 9 + i * 6, 5.4, mz, [MAT.quilt, MAT.sheet, MAT.quilt2, MAT.cushion][i], false);
+      const pile = box(g, 5, 2, 5, mx - 9 + i * 6, 5.4, mz, [MAT.quilt, MAT.sheet, MAT.quilt2, MAT.cushion][i], false);
+      jiggle(pile, 2.4);
     }
-    for (const s of [-1, 1]) box(g, 6, 5, 6, mx + s * 19, 2.5, mz, MAT.paper, false);
+    for (const s of [-1, 1]) {
+      const boxp = box(g, 6, 5, 6, mx + s * 19, 2.5, mz, MAT.paper, false);
+      jiggle(boxp, 2.6);
+    }
     // Full-length mirrors on the ends, which is what a walk-in closet has.
     vert(g, 14, 18, r.x0 + 0.6, 9, mz, Math.PI / 2, MAT.mirror);
     vert(g, 14, 18, r.x1 - 0.6, 9, mz, -Math.PI / 2, MAT.mirror);
@@ -1439,34 +1658,66 @@ export async function addHouse(parent, opts = {}) {
   // ---- Bathroom -----------------------------------------------------------
   {
     const r = ROOMS.bathroom;
-    // Place tub against the east wall (room.x1 = 90), leaving clearance
-    tub(g, 74.5, 30, Math.PI / 2);
-    // Both of these are on the EAST wall, and neither can be on the south one:
-    // the wall at z=-20 runs the full width of the room, so anything within 1.5
-    // of its centre line is inside it — doorway or not.
-    toilet(g, 87, -13, Math.PI);
+    // A proper drive-in bath: big enough to sit a car in (16 x 8), hard against
+    // the east wall (room.x1 = 90) so the whole west half of the room stays a
+    // lane. The tub's vertical porcelain is a ring of colliders below; its
+    // driveable shape — the tiled deck, the dish and the surfboard ramp that
+    // carries you up to the rim — is the surface list at the bottom of this block.
+    const TUB = { x: 85.5, z: 28, R: 4, S: 8, H: 5.5 };
+    tub(g, TUB.x, TUB.z, Math.PI / 2);
+    // A ring of colliders around the rim with a gap on the WEST face, aligned
+    // with the surfboard. House collision is 2D — a heightfield has no vertical
+    // (see house/surfaces.js) — so these ARE the tub's walls: the car can only
+    // get into the bath where the ramp meets the rim, which is the whole point.
+    const gap = 3.5;                                        // the ramp is 7 wide
+    const tubCollider = (cx, cz, hw, hd) =>
+      C.push({ x: cx, z: cz, halfW: hw, halfD: hd, h: TUB.H, noRoof: true });
+    tubCollider(TUB.x, TUB.z + TUB.R, TUB.R, 1);                    // north cap
+    tubCollider(TUB.x, TUB.z + TUB.R + 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
+    tubCollider(TUB.x, TUB.z - TUB.R, TUB.R, 1);                    // south cap
+    tubCollider(TUB.x, TUB.z - TUB.R - 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
+    // The surfboard's two rails, running west from the rim, so the only way onto
+    // it is up its foot. These also close the last of the west face either side
+    // of the ramp gap.
+    tubCollider(79.25, TUB.z - gap, 4.25, 0.3);
+    tubCollider(79.25, TUB.z + gap, 4.25, 0.3);
+    // The toilet is on the east wall but turned to FACE INTO the room, its
+    // cistern against the wall (it used to sit side-on, facing along the wall).
+    toilet(g, 85.8, -13, -Math.PI / 2);
     sinkUnit(g, 87, 4, -Math.PI / 2);
     // A big mirror wall and a towel rail, so the room is not just appliances.
     box(g, 30, 16, 0.5, 70, 10, r.z1 - 0.5, MAT.mirror, false);
-    for (let i = 0; i < 3; i++) box(g, 5, 13, 0.8, 60 + i * 10, 8, -20, [MAT.paper, MAT.cushion, MAT.paper][i], false);
+    for (let i = 0; i < 3; i++) {
+      const rl = box(g, 5, 13, 0.8, 60 + i * 10, 8, -20, [MAT.paper, MAT.cushion, MAT.paper][i], false);
+      jiggle(rl, 2.6);
+    }
     box(g, 0.6, 0.6, 18, r.x0 + 0.6, 9, 12, MAT.chrome, false);
-    // A bath mat by the tub, because someone uses it.
-    rug(g, 76, 30, 16, 20, MAT.rugHall);
+    // A bath mat on the open deck, because someone uses it.
+    rug(g, 68, 42, 14, 8, MAT.rugHall);
     ceilingLight(g, lights, 72, 28, 7, 28, 58);
     ceilingLight(g, lights, 72, -6, 6, 22, 44);
-    // Bathroom surfaces: tiled deck around the tub and the tub bowl itself
-    // (colliders provide the vertical walls). A surfboard ramp is added as a wedge.
-    const TILE_Y = 0.6;
+    // The tiled surround, raised a low kerb so it reads as a deck: three flat
+    // boxes, plus the driveable surfaces that match them. Keyed off house
+    // bounds so the deck only exists where the car can actually reach it.
+    const TILE_Y = 0.5;
+    for (const [cx, cz, w, d] of [[70.5, 28, 21, 36], [85.5, 41, 9, 10], [85.5, 15, 9, 10]]) {
+      box(g, w, TILE_Y, d, cx, TILE_Y / 2, cz, MAT.tile).userData.structure = true;
+    }
     try {
       if (typeof window !== 'undefined') {
         if (!window.__HOUSE_SURFACES) window.__HOUSE_SURFACES = [];
         window.__HOUSE_SURFACES.push(
-          pad(64.5, 30, 10, 30, TILE_Y),
-          pad(84.5, 30, 10, 30, TILE_Y),
-          pad(74.5, 17.5, 20, 5, TILE_Y),
-          pad(74.5, 42.5, 20, 5, TILE_Y),
-          bowl(74.5, 30, 5.5, 13, TILE_Y, 4.5, { steep: 0.9 }),
-          wedge(68.5, 30, 0, 12, 5, TILE_Y + 0.4, 0)
+          pad(70.5, 28, 21, 36, TILE_Y),           // deck west of the tub
+          pad(85.5, 41, 9, 10, TILE_Y),            // deck north of the tub
+          pad(85.5, 15, 9, 10, TILE_Y),            // deck south of the tub
+          // The dish inside the tub: rim level with the porcelain, floor just
+          // above the bath's own base, steep enough to climb back out.
+          bowl(TUB.x, TUB.z, TUB.R - 0.4, TUB.S / 2 + TUB.R - 0.4, TUB.H - 0.3, TUB.H - 0.9, { steep: 1.0 }),
+          // The surfboard: a ramp leaning on the west rim, climbing from the
+          // deck to the rim. Its top just reaches the dish so there is no seam,
+          // but it does not run far over the dish — otherwise driving back out
+          // would pop the car up onto the board's top edge.
+          wedge(79.8, TUB.z, 0, 4.8, 7, (TUB.H - 0.3) - TILE_Y, TILE_Y)
         );
       }
     } catch (e) {}
@@ -1480,15 +1731,19 @@ export async function addHouse(parent, opts = {}) {
     // Two centres again, not one: `mid` as the Z coordinate put both runs of
     // wardrobes out in the foyer.
     const mx = (r.x0 + r.x1) / 2, mz = (r.z0 + r.z1) / 2;
-    shelfRack(g, r.x0 + 4, -36.7, 22, 0, 'z');
-    shelfRack(g, r.x1 - 4, -36.7, 22, 0, 'z');
+    const mr1 = shelfRack(g, r.x0 + 4, -36.7, 22, 0, 'z');
+    jiggle(mr1, 5);
+    const mr2 = shelfRack(g, r.x1 - 4, -36.7, 22, 0, 'z');
+    jiggle(mr2, 5);
     // A dressing table with a mirror — the reason a main closet has a corner
     // you can actually stand in. z=-29 rather than -28: the table is 9 deep, and
     // at -28 its north edge sat 3.7 from the wall's centre line, which is the
     // car radius plus half the wall — i.e. in the closet|bathroom doorway.
-    table(g, mx, r.z1 - 9, 20, 9, 3.2, 0, MAT.woodPale);
+    const mdt = table(g, mx, r.z1 - 9, 20, 9, 3.2, 0, MAT.woodPale);
+    jiggle(mdt, 3.8);
     vert(g, 18, 14, mx, 9, r.z1 - 0.6, Math.PI, MAT.mirror);
-    chair(g, mx, r.z1 - 18, 0);
+    const mdc = chair(g, mx, r.z1 - 18, 0);
+    jiggle(mdc, 2.2);
     // A chest of drawers down the middle of the aisle. One `unit`, because the
     // drawer fronts are 12.4 across a 12 carcass and hang 0.2 proud of each end —
     // left as separate boxes the audit reads them as two pieces of furniture
@@ -1497,6 +1752,7 @@ export async function addHouse(parent, opts = {}) {
       const chest = unit(g, 'chestOfDrawers', mx, mz);
       box(chest, 12, 7, 20, 0, 3.5, 0, MAT.wood);
       for (let i = 0; i < 4; i++) box(chest, 12.4, 1.2, 4.4, 0, 1.5 + i * 2, 0, MAT.woodDark, false);
+      jiggle(chest, 5.2);
     }
     ceilingLight(g, lights, mx, mz, 7, 24, 48);
   }
@@ -1517,8 +1773,10 @@ export async function addHouse(parent, opts = {}) {
       flat(g, 6 + i * 3, 4 + (i % 2) * 3, -78 + i * 5, 0.04, 62 + (i % 3) * 9, MAT.rubber, false);
     }
     // The workbenches, hard against the north and south walls.
-    box(g, 14, 3, 4, -58, 1.5, 88.5, MAT.woodDark);
-    box(g, 15, 0.6, 5, -58, 3.3, 88.5, MAT.woodPale, false);
+    const g1 = unit(g, 'bench', -58, 88.5);
+    box(g1, 14, 3, 4, 0, 1.5, 0, MAT.woodDark);
+    box(g1, 15, 0.6, 5, 0, 3.3, 0, MAT.woodPale, false);
+    jiggle(g1, 4);
     buildWorkbench(g, -66, 52);
     // ---- The beckoning light ------------------------------------------------
     // A clamp lamp on a tripod at the BACK of the garage, aimed at the wall. It
@@ -1578,10 +1836,15 @@ export async function addHouse(parent, opts = {}) {
     // Coat hooks and a bench in the mudroom at the north end.
     box(g, 0.6, 0.6, 14, r.x0 + 0.9, 14, 38, MAT.wood, false);
     for (let i = 0; i < 5; i++) {
-      box(g, 1.4, 11, 3, r.x0 + 1.8, 9, 32 + i * 3, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2, MAT.paper][i], false);
+      const hk = box(g, 1.4, 11, 3, r.x0 + 1.8, 9, 32 + i * 3, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2, MAT.paper][i], false);
+      jiggle(hk, 2);
     }
-    table(g, 22, 36, 20, 10, 2.6, 0, MAT.woodPale);
-    for (const s of [-1, 1]) box(g, 3, 4, 1, 22 + s * 7, 2, 36, MAT.wood, false);
+    const ht = table(g, 22, 36, 20, 10, 2.6, 0, MAT.woodPale);
+    jiggle(ht, 4.2);
+    for (const s of [-1, 1]) {
+      const hb = box(g, 3, 4, 1, 22 + s * 7, 2, 36, MAT.wood, false);
+      jiggle(hb, 1.6);
+    }
     // Shoe rack and a console table further down. The console is authored 7
     // wide by 26 deep and stands against the hall's east wall at x=52, so ry
     // stays 0 — rotating it put the 26 straight through that wall. It is at
@@ -1589,9 +1852,12 @@ export async function addHouse(parent, opts = {}) {
     // needs 3.7 of clear floor off the centre line to get through the bathroom
     // doorway beside it.
     for (let s = 0; s < 2; s++) box(g, 5, 0.5, 20, r.x0 + 2.5, 2 + s * 4.5, 6, MAT.woodPale, false);
-    table(g, 44, 10, 7, 26, 3.2, 0, MAT.wood);
-    pottedPlant(g, 45.5, -4, 1.1);
-    pottedPlant(g, 14, 38, 1.0);
+    const hct = table(g, 44, 10, 7, 26, 3.2, 0, MAT.wood);
+    jiggle(hct, 4);
+    const hp1 = pottedPlant(g, 45.5, -4, 1.1);
+    jiggle(hp1, 1.5);
+    const hp2 = pottedPlant(g, 14, 38, 1.0);
+    jiggle(hp2, 1.4);
     // A big painting on the hall's east wall, and a runner rug.
     vert(g, 20, 15, r.x1 - 0.4, 15, 24, -Math.PI / 2, MAT.quilt2);
     rug(g, 22, 6, 26, 20, MAT.rugHall);
@@ -1642,8 +1908,11 @@ export {
   MAT,
   bed, sofa, table, chair, wardrobe,
   shelfRack, counterRun, tub, toilet, sinkUnit,
-  fridge, stove, tvUnit, rug, pottedPlant,
+  fridge, stove, tvUnit, rug,   pottedPlant,
   ceilingLight, tableLamp,
   buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
   buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
 };
+
+
+export function setMirrorEnv(tex) { if (MAT && MAT.mirror) { MAT.mirror.envMap = tex || null; MAT.mirror.needsUpdate = true; } }

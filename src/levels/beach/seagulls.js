@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import {
   BEACH_HALF_W, BEACH_SEA_Y, BEACH_SHORE_Z, BEACH_RIM_Z, BEACH_BASIN_Y,
   BEACH_REEFS, beachGroundOffsetAt, clamp01,
-} from './layout.js?v=1791038381904';
+} from './layout.js?v=1791600000000';
 
 // ===== The gulls =====
 //
@@ -151,8 +151,11 @@ function flap(gull, t, rate, amp = 1) {
     w.rotation.y = sx * p * 0.12;
     w.userData.outer.rotation.z = sx * (p * 0.4 + 0.25) * amp;
   }
-  // Tucked in flight, dropped when she is about to land on something.
+  // Tucked in flight, dropped when she is about to land on something. `reach()`
+  // flags the legs as held down (the thief grabbing the car), and while that
+  // flag is up the tuck is skipped so her talons stay down on the roof.
   for (const [i, l] of gull.userData.legs.entries()) {
+    if (gull.userData.legsDown) continue;
     const sx = i === 0 ? -1 : 1;
     l.rotation.x = -1.1 - Math.max(0, p) * 0.25;
     l.rotation.z = sx * 0.1;
@@ -162,6 +165,7 @@ function flap(gull, t, rate, amp = 1) {
 // Drop the legs straight down and open them, ready to take a car. Called on the
 // last part of the approach so you can see her commit before she does it.
 function reach(gull, k) {
+  gull.userData.legsDown = k > 0.01;
   for (const [i, l] of gull.userData.legs.entries()) {
     const sx = i === 0 ? -1 : 1;
     l.rotation.x = -1.1 * (1 - k);
@@ -235,10 +239,13 @@ export function createGulls(base) {
   const leg = (k) => k * k * (3 - 2 * k);
 
   // Head for a point, and record the heading so she flies the right way up.
+  // A gull's beak is her local -Z (head and beak sit at -Z, tail at +Z), so to
+  // lead with the beak she has to face atan2(-dx, -dz) rather than atan2(dx, dz)
+  // - the latter points her tail-first and she flies backwards.
   const steer = (g, tx, ty, tz) => {
     const dx = tx - g.position.x;
     const dz = tz - g.position.z;
-    if (dx || dz) g.rotation.y = Math.atan2(dx, dz);
+    if (dx || dz) g.rotation.y = Math.atan2(-dx, -dz);
     g.position.y += (ty - g.position.y) * 0.08;
   };
 
@@ -258,8 +265,8 @@ export function createGulls(base) {
         const pz = b.cz + Math.sin(b.phase) * b.r * 0.7;
         b.g.position.set(px, base + b.y + Math.sin(t * 0.5 + b.phase) * 1.4, pz);
         b.g.rotation.y = Math.atan2(
-          -(b.dir * Math.sin(b.phase) * b.r),
-          -(b.dir * Math.cos(b.phase) * b.r * 0.7));
+          b.dir * Math.sin(b.phase) * b.r,
+          -b.dir * Math.cos(b.phase) * b.r * 0.7);
         b.g.rotation.z = b.dir * 0.34;
         flap(b.g, t + b.phase, 2.4 + b.rate, 0.55);
       }
@@ -269,6 +276,15 @@ export function createGulls(base) {
       // also resets if something else moves the car - a nudge from a crab, a
       // jolt off a rock - and it resets for the right reason: the car is where
       // you left it no longer.
+      //
+      // The clock ONLY runs while the car is on the sand, and stops dead while
+      // it is underwater. That is deliberate: driving out under the sea is the
+      // safe place to park. The thief catches a car someone left sitting on the
+      // beach - that is the joke - and a car sunk in the basin is one she never
+      // even starts counting on. `submerged` also gates the trigger below, so a
+      // car that rolls up out of the deep at the last moment still gets the
+      // full ten seconds on dry sand before she moves.
+      const submerged = !!(carPos && beachGroundOffsetAt(carPos.x, carPos.z) < BEACH_SEA_Y);
       if (!blocked && carPos) {
         if (haveLast) {
           const moved = Math.hypot(carPos.x - lastX, carPos.z - lastZ);
@@ -278,14 +294,16 @@ export function createGulls(base) {
         lastZ = carPos.z;
         haveLast = true;
       }
-      if (!blocked) idle += delta;
+      if (!blocked && !submerged) idle += delta;
       if (cooldown > 0) cooldown -= delta;
 
       api.carCarry = null;
 
       // ---- the thief's state machine ----
       const HOLD_Y = 15;      // how high she cruises carrying
-      const GRAB_Y = 3.1;     // talons to roof height
+      // Her origin sits this far above the car's resting height so her talons
+      // (about 2.0 down under a 2.4x bird) meet the roof-top (about 2.08 up).
+      const GRAB_Y = 4.1;
       switch (phase) {
         case 'perch': {
           // Circling, invisible, waiting.
@@ -298,7 +316,7 @@ export function createGulls(base) {
           thief.rotation.y = -p + Math.PI / 2;
           thief.rotation.z = 0.3;
           thief.visible = false;
-          if (idle >= IDLE_TO_THEFT && cooldown <= 0 && carPos) {
+          if (idle >= IDLE_TO_THEFT && cooldown <= 0 && carPos && !submerged) {
             phase = 'approach';
             timer = 0;
             thief.visible = true;
@@ -309,7 +327,7 @@ export function createGulls(base) {
               PERCH.x + Math.cos(p) * 16,
               base + PERCH.y + 4,
               PERCH.z + Math.sin(p) * 12);
-            to.set(carPos.x, base + GRAB_Y + 9, carPos.z);
+            to.set(carPos.x, carPos.y + GRAB_Y + 9, carPos.z);
           }
           break;
         }
@@ -336,7 +354,7 @@ export function createGulls(base) {
           timer += delta;
           thief.position.x += (carPos.x - thief.position.x) * 0.25;
           thief.position.z += (carPos.z - thief.position.z) * 0.25;
-          thief.position.y += (base + GRAB_Y - thief.position.y) * 0.25;
+          thief.position.y += (carPos.y + GRAB_Y - thief.position.y) * 0.25;
           steer(thief, carPos.x, thief.position.y, carPos.z);
           thief.rotation.z = 0;
           reach(thief, 1);
@@ -378,11 +396,13 @@ export function createGulls(base) {
             from.y + (ty - from.y) * leg(k),
             from.z + (tz - from.z) * leg(k));
           // Bank into the direction of travel, from the yaw she wants to the
-          // yaw she had a moment ago.
-          const wantYaw = Math.atan2(tx - from.x, tz - from.z);
+          // yaw she had a moment ago. She also turns to hold the beak on the way
+          // she is actually going, easing round rather than snapping.
+          const wantYaw = Math.atan2(-(tx - from.x), -(tz - from.z));
           let dyaw = wantYaw - thief.rotation.y;
           while (dyaw > Math.PI) dyaw -= TAU;
           while (dyaw < -Math.PI) dyaw += TAU;
+          thief.rotation.y += dyaw * clamp01(delta * 2.4);
           thief.rotation.z = -clamp01(Math.abs(dyaw) * 2.2) * Math.sign(dyaw || 1) * 0.55;
           reach(thief, 1);
           flap(thief, t, 2.9, 1);
@@ -430,7 +450,12 @@ export function createGulls(base) {
       // Only while she has it: grab, lift and carry. Not on approach (she has
       // not touched it), not on drop (she has let go).
       if (phase === 'grab' || phase === 'lift' || phase === 'carry') {
-        const hang = 2.5;
+        // Hang the car from the talons, not up inside her. The thief is scaled
+        // 2.4x, so her feet reach about 2.0 units below her origin and the car's
+        // roof-top is about 2.08 above its own origin; hanging the car ~4.1
+        // below her puts the roof right into her claws. (2.5, the old value,
+        // buried the car in her body.)
+        const hang = 4.1;
         // The car swings under her: it lags her motion and tilts into the
         // bank, so a hard turn visibly throws it about.
         const swing = Math.sin(t * 1.6) * 0.06 + thief.rotation.z * 0.5;
@@ -438,7 +463,9 @@ export function createGulls(base) {
         carryPose.x = pos.x;
         carryPose.y = pos.y;
         carryPose.z = pos.z;
-        carryPose.yaw = thief.rotation.y + Math.PI;
+        // Car forward is its local -X, which is a quarter-turn off the gull's
+        // -Z beak, so align the two: heading = gull heading - 90 degrees.
+        carryPose.yaw = thief.rotation.y - Math.PI / 2;
         carryPose.pitch = 0.16 + swing;
         carryPose.roll = swing * 2.2;
         api.carCarry = carryPose;

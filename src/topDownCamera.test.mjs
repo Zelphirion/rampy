@@ -345,14 +345,15 @@ test('the plan view is bounded by roofs and ceilings, not just by zoom', () => {
   assert.match(house, /h: ceil, ceiling: true, soft: true/,
     'the house ceiling collider is gone — the car could now drive through the roof');
 
-  // The far plane is 300, which a 600-high plan view exceeds — without
-  // stretching it the world clips to black at the frame edge.
+  // The far plane is the draw distance (300 by default), which a 600-high plan
+  // view exceeds — without stretching it the world clips to black at the frame
+  // edge.
   assert.match(src, /camera\.far = wantedFar/,
     'the far plane is not extended for the high view');
-  assert.match(src, /Math\.max\(300, camera\.position\.y/,
-    'the far plane extension is not bounded below by the chase cam default');
+  assert.match(src, /Math\.max\(gfx\.far, camera\.position\.y/,
+    'the far plane extension is not bounded below by the draw distance');
   // And it has to be put back, or the chase cam keeps an oversized depth range.
-  assert.match(src, /camera\.far = 300/,
+  assert.match(src, /camera\.far = gfx\.far/,
     'the far plane is never restored for the chase cam');
 });
 

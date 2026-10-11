@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import {
   BEACH_CLIFF_Z, BEACH_HALF_W, BEACH_MAP_X1, BEACH_MAP_Z0, BEACH_MAP_Z1,
   BEACH_SEA_Y, cliffFaceZ, BEACH_CLIFF_SEEDS, cliffHash as hash,
-} from './layout.js?v=1791038381904';
+} from './layout.js?v=1791600000000';
 
 // ===== The cliffs =====
 //

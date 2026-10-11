@@ -7,7 +7,8 @@ import {
   BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_CLIFF_Z, BEACH_HALF_W, BEACH_BASIN_Y,
   BEACH_PALMS, BEACH_ROCKS, BEACH_REEFS, clamp01, courseInset, CLIFF_REACH,
   PERSON_H, ANIMAL_SCALE, animalSize,
-} from './layout.js?v=1791038381904';
+} from './layout.js?v=1791600000000';
+import { rectCircleIntersect } from '../../modules/world.js';
 
 const inRange = (v, lo, hi) => v >= lo && v <= hi;
 
@@ -65,7 +66,7 @@ test('the profile runs sand -> sea -> basin -> drop-off -> trench, once and in o
 
 test('the drop-off is a wall, not just a slope - the car cannot leave the basin', () => {
   const cs = beachColliders();
-  const rim = cs.find((c) => Math.abs(c.z - BEACH_RIM_Z) < 0.5);
+  const rim = cs.find((c) => c.halfW !== undefined && Math.abs(c.z - BEACH_RIM_Z) < 0.5);
   assert.ok(rim, 'there is a collider standing on the drop-off rim');
   assert.ok(rim.noRoof, 'the rim is a barrier, so it must not report a rooftop');
   // It has to span the whole cove, or you could squeeze out beside it.
@@ -122,33 +123,49 @@ test('the reefs are round, submerged, and reachable from the basin', () => {
   }
 });
 
-test('the cove is closed on all three land sides, out at the overhanging lip', () => {
+test('the cliffs are the barrier: you can reach the rock, and never through it', () => {
   const cs = beachColliders();
-  // The barrier has to stand at the furthest the rock ever reaches OUT, which is
-  // the overhanging top courses - not at the nominal base line. A wall on the
-  // base line would let the car drive out under the overhang.
-  const backReach = BEACH_CLIFF_Z - CLIFF_REACH.out;
-  const sideReach = BEACH_HALF_W - CLIFF_REACH.out;
-  assert.ok(CLIFF_REACH.out > 3, `the cliff really does overhang the beach (${CLIFF_REACH.out.toFixed(2)})`);
+  const CAR = 2.2;
+  const blocked = (x, z) => cs.some((c) => rectCircleIntersect(x, z, c, CAR));
 
-  const back = cs.find((c) => c.halfW >= BEACH_HALF_W && c.z > BEACH_CLIFF_Z - 20 && c.z < BEACH_CLIFF_Z);
-  assert.ok(back, 'the back cliff is walled across the whole cove');
-  assert.ok(back.z - back.halfD <= backReach + 1e-6,
-    `the back wall reaches the overhang (inner edge ${(back.z - back.halfD).toFixed(2)} vs reach ${backReach.toFixed(2)})`);
+  // The old barrier floated out at the overhanging lip, ~6 units this side of
+  // the rock. Now it hugs the face, so most of the cove lets the car drive right
+  // up to the foot of the cliff.
+  let reached = 0;
+  for (let x = -80; x <= 80; x += 4) if (!blocked(x, BEACH_CLIFF_Z - 3)) reached++;
+  assert.ok(reached > 20,
+    `the car can drive up to the cliff foot across the cove (${reached}/41 samples)`);
 
-  for (const sx of [-1, 1]) {
-    const side = cs.find((c) => c.halfD > 50 && Math.sign(c.x) === sx && Math.abs(Math.abs(c.x) - sideReach) < 12);
-    assert.ok(side, `the ${sx < 0 ? 'west' : 'east'} cliff is walled`);
-    const inner = sx < 0 ? side.x + side.halfW : side.x - side.halfW;
-    assert.ok(inner <= sideReach + 1e-6,
-      `the ${sx < 0 ? 'west' : 'east'} wall reaches the overhang (inner edge ${inner.toFixed(2)} vs reach ${sideReach.toFixed(2)})`);
+  // ...and the cove is still closed. Flood-fill from the spawn: nothing may be
+  // reachable past the deepest recess in the rock.
+  const STEP = 2;
+  const key = (ix, iz) => `${ix},${iz}`;
+  const open = new Map();
+  for (let ix = -44; ix <= 44; ix++) {
+    for (let iz = Math.ceil(BEACH_RIM_Z / STEP); iz * STEP <= BEACH_CLIFF_Z + 16; iz++) {
+      const x = ix * STEP, z = iz * STEP;
+      if (Math.abs(x) > BEACH_HALF_W - 2) continue;
+      if (blocked(x, z)) continue;
+      open.set(key(ix, iz), [x, z]);
+    }
   }
-
-  // ...and the two back corners, where a wall each way leaves a notch.
-  for (const sx of [-1, 1]) {
-    assert.ok(cs.some((c) => Math.sign(c.x) === sx && c.z > BEACH_CLIFF_Z - 16 && c.z < BEACH_CLIFF_Z),
-      `the ${sx < 0 ? 'west' : 'east'} back corner is filled in`);
+  const start = [Math.round(BEACH_START.x / STEP), Math.round(BEACH_START.z / STEP)];
+  const seen = new Set([key(start[0], start[1])]);
+  const queue = [start];
+  while (queue.length) {
+    const [ix, iz] = queue.pop();
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const k = key(ix + dx, iz + dz);
+      if (seen.has(k) || !open.has(k)) continue;
+      seen.add(k);
+      queue.push([ix + dx, iz + dz]);
+    }
   }
+  const escaped = [...seen].filter((k) => {
+    const c = open.get(k);
+    return c && c[1] > BEACH_CLIFF_Z + 8;
+  });
+  assert.equal(escaped.length, 0, `${escaped.length} cells reachable past the rock face`);
 });
 
 test('the cliff rock overhangs its own base line, undercut at the foot', () => {
@@ -157,7 +174,9 @@ test('the cliff rock overhangs its own base line, undercut at the foot', () => {
   assert.ok(courseInset(1) < -3, 'the lip overhangs');
   assert.ok(courseInset(0) > 0, 'the foot is undercut');
   assert.ok(Math.abs(courseInset(0.5)) < 1, 'the middle is close to sheer');
-  // And the barrier is out at that overhang, never in behind it.
+  // The rock still reaches out over the beach at the lip and recedes at the foot,
+  // even though the barrier now hugs the face at the car's height rather than the
+  // lip. CLIFF_REACH is measured over the whole face, so both must stay true.
   assert.ok(CLIFF_REACH.back > 0.5, 'the cliff recedes somewhere');
   assert.ok(CLIFF_REACH.out > -courseInset(1) - 1e-9, 'reachOut matches the worst overhang');
 });
@@ -176,17 +195,27 @@ test('the beach does not wrap: it is a box, with bounded ground all the way roun
 });
 
 test('the shell is bedded in the sand and its hole is a real hole in the ground', () => {
-  assert.equal(BEACH_SHELL.surfaceY, BEACH_SAND_Y, 'the shell is cut for one single ground height');
+  // The shell now sits out on the cove's side bank at its far corner, so its
+  // own surface height is the LOCAL sand height rather than the flat
+  // BEACH_SAND_Y. What matters is that it is bedded flush: the height it is cut
+  // for matches the sand that surrounds it.
+  const bed = beachSandOffsetAt(BEACH_SHELL.x, BEACH_SHELL.z);
+  assert.ok(Math.abs(BEACH_SHELL.surfaceY - bed) < 0.05,
+    `the shell is cut for its own local ground (surface ${BEACH_SHELL.surfaceY.toFixed(2)}, sand ${bed.toFixed(2)})`);
   const centre = beachGroundOffsetAt(BEACH_SHELL.x, BEACH_SHELL.z);
-  assert.ok(centre < BEACH_SAND_Y - 0.4, `the bowl really dips (got ${centre.toFixed(2)})`);
+  assert.ok(centre < BEACH_SHELL.surfaceY - 0.4, `the bowl really dips (got ${centre.toFixed(2)})`);
   const path = beachShellPitPath();
   assert.ok(inBeachShellPit(BEACH_SHELL.x, BEACH_SHELL.z, path), 'the umbo is inside the hole');
   // ...and there IS sand around it, so the hole is a hole and not a hole in
-  // the middle of a hole.
-  const far = BEACH_SHELL.reach().x + 2.5;
+  // the middle of a hole. Sampled just outside the rim, inside the apron where
+  // the ripples are faded out, so the ground there is the plain sand profile.
+  const far = BEACH_SHELL.reach().x + 0.6;
   assert.ok(!inBeachShellPit(BEACH_SHELL.x + far, BEACH_SHELL.z, path), 'sand closes back up beyond the shell');
-  assert.ok(inRange(beachGroundOffsetAt(BEACH_SHELL.x + far, BEACH_SHELL.z), BEACH_SAND_Y - 0.01, BEACH_SAND_Y + 0.01),
-    'the sand beyond the hole is flat sand at exactly BEACH_SAND_Y');
+  const beyond = beachGroundOffsetAt(BEACH_SHELL.x + far, BEACH_SHELL.z);
+  const plain = beachSandOffsetAt(BEACH_SHELL.x + far, BEACH_SHELL.z);
+  assert.ok(Math.abs(beyond - plain) < 1e-6, 'the sand beyond the hole is plain sand, not bowl');
+  assert.ok(inRange(beyond, BEACH_SHELL.surfaceY - 0.15, BEACH_SHELL.surfaceY + 0.15),
+    'the sand beyond the hole is level with the shell bed');
 });
 
 test('the shell hole is not flush with the sand - it overlaps it', () => {
@@ -213,8 +242,8 @@ test('the spawn is clear of the shell, so arriving never fires the way home', ()
   assert.ok(!BEACH_SHELL.inside(BEACH_START.x, BEACH_START.z), 'the spawn is not inside the trigger');
 });
 
-test('the shell sits on the flat, driveable shelf between the cliffs and the sea', () => {
-  assert.ok(inRange(BEACH_SHELL.z, 18, 34), `the shell is on the flat shelf (z ${BEACH_SHELL.z})`);
+test('the shell sits on the driveable sand between the cliffs and the sea', () => {
+  assert.ok(inRange(BEACH_SHELL.z, 18, 34), `the shell is on the shelf (z ${BEACH_SHELL.z})`);
   // A straight run at it from the west, the way the park shell is taken.
   for (let x = BEACH_SHELL.x - 8; x <= BEACH_SHELL.x; x += 0.5) {
     const y = beachGroundOffsetAt(x, BEACH_SHELL.z);

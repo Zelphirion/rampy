@@ -1,13 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+// Runs the REAL house builder headless and prints every placed group's
+// footprint, optionally filtered by a "x0..x1 z0..z1" prefix.
+// Run: node src/levels/house/__dbg.mjs ["x-90..-74 z-21.5..-18.5;..."]
+import { addHouse } from './houseHarness.mjs';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.join(here, 'index.js'), 'utf8')
-  .replace(/import\s+\*\s+as\s+THREE\s+from\s+'https:[^']*';/, "import * as THREE from './three-stub.mjs';");
-const built = path.join(here, '__dbg_built.mjs');
-fs.writeFileSync(built, source);
-const { addHouse } = await import(pathToFileURL(built).href);
 const world = await addHouse({ add() {} }, {});
 
 const want = process.argv[2] ? process.argv[2].split(';') : null;
@@ -41,4 +36,3 @@ for (const child of world.group.children) {
   if (hit) console.log(`${String(n).padStart(2)} grp(${gx},${gz}) ry=${q.toFixed(2)} ${key}`);
   n++;
 }
-fs.unlinkSync(built);

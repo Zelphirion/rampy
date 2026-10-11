@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { BEACH_REEFS, beachGroundOffsetAt, cliffNoise as noise } from './layout.js?v=1791038381904';
+import { BEACH_REEFS, beachGroundOffsetAt, cliffNoise as noise } from './layout.js?v=1791600000000';
 
 // ===== The reefs =====
 //

@@ -151,6 +151,32 @@
       }
       body.select-mode #gear-btn { background: rgba(20, 30, 55, 0.8); }
 
+      /* Optional frame-rate badge beside the gear, for the "show it always"
+         checkbox on the Graphics tab. Hidden until that box is ticked. */
+      #gear-fps {
+        position: fixed;
+        top: 14px;
+        left: 64px;
+        height: 42px;
+        padding: 0 13px;
+        border-radius: 12px;
+        background: rgba(5, 10, 18, 0.68);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        color: #9ff0b8;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        display: none;
+        align-items: center;
+        z-index: 20;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+      }
+      #gear-fps.show { display: flex; }
+      #gear-fps.ok { color: #ffd166; }
+      #gear-fps.bad { color: #ff9a8f; }
+
       /* Next / previous arrows at the bottom corners of the showroom */
       #car-prev,
       #car-next {
@@ -215,6 +241,11 @@
         display: none;
         gap: 6px;
         z-index: 25;
+        /* The tabs: wrap rather than spill off a narrow screen. main.js measures
+           the wrapped height and offsets the panels below it. */
+        flex-wrap: wrap;
+        justify-content: center;
+        max-width: calc(100vw - 24px);
       }
       body.select-mode #picker-tabs { display: flex; }
       .picker-tab {
@@ -253,7 +284,11 @@
 
       .browser-panel {
         position: fixed;
-        top: 74px;
+        /* Sits just under the fixed tab row. The row wraps onto extra lines on a
+           narrow screen, so the offset is a CSS variable main.js measures and
+           republishes (see syncPickerTabLayout) — a hard-coded value would be
+           overrun by the second row and overlap the panel content. */
+        top: var(--picker-tabs-bottom, 74px);
         left: 20px;
         right: 20px;
         bottom: 20px;
@@ -279,6 +314,266 @@
          and the pager pinned at the bottom. */
       body.tab-levels #levels-panel { display: flex; }
       body.tab-objects #objects-panel { display: flex; }
+      body.tab-controls #controls-panel { display: flex; }
+
+      /* ===== Controls tab (gear → Controls) =====
+         One table, three columns: what you press, what it does, and the Xbox
+         button that does the same thing. The panel is a scroll inside the
+         modal rather than a scrolling page, so the tab row stays put. */
+      .controls-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .controls-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .controls-table th {
+        position: sticky;
+        top: 0;
+        text-align: left;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #8fa8cc;
+        font-weight: 700;
+        padding: 9px 10px;
+        background: rgba(6, 11, 22, 0.96);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+      }
+      .controls-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        vertical-align: top;
+        line-height: 1.5;
+      }
+      .controls-table tr.ctl-group td {
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #7ef9ff;
+        background: rgba(30, 60, 100, 0.4);
+        padding: 7px 10px;
+        border-bottom: 1px solid rgba(126, 249, 255, 0.25);
+      }
+      .controls-table td.ctl-input { color: #eef2ff; }
+      .controls-table td.ctl-what { color: #b9cbe8; }
+      .controls-table td.ctl-pad { color: #9ff0b8; }
+      .controls-table tr.ctl-note td {
+        color: #8fa8cc;
+        font-size: 12px;
+        font-style: italic;
+        border-bottom: none;
+      }
+      /* Key caps and controller buttons both read as "a thing you press" */
+      kbd,
+      .padbtn {
+        display: inline-block;
+        padding: 2px 7px;
+        margin: 1px 2px 1px 0;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.26);
+        background: rgba(255, 255, 255, 0.08);
+        color: #eef2ff;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .padbtn {
+        border-color: rgba(159, 240, 184, 0.5);
+        color: #9ff0b8;
+        background: rgba(40, 90, 60, 0.3);
+      }
+      /* Live "is a controller plugged in" line above the table */
+      .pad-status {
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: #8fa8cc;
+        padding: 9px 12px;
+        border-radius: 11px;
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .pad-status.on {
+        color: #9ff0b8;
+        border-style: solid;
+        border-color: rgba(159, 240, 184, 0.55);
+        background: rgba(40, 90, 60, 0.25);
+      }
+      /* Which control the Xbox pad currently has highlighted */
+      .pad-focus {
+        outline: 2px solid #7ef9ff;
+        outline-offset: 2px;
+        box-shadow: 0 0 18px rgba(126, 249, 255, 0.45);
+      }
+
+      /* ===== Graphics tab (gear → Graphics) =====
+         Sliders, toggles and a live frame-rate readout. The panel sits over the
+         real world rather than the showroom — that is the point of the tab: you
+         watch the scene you actually play as the sliders move — so it is a shade
+         more transparent than the other panels. */
+      body.tab-graphics #graphics-panel {
+        display: flex;
+        background: rgba(6, 11, 22, 0.66);
+      }
+      .gfx-scroll {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        padding-right: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .gfx-row {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .gfx-row-line {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+      .gfx-row-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+      .gfx-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+      .gfx-label {
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #8fa8cc;
+        font-weight: 700;
+      }
+      .gfx-value {
+        color: #7ef9ff;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .gfx-note {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #7ef9ff;
+      }
+      .gfx-hint { font-size: 11.5px; line-height: 1.45; color: #93a9c8; }
+      .gfx-slider { width: 100%; margin: 0; accent-color: #7ef9ff; cursor: pointer; }
+      .gfx-check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        line-height: 1.4;
+        color: #b9cbe8;
+        cursor: pointer;
+      }
+      .gfx-check input { width: 15px; height: 15px; accent-color: #7ef9ff; }
+      .gfx-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+      .gfx-btn {
+        flex: 1 1 auto;
+        padding: 9px 14px;
+        border-radius: 11px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(16, 27, 48, 0.7);
+        color: #dbe7ff;
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        cursor: pointer;
+        transition: background 0.18s, border-color 0.18s;
+      }
+      .gfx-btn:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .gfx-btn.active {
+        background: rgba(40, 80, 140, 0.85);
+        border-color: #7ef9ff;
+        box-shadow: 0 0 14px rgba(126, 249, 255, 0.3);
+      }
+      .gfx-toggle { flex: 0 0 auto; min-width: 74px; text-align: center; }
+      .gfx-toggle .gfx-state { color: #7ef9ff; }
+      .gfx-toggle[aria-checked="false"] .gfx-state { color: #8fa8cc; }
+      .gfx-fps { display: flex; align-items: baseline; gap: 7px; flex: 0 0 auto; }
+      .gfx-fps-num {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 26px;
+        font-weight: 700;
+        color: #9ff0b8;
+      }
+      .gfx-fps-num.ok { color: #ffd166; }
+      .gfx-fps-num.bad { color: #ff9a8f; }
+      .gfx-fps-unit {
+        font-size: 12px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #8fa8cc;
+      }
+
+      /* ===== About tab (gear → About) =====
+         The logo, the game's name and what it was built with. One centred
+         column, so it reads the same on a phone and a desktop. */
+      body.tab-about #about-panel { display: flex; }
+      .about-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        text-align: center;
+        padding: 12px 8px;
+      }
+      .about-logo {
+        max-width: min(420px, 76vw);
+        max-height: 40vh;
+        width: auto;
+        height: auto;
+        filter: drop-shadow(0 8px 30px rgba(0, 0, 0, 0.55));
+      }
+      .about-title {
+        font-size: 20px;
+        letter-spacing: 0.04em;
+        font-weight: 700;
+        color: #eaf2ff;
+      }
+      .about-sub { font-size: 13px; color: #93a9c8; }
+      .about-credits {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 6px;
+        font-size: 13px;
+        color: #dbe7ff;
+      }
+      .about-credit { display: flex; flex-direction: column; gap: 2px; }
+      .about-credit-label {
+        font-size: 10.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #8fa8cc;
+        font-weight: 700;
+      }
+
+      /* The tabs no longer fit a phone at the wide padding — tighten them so
+         the row wraps onto as few lines as possible. */
+      @media (max-width: 660px) {
+        .picker-tab { padding: 8px 12px; font-size: 12px; letter-spacing: 0.06em; }
+        .controls-table td { padding: 7px 6px; font-size: 12px; }
+        .controls-table th { padding: 8px 6px; }
+        /* Label and readout share one line only while there is room for both. */
+        .gfx-row-line { flex-direction: column; align-items: stretch; gap: 8px; }
+        .gfx-fps { justify-content: flex-start; }
+      }
 
       .browser-title {
         font-size: 12px;
@@ -636,7 +931,7 @@
          buttons, which the gear modal hides on these tabs anyway. */
       @media (max-width: 720px) {
         .browser-panel {
-          top: 64px;
+          top: var(--picker-tabs-bottom, 64px);
           left: 10px;
           right: 10px;
           bottom: 10px;
@@ -832,8 +1127,10 @@
     <div id="joystick-hit"></div>
 
     <!-- Settings (gear) button, top-left. Opens the car showroom; while the
-         showroom is open it becomes the return-to-game button. -->
+         showroom is open it becomes the return-to-game button. The optional
+         frame-rate badge sits to its right (see #gfx-show-fps). -->
     <div id="gear-btn" title="Settings">&#9881;</div>
+    <div id="gear-fps" title="Frame rate">-- fps</div>
 
     <!-- Car showroom overlay (pure UI; the 3D car is rendered on the canvas):
          side arrows cycle the cars, clicking the spinning car drives it. -->
@@ -842,14 +1139,20 @@
     <div id="car-hint"></div>
 
     <!-- Showroom tabs: PLAYER swaps your ride, CHASE swaps the car that chases
-         you, LEVELS teleports you. OBJECTS is deliberately not a tab — it is a
-         screen inside Levels, reached from each level's own Objects button, so
-         the catalogue is always about a specific place. Only visible while the
+         you, LEVELS teleports you, CONTROLS lists every keyboard/mouse binding
+         beside its Xbox controller twin, GRAPHICS tunes resolution, draw
+         distance, shadows and anti-aliasing live, ABOUT names the game and what
+         it was built with. OBJECTS is deliberately not a tab — it is a screen
+         inside Levels, reached from each level's own Objects button, so the
+         catalogue is always about a specific place. Only visible while the
          showroom is up. -->
     <div id="picker-tabs">
       <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
       <button id="tab-chase" class="picker-tab" type="button" title="Choose the car that chases you">&nbsp;Chase&nbsp;</button>
       <button id="tab-levels" class="picker-tab" type="button" title="Go to another level">&nbsp;Levels&nbsp;</button>
+      <button id="tab-controls" class="picker-tab" type="button" title="Keyboard, mouse and Xbox controller controls">&nbsp;Controls&nbsp;</button>
+      <button id="tab-graphics" class="picker-tab" type="button" title="Resolution, draw distance, shadows, frame rate">&nbsp;Graphics&nbsp;</button>
+      <button id="tab-about" class="picker-tab" type="button" title="About this game">&nbsp;About&nbsp;</button>
     </div>
 
     <!-- Levels: one button per level. Tapping one drops you there. -->
@@ -877,6 +1180,220 @@
         <button id="obj-prev" class="pager-btn" type="button" title="Previous nine objects" aria-label="Previous nine objects">&larr;</button>
         <div id="obj-range"></div>
         <button id="obj-next" class="pager-btn" type="button" title="Next nine objects" aria-label="Next nine objects">&rarr;</button>
+      </div>
+    </div>
+
+    <!-- Controls: every keyboard and mouse binding the game reads, what it
+         does, and the Xbox controller button that does the same job. -->
+    <div id="controls-panel" class="browser-panel">
+      <div class="browser-title">Controls</div>
+      <div class="browser-blurb">Every keyboard and mouse control, and the Xbox
+        controller button that does the same thing. A controller works as soon
+        as it is plugged in or paired — nothing to set up.</div>
+      <div id="pad-status" class="pad-status">Looking for a controller&hellip;</div>
+      <div class="controls-scroll">
+        <table class="controls-table">
+          <thead>
+            <tr><th>Keyboard / Mouse</th><th>What it does</th><th>Xbox controller</th></tr>
+          </thead>
+          <tbody>
+            <tr class="ctl-group"><td colspan="3">Driving</td></tr>
+            <tr>
+              <td class="ctl-input"><kbd>W</kbd> or <kbd>&uarr;</kbd></td>
+              <td class="ctl-what">Accelerate — drive forward</td>
+              <td class="ctl-pad"><span class="padbtn">RT</span> (right trigger) or <span class="padbtn">&uarr;</span> on the D-pad</td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>S</kbd> or <kbd>&darr;</kbd></td>
+              <td class="ctl-what">Brake, then reverse</td>
+              <td class="ctl-pad"><span class="padbtn">LT</span> (left trigger) or <span class="padbtn">&darr;</span> on the D-pad</td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>A</kbd> or <kbd>&larr;</kbd></td>
+              <td class="ctl-what">Steer left</td>
+              <td class="ctl-pad">Left stick <span class="padbtn">&larr;</span> or D-pad <span class="padbtn">&larr;</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>D</kbd> or <kbd>&rarr;</kbd></td>
+              <td class="ctl-what">Steer right</td>
+              <td class="ctl-pad">Left stick <span class="padbtn">&rarr;</span> or D-pad <span class="padbtn">&rarr;</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>Shift</kbd> (hold)</td>
+              <td class="ctl-what">2&times; boost — double acceleration and top speed, forward or reverse</td>
+              <td class="ctl-pad">Hold <span class="padbtn">X</span></td>
+            </tr>
+            <tr class="ctl-group"><td colspan="3">Camera</td></tr>
+            <tr>
+              <td class="ctl-input">Drag with the mouse</td>
+              <td class="ctl-what">Orbit the camera around the car</td>
+              <td class="ctl-pad">Right stick</td>
+            </tr>
+            <tr>
+              <td class="ctl-input">Scroll wheel</td>
+              <td class="ctl-what">Zoom the camera in / out</td>
+              <td class="ctl-pad"><span class="padbtn">LB</span> zooms in &middot; <span class="padbtn">RB</span> zooms out</td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>C</kbd></td>
+              <td class="ctl-what">Switch between chase camera and top-down view</td>
+              <td class="ctl-pad"><span class="padbtn">B</span></td>
+            </tr>
+            <tr class="ctl-group"><td colspan="3">Game</td></tr>
+            <tr>
+              <td class="ctl-input"><kbd>Space</kbd></td>
+              <td class="ctl-what">Pause / unpause the whole world</td>
+              <td class="ctl-pad"><span class="padbtn">Start</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>H</kbd></td>
+              <td class="ctl-what">Sound the horn</td>
+              <td class="ctl-pad"><span class="padbtn">A</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>B</kbd></td>
+              <td class="ctl-what">Bookmark where you are — writes level and coordinates into the address bar</td>
+              <td class="ctl-pad">Right-stick click (<span class="padbtn">R3</span>)</td>
+            </tr>
+            <tr class="ctl-group"><td colspan="3">This settings screen</td></tr>
+            <tr>
+              <td class="ctl-input">Click the <kbd>&#9881;</kbd> gear</td>
+              <td class="ctl-what">Open / close settings</td>
+              <td class="ctl-pad"><span class="padbtn">View</span> / Back button</td>
+            </tr>
+            <tr>
+              <td class="ctl-input">Click a tab</td>
+              <td class="ctl-what">Switch between Player, Chase, Levels, Controls, Graphics and About</td>
+              <td class="ctl-pad"><span class="padbtn">LB</span> / <span class="padbtn">RB</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>&larr;</kbd> / <kbd>&rarr;</kbd></td>
+              <td class="ctl-what">Previous / next car on the Player and Chase tabs</td>
+              <td class="ctl-pad">D-pad <span class="padbtn">&larr;</span> / <span class="padbtn">&rarr;</span> or left stick</td>
+            </tr>
+            <tr>
+              <td class="ctl-input">Click a level, object or button</td>
+              <td class="ctl-what">Pick whatever is on screen (travel to a level, open a category&hellip;)</td>
+              <td class="ctl-pad">D-pad <span class="padbtn">&uarr;</span> / <span class="padbtn">&darr;</span> to highlight, <span class="padbtn">A</span> to pick</td>
+            </tr>
+            <tr>
+              <td class="ctl-input">Click the spinning car, or <kbd>Enter</kbd></td>
+              <td class="ctl-what">Drive the car on show and go back to the game</td>
+              <td class="ctl-pad"><span class="padbtn">A</span></td>
+            </tr>
+            <tr>
+              <td class="ctl-input"><kbd>Esc</kbd></td>
+              <td class="ctl-what">Close settings without changing anything</td>
+              <td class="ctl-pad"><span class="padbtn">B</span></td>
+            </tr>
+            <tr class="ctl-note">
+              <td colspan="3">On touch screens: drag the joystick to drive, drag
+                the world to orbit the camera, and pinch to zoom.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Graphics & Performance: resolution scale, draw distance, shadows,
+         anti-aliasing and a live frame-rate readout. Nothing here has an Apply
+         button — every control is wired to fire as soon as it moves, and the
+         world keeps rendering behind the panel so the effect (and the FPS) is
+         visible while you drag. -->
+    <div id="graphics-panel" class="browser-panel">
+      <div class="browser-title">Graphics &amp; Performance</div>
+      <div class="browser-blurb">Everything here applies the instant you move it,
+        and the world is rendering behind this panel — so watch it (and the frame
+        rate) as you go. The settings are remembered on this device.</div>
+      <div class="gfx-scroll">
+        <div class="gfx-row">
+          <div class="gfx-row-head">
+            <span class="gfx-label">Preset</span>
+            <span id="gfx-preset-note" class="gfx-note">Default</span>
+          </div>
+          <div class="gfx-presets">
+            <button id="gfx-preset-low" class="gfx-btn" type="button" title="Maximum frame rate: half-resolution rendering, a short draw distance, no shadows or anti-aliasing">Low</button>
+            <button id="gfx-preset-medium" class="gfx-btn" type="button" title="Native resolution and shadows, a medium draw distance, anti-aliasing off">Medium</button>
+            <button id="gfx-preset-high" class="gfx-btn" type="button" title="Full quality: native resolution, long draw distance, shadows and anti-aliasing on">High</button>
+            <button id="gfx-preset-max" class="gfx-btn" type="button" title="Everything on above native resolution. Also switches OFF the automatic quality reduction, so this picture is kept whatever the frame rate.">Max</button>
+          </div>
+        </div>
+
+        <div class="gfx-row">
+          <div class="gfx-row-head">
+            <label class="gfx-label" for="gfx-scale">Resolution scale</label>
+            <span class="gfx-value" id="gfx-scale-value">1.00&times;</span>
+          </div>
+          <input id="gfx-scale" class="gfx-slider" type="range" min="0.1" max="1.5" step="0.05" value="1" aria-label="Resolution scale">
+          <div class="gfx-hint" id="gfx-scale-hint">1.00&times; the display's own pixel ratio.</div>
+          <div class="gfx-hint">Lower is blockier and faster. Below 0.5 is a deliberately chunky, retro look — the bottom of the slider is there for old machines.</div>
+        </div>
+
+        <div class="gfx-row">
+          <div class="gfx-row-head">
+            <label class="gfx-label" for="gfx-far">Draw distance</label>
+            <span class="gfx-value" id="gfx-far-value">300 units</span>
+          </div>
+          <input id="gfx-far" class="gfx-slider" type="range" min="50" max="500" step="10" value="300" aria-label="Draw distance in units">
+          <div class="gfx-hint">How far the camera sees before the world fades out. Shorter is faster.</div>
+          <label class="gfx-check"><input id="gfx-fog-tie" type="checkbox" checked> Thicken the fog to match, so nothing pops into view at the edge</label>
+        </div>
+
+        <div class="gfx-row gfx-row-line">
+          <div class="gfx-row-text">
+            <span class="gfx-label">Shadows</span>
+            <div class="gfx-hint">Shadow maps cast by the world's suns. Turning them off is the biggest frame-rate win on this screen.</div>
+          </div>
+          <button id="gfx-shadows" class="gfx-btn gfx-toggle" type="button" role="switch" aria-checked="true" title="Toggle shadow maps"><span class="gfx-state">On</span></button>
+        </div>
+
+        <div class="gfx-row gfx-row-line">
+          <div class="gfx-row-text">
+            <span class="gfx-label">Anti-aliasing</span>
+            <div class="gfx-hint">Smooths jagged edges at a fill-rate cost. It is baked into the canvas, so switching it rebuilds the renderer — expect a one-frame hitch.</div>
+          </div>
+          <button id="gfx-aa" class="gfx-btn gfx-toggle" type="button" role="switch" aria-checked="true" title="Toggle canvas anti-aliasing"><span class="gfx-state">On</span></button>
+        </div>
+
+        <div class="gfx-row gfx-row-line">
+          <div class="gfx-row-text">
+            <span class="gfx-label">Frame rate</span>
+            <div class="gfx-hint">Frames per second right now, averaged over the last half second. Drive somewhere busy and watch it dip.</div>
+            <label class="gfx-check"><input id="gfx-show-fps" type="checkbox"> Always show it next to the gear icon</label>
+          </div>
+          <div class="gfx-fps"><span id="gfx-fps-value" class="gfx-fps-num">&mdash;</span><span class="gfx-fps-unit">fps</span></div>
+        </div>
+
+        <div class="gfx-row">
+          <div class="gfx-row-head">
+            <span class="gfx-label">Automatic quality</span>
+            <span id="gfx-auto-note" class="gfx-note">On</span>
+          </div>
+          <div class="gfx-hint">If the frame rate stays under 25fps, the settings step themselves down until it recovers, saving as it goes. Choosing <b>Max</b> above turns this off and keeps the picture you asked for.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- About: the logo, the game's name and the tools it was built with. -->
+    <div id="about-panel" class="browser-panel">
+      <div class="about-wrap">
+        <img class="about-logo" src="rampy_logo.png" alt="Crankshaft and Rampy's Wreck-less Ramble">
+        <div class="about-title">Crankshaft and Rampy's Wreck-less Ramble</div>
+        <div class="about-sub">A 3D open-world driving toy.</div>
+        <div class="about-credits">
+          <div class="about-credit">
+            <span class="about-credit-label">Engine</span>
+            <span>three.js</span>
+          </div>
+          <div class="about-credit">
+            <span class="about-credit-label">Built with</span>
+            <span>opencode Zen &mdash; Big Pickle</span>
+          </div>
+          <div class="about-credit">
+            <span class="about-credit-label">Model</span>
+            <span>DeepSeek V4 Flash</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -918,6 +1435,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1791559690123"></script>
+    <script type="module" src="./src/main.js?v=1791700000000"></script>
   </body>
 </html>

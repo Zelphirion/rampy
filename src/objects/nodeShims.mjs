@@ -8,13 +8,20 @@
 // anything meaningful in a headless test; it only needs to not throw.
 //
 // So: a canvas whose 2d context is a chainable no-op, plus the handful of
-// globals modules touch at import time. Install with:
+// globals modules touch at import time. It also registers the https -> local
+// three redirect (threeLoader.mjs), because every module in the game imports
+// three by CDN URL and node cannot fetch those. One flag does both jobs:
 //
-//   node --import ./src/objects/nodeShims.mjs --test src/...
+//   node --import ./src/objects/nodeShims.mjs --test "src/**/*.test.mjs"
+//   node --import ./src/objects/nodeShims.mjs src/levels/beach/probe-beach.mjs
 //
 // The context is a Proxy over a function: any property reads back a callable
 // that returns the context itself, so `ctx.fillStyle = x`, `ctx.beginPath()`,
 // `grad.addColorStop(0, c)` and friends all work and chain.
+
+import { register } from 'node:module';
+
+register('./threeLoader.mjs', import.meta.url);
 
 function noopContext() {
   const ctx = new Proxy(function noop() {}, {

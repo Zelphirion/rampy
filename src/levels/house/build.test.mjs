@@ -60,11 +60,11 @@ test('the ceiling is a collider but never blocks driving', async () => {
   }
 });
 
-test('the arrival point is in the foyer, where the car is put down', async () => {
+test('the arrival point is in the dark garage, where the car is put down', async () => {
   const world = await addHouse(parent, {});
-  const f = ROOMS.foyer;
-  assert.ok(world.start.x > f.x0 && world.start.x < f.x1
-    && world.start.z > f.z0 && world.start.z < f.z1, 'the arrival point is not in the foyer');
+  const g = ROOMS.darkGarage;
+  assert.ok(world.start.x > g.x0 && world.start.x < g.x1
+    && world.start.z > g.z0 && world.start.z < g.z1, 'the arrival point is not in the dark garage');
 });
 
 test('every cat spot is inside the house and clear of the interior walls', async () => {

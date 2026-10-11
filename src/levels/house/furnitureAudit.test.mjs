@@ -99,6 +99,7 @@ async function furniture() {
       // quietly ignoring them, which is how a bookcase sitting across a doorway
       // went unnoticed. Structure is filtered out by height: a wall reaches the
       // ceiling, and nothing on the floor does.
+      if (child.userData?.structure) continue;   // window masonry, not furniture
       const geo = child.geometry;
       if (!geo || geo.kind !== 'box') continue;
       const [bw, bh, bd] = geo.params.map(Number);
@@ -382,6 +383,10 @@ test('wall furniture is oriented along the wall it is against', async () => {
     if (!MUST_BE_ON_A_WALL.has(p.kind)) continue;
     const room = roomOf(p);
     if (!room) continue;
+    // A toilet's long axis points OUT of the wall — cistern against it, bowl
+    // into the room — so "wide against the wall" is exactly right for a WC and
+    // this rule does not apply to it.
+    if (p.kind === 'toilet') continue;
     const [side] = wallGaps(p, room);
     if (side[1] >= NEAR_WALL) continue;
     // Against a north or south wall the long axis runs along X, so it must be

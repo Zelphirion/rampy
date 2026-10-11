@@ -29,13 +29,13 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildCityBuilding, frontYard, kerbMailbox, newspaperRack } from '../cityBuildings.js';
-import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js';
-import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js';
+import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1791570000000';
+import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js?v=1791481956200';
 import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';
-import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js';
+import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1791600000000';
 import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js';
-import { makeCrab, makeMermaid } from '../levels/beach/critters.js';
-import { buildCoralHead } from '../levels/beach/reefs.js';
+import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1791600000000';
+import { buildCoralHead } from '../levels/beach/reefs.js?v=1791600000000';
 import { createGulls } from '../levels/beach/seagulls.js';
 import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
 import {
@@ -334,6 +334,7 @@ function cityCategories() {
         obj('Hospital', 26, 95, 'hospital'),
         obj('Fire Station', 64, -39.5, 'fireStation'),
         obj('Gas Station', 44, -42, 'gasStation'),
+        obj('Power Substation', 48, -64, 'substation'),
       ],
     },
     {

@@ -82,10 +82,13 @@ export const ROOMS = {
   closetA:    { x0: 52,  x1: 90,  z0: -86, z1: -20 },   // the main closet
 };
 
-// Where the car is put when it arrives. It comes in through the (locked) front
-// door at the east end of the north band, so it is dropped in the FOYER facing
-// west, into the house.
-export const HOUSE_START = { x: 71, z: 70, yaw: 0 };
+// Where the car is put when it arrives. It comes in through the KITCHEN
+// doorway, so it is dropped in the DARK GARAGE, just inside that doorway,
+// facing east back into the house (yaw PI; yaw 0 faces west). The fog is at
+// its thickest here, so the first thing you see is the beckoning lamp at the
+// far end rather than the room — and the only way out, the roller door behind
+// you, stays hidden in the murk until you turn around.
+export const HOUSE_START = { x: -50, z: 72, yaw: Math.PI };
 
 // The FRONT DOOR: a real door in the east shell wall, at the foyer. It is SHUT
 // and LOCKED, and that is the whole point of it — you can see it, walk up to
@@ -177,7 +180,7 @@ export const HOUSE_WALLS = [
   // { axis: 'z', at: 52,  run0: 46,  run1: 94, gap: { a0: 60, a1: 80, top: 22 } },  // dining     | foyer (open)
   // ---- Middle band: the living room's east wall, and the rooms off the hall ----
   // { axis: 'z', at: 6,   run0: -20, run1: 46, gap: { a0: -6, a1: 18,  top: 22 } }, // living     | hall (open)
-  // { axis: 'z', at: 52,  run0: -20, run1: 46, gap: { a0: 0,  a1: 20,  top: 22 } }, // hall       | bathroom (open)
+  { axis: 'z', at: 52,  run0: -20, run1: 46, gap: { a0: 0,  a1: 20,  top: 22 } }, // hall       | bathroom
   // ---- South band: the two bedrooms and the walk-in between them ----
   { axis: 'z', at: -46, run0: -86, run1: -20, gap: { a0: -70, a1: -50, top: 22 } }, // bed1 | walkin
   { axis: 'z', at: 6,   run0: -86, run1: -20, gap: { a0: -70, a1: -50, top: 22 } }, // walkin | bed2
@@ -218,11 +221,10 @@ export const HOUSE_WALLS = [
 // furnitureAudit.test.mjs is what measures the real thing.
 export const MAP_ITEMS = [
   // ---- Living room: the big one, and the reason the house reads as huge ----
-  { kind: 'sofa',   label: 'sofa',   x: -72, z: 24,  w: 30, d: 13, ry: 0, built: true },
-  { kind: 'sofa',   label: 'sofa',   x: -72, z: 2,   w: 24, d: 12, ry: 0, built: true },
-  { kind: 'table',  label: 'table',  x: -50, z: 14,  w: 20, d: 15, ry: 0, built: true },
+  { kind: 'sofa',   label: 'sofa',   x: -46, z: -2,  w: 14, d: 6,  ry: 0, built: true },
+  { kind: 'sofa',   label: 'sofa',   x: -46, z: 30,  w: 14, d: 6,  ry: 0, built: true },
+  { kind: 'table',  label: 'table',  x: -46, z: 14,  w: 20, d: 15, ry: 0, built: true },
   { kind: 'tv',     label: 'TV',     x: 2.5, z: 32,  w: 2,  d: 20, ry: 0, built: true },
-  { kind: 'sofa',   label: 'sofa',   x: -30, z: 36,  w: 22, d: 12, ry: 0, built: true },
   { kind: 'plant',  x: -80, z: 38,  w: 7,  d: 7,  ry: 0, built: true },
   { kind: 'plant',  x: -8,  z: 0,   w: 7,  d: 7,  ry: 0, built: true },
   // ---- Kitchen ----
@@ -244,10 +246,12 @@ export const MAP_ITEMS = [
   { kind: 'table',  label: 'table',  x: 22, z: 6,   w: 20, d: 16, ry: 0, built: true },
   { kind: 'plant',  x: 14, z: 38,  w: 8,  d: 8,  ry: 0, built: true },
   // ---- Bathroom ----
-  // Tub moved against the east wall, rim facing west to allow approach from inside room
-  { kind: 'tub',    label: 'bath',  x: 74.5, z: 30,  w: 11, d: 26, ry: Math.PI / 2, built: true },
+  // Tub hard against the east wall, its long axis running north-south, with the
+  // surfboard ramp arriving on the west face. Thinner than the real 16-long tub
+  // so the marker stays clear of the wall on the plan.
+  { kind: 'tub',    label: 'bath',  x: 83, z: 28,  w: 8,  d: 24, ry: Math.PI / 2, built: true },
   { kind: 'counter', label: 'sink', x: 86, z: 4,   w: 3,  d: 7,  ry: 0, built: true },
-  { kind: 'counter', label: 'WC',    x: 85, z: -13, w: 5,  d: 7.5, ry: 0, built: true },
+  { kind: 'counter', label: 'WC',    x: 84, z: -13, w: 7,  d: 5, ry: 0, built: true },
   // ---- Bedrooms ----
   { kind: 'bed',    label: 'bed',   x: -68, z: -58, w: 26, d: 32, ry: 0, built: true },
   { kind: 'bed',    label: 'bed',   x: 28,  z: -58, w: 26, d: 32, ry: 0, built: true },

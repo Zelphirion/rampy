@@ -237,7 +237,6 @@ export function buildRobotModel() {
 export function addRobot(scene) {
   // The AI patroller uses the same model as the drivable player robot.
   const robot = buildRobotModel();
-  robot.position.set(0, 0, -PATROL_R);
   scene.add(robot);
   robot.userData.player = false;
 
@@ -248,15 +247,18 @@ export function addRobot(scene) {
     playerCaptured: false,
     bumperCaptured: false,
     update,
+    // True only while THIS robot is coming for the PLAYER specifically — homing
+    // in, or already lifting the player's car toward its mouth. The chase camera
+    // uses this to decide when to pull way out and frame the meal, so a robot
+    // that merely happens to be patrolling nearby (or is busy eating traffic or
+    // the bumper car) leaves the camera on the car you're actually driving.
     isAboutToEat: () => {
-      // About to eat within ~3 seconds before actually eating
       if (st.mode === 'pickup') {
-        const timeRemaining = (REACH_T + LIFT_T) - st.timer;
-        if (timeRemaining > 0 && timeRemaining < 3) return true;
+        return !!st.captured && st.captured.kind === 'player';
       }
-      if (st.mode === 'seek' && st.target) {
-        const timeToReach = st.target.d / SEEK_SPEED;
-        if (timeToReach < 3 && st.target.d > PICKUP_RANGE * 0.5) return true;
+      if (st.mode === 'seek' && st.target && st.target.kind === 'player') {
+        // Within ~3 seconds of reach at the chase speed.
+        return st.target.d / SEEK_SPEED < 3;
       }
       return false;
     },
@@ -282,6 +284,17 @@ export function addRobot(scene) {
     captured: null,   // { kind, mesh, t, off, snapped }
     respawn: null,    // eaten traffic info awaiting respawn
   };
+
+  // Spawn the giant robot at a RANDOM corner of its patrol loop and set it off
+  // toward the next one, so it does not always lurch in from the same side of
+  // town. The diamond corners sit on the arterials (x = 0 or z = 0), so the
+  // spawn is always on clear tarmac — no building ever sits on it.
+  const startCorner = Math.floor(Math.random() * waypoints.length);
+  const startAt = waypoints[startCorner];
+  robot.position.set(startAt.x, 0, startAt.z);
+  st.wp = (startCorner + 1) % waypoints.length;
+  const firstLeg = waypoints[st.wp];
+  robot.rotation.y = Math.atan2(firstLeg.x - robot.position.x, firstLeg.z - robot.position.z);
 
   const tmpV = new THREE.Vector3();
   const tmpV2 = new THREE.Vector3();

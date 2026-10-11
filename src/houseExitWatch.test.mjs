@@ -93,6 +93,7 @@ function harness() {
     position: new THREE.Vector3(71, 0, 70),
     rotation: new THREE.Euler(),
     visible: true,
+    userData: { wheels: [] },
   };
   const housePortal = {
     trigger: CITY_TRIGGER,
@@ -103,6 +104,10 @@ function harness() {
       cam: new THREE.Vector3(),
       hasCam: false,
       toHouse: true,
+      // The roll axis + heading the shot drives the car along (see main.js
+      // houseFadeSwap); the watch itself advances the car now.
+      dir: new THREE.Vector3(0, 0, -1),
+      heading: 0,
     },
   };
   const calls = { resetKnockables: 0, resetHydrantSprays: 0, ashReset: 0, catReset: 0, raf: 0 };
@@ -121,6 +126,9 @@ function harness() {
     jumpState: { inAir: false, yVelocity: 0 },
     groundHeight: 0,
     portalGrace: 0,
+    // Cinematic shrink state read/written by updateHousePortal (see main.js).
+    portalCarScale: 1,
+    PORTAL_CAR_SHRINK: 0.42,
     wasOnRamp: null,
     currentRamp: null,
     playerKnock: null,
@@ -141,6 +149,10 @@ function harness() {
     // both the flag and the applier or the swap throws before the shot starts.
     globalDarkness: false,
     applyGlobalDarkness() { state.globalDarkness = false; },
+    // Called at the end of the house branch of updateHousePortal. The fog itself
+    // is not what this test is about, so it is a no-op here rather than dragging
+    // the whole house scene, ROOMS and the fog table into the sandbox.
+    updateHouseGarageFog() {},
   };
 
   // `worldState` is a module-scope `let` in main.js, so it has to be a `let` in
@@ -227,7 +239,7 @@ test('the exit shot ends in the city, out on the brown bay apron', () => {
   assert.equal(h.calls.ashReset, 1, 'leaving the house did not drop the fire soot');
 });
 
-test('entering the house still plays its shot, and lands in the foyer', () => {
+test('entering the house still plays its shot, and lands in the dark garage', () => {
   const h = harness();
   h.setWorldState('city');
   h.car.position.set(CITY_TRIGGER.x0 + 2, 0, CITY_TRIGGER.cz);
@@ -255,10 +267,15 @@ test('the shot keeps the car rolling rather than stopping it dead', () => {
   // The shot pins the speed rather than merely raising it, so a cat swat cannot
   // lift the car out of the take, and momentum carried in from the approach
   // cannot make it overshoot the doorway.
+  const startX = h.car.position.x;
   h.updateHousePortal(1 / 60);
   assert.equal(h.velocity.value, h.housePortal.watch.speed);
   assert.equal(h.housePortal.watch.t > 0, true, 'the shot clock is not running');
   assert.equal(h.housePortal.watch.active, true, 'one frame ended the shot');
+  // The driving block is gated OFF during the shot, so the watch has to move the
+  // car itself - otherwise it just sits on the spot and shrinks.
+  assert.notEqual(h.car.position.x, startX,
+    'the shot left the car standing still instead of rolling it out');
 });
 
 test('a round trip returns the car where it started', () => {

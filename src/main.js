@@ -1,19 +1,20 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1791039533538';
+import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1791570100000';
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
-import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, POTHOLE, LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1790978292693';
-import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createCrab, createFiretruck, addTrafficCars } from './cars.js?v=1791123166969';
-import { addFiretruck } from './firetruck.js?v=1791123166969';
-import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger } from './cityBuildings.js?v=1790915140701';
-import { addPeople } from './people.js?v=1790712527620';
-import { addRobot, buildRobotModel } from './robot.js?v=1790913447539';
-import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1790712412969';
+import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, POTHOLE,
+LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1791570000000';
+import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, addTrafficCars } from './cars.js?v=1791481956200';
+import { addFiretruck } from './firetruck.js?v=1791430389189';
+import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger, cityPowerOut } from './cityBuildings.js?v=1791700000000';
+import { addPeople } from './people.js?v=1791479956919';
+import { addRobot, buildRobotModel } from './robot.js?v=1791700000000';
+import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1791479956919';
 import { addLizard } from './lizard.js';
-import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1790720563730';
+import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1791479956919';
 import { updateKnockables, knockAt, resetKnockables, snapKnockables } from './physics.js';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import { createTaffyState, getTaffyScale, stepTaffyState } from './carTaffyMode.mjs';
-import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent } from './modules/expressTube.js?v=1790708040365';
+import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent } from './modules/expressTube.js?v=1791479956919';
 import {
   worldXLo,
   worldXHi,
@@ -40,21 +41,22 @@ import {
   isStillWithinLevitationHall,
   isInMineDiveTrigger,
   isInUndergroundReturnZone,
-} from './modules/portalRules.js?v=1790707232983';
-import { resolveStuck, wallNormal } from './modules/unstick.js';
+} from './modules/portalRules.js?v=1791479956919';
+import { resolveStuck, wallNormal, collidersToSolids } from './modules/unstick.js?v=1791700000000';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE } from './levels/house/index.js?v=1791123166969';
-import { addCat } from './cat.js?v=1790881800021';
+import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1791506000000';
+import { houseSurfaceY, houseLandingY } from './levels/house/surfaces.js';
+import { addCat } from './cat.js?v=1791479956919';
 import { makeAsh, inHearth, stepAsh, ashBlack, ashFlakeRate } from './ash.js';
 import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1791559660313';
 import {
   createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
-  BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1,
-  BEACH_CAMPFIRE,
-} from './levels/beach/index.js?v=1791042091764';
+  BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_TRENCH_Z,
+  BEACH_SEA_Y, BEACH_CAMPFIRE, makeCrab,
+} from './levels/beach/index.js?v=1791600000000';
 // The object catalogue: every level's categories and the small standalone
 // models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791396329761';
+import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1791570000000';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -77,12 +79,438 @@ const __loaderYield = (frac, label) =>
 // Shared torus-map math lives in modules/world.js so main.js stays focused on
 // gameplay and scene wiring.
 
+// ===== Graphics & Performance =====
+// One settings object drives the renderer, the camera's far plane and every
+// scene's fog. The Graphics tab of the gear modal edits it live, and it is
+// remembered per device in localStorage, so a slow machine sets it once and
+// never sees the defaults again. Read (and clamped) before anything is built,
+// because the renderer and the camera are constructed from it below.
+const GFX_KEY = 'rampy.graphics.v1';
+// The fog densities in this file are authored for a 300-unit far plane. With
+// "tie the fog to the draw distance" on, a shorter draw distance thickens the
+// haze by exactly this ratio so the world still fades out at the far plane
+// rather than showing a hard clip edge.
+const GFX_FAR_REF = 300;
+// The resolution slider reaches down into genuinely chunky territory on purpose:
+// a low-end device can trade a blocky picture for a frame rate. At 0.1x a 1080p
+// window renders into a buffer around 192x108 — 1980s-blocky, and that is the
+// point. The old floor of 0.5 was "half resolution", which is nowhere near
+// enough headroom for an old phone or a netbook.
+const GFX_SCALE_MIN = 0.1;
+const GFX_SCALE_MAX = 1.5;
+const GFX_DEFAULTS = { scale: 1, far: GFX_FAR_REF, fogTie: true, shadows: true, aa: true, max: false };
+const GFX_PRESETS = {
+  // Low is the "make it playable" button: resolution is worth more than
+  // anything else on this screen, and the two switches cost nothing to drop.
+  low: { scale: 0.5, far: 80, fogTie: true, shadows: false, aa: false, max: false },
+  medium: { scale: 0.75, far: 250, fogTie: true, shadows: true, aa: false, max: false },
+  high: { scale: 1, far: 500, fogTie: false, shadows: true, aa: true, max: false },
+  // Max is a promise: everything on at the highest resolution, and the automatic
+  // quality walk is switched OFF (see gfxAutoTick) so it never gets "helped"
+  // down from the picture the user explicitly asked for.
+  max: { scale: GFX_SCALE_MAX, far: 500, fogTie: false, shadows: true, aa: true, max: true },
+};
+const GFX_KEYS = ['scale', 'far', 'fogTie', 'shadows', 'aa', 'max'];
+
+const gfxNum = (v, lo, hi, dflt) =>
+  (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : dflt);
+
+function gfxLoad() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(GFX_KEY) || 'null'); } catch (e) { saved = null; }
+  const s = (saved && typeof saved === 'object') ? saved : {};
+  return {
+    scale: gfxNum(s.scale, GFX_SCALE_MIN, GFX_SCALE_MAX, GFX_DEFAULTS.scale),
+    far: gfxNum(s.far, 50, 500, GFX_DEFAULTS.far),
+    fogTie: typeof s.fogTie === 'boolean' ? s.fogTie : GFX_DEFAULTS.fogTie,
+    shadows: typeof s.shadows === 'boolean' ? s.shadows : GFX_DEFAULTS.shadows,
+    aa: typeof s.aa === 'boolean' ? s.aa : GFX_DEFAULTS.aa,
+    max: typeof s.max === 'boolean' ? s.max : GFX_DEFAULTS.max,
+    // Not a quality key: a display preference, so it is kept out of GFX_KEYS and
+    // never consulted when matching a preset.
+    showFps: typeof s.showFps === 'boolean' ? s.showFps : false,
+  };
+}
+const gfx = gfxLoad();
+
+function gfxSave() {
+  // Private browsing can make localStorage throw — losing the setting is
+  // better than losing the game.
+  try { localStorage.setItem(GFX_KEY, JSON.stringify(gfx)); } catch (e) {}
+}
+
+// The ratio the renderer should draw at: the slider multiplies whatever the
+// display reports (1 = exactly the screen's own pixels), clamped so a 3× phone
+// never renders at more than 2× and a slider dragged to 1.5 on a 1× screen
+// still means something.
+function gfxPixelRatio() {
+  const dpr = window.devicePixelRatio || 1;
+  return Math.min(2, Math.max(GFX_SCALE_MIN, gfx.scale * dpr));
+}
+
+// Every scene registers the fog it was designed with, so the draw-distance
+// slider can re-tie it. Keyed by scene, value = the authored density.
+const gfxFogBase = new Map();
+function gfxAddFog(s, color, density) {
+  s.fog = new THREE.FogExp2(color, density);
+  gfxFogBase.set(s, density);
+  gfxApplyFog();
+}
+function gfxApplyFog() {
+  for (const entry of gfxFogBase) {
+    const fog = entry[0].fog;
+    if (!fog) continue;
+    fog.density = gfx.fogTie ? entry[1] * (GFX_FAR_REF / gfx.far) : entry[1];
+  }
+}
+
+// The scenes the shadow toggle has to walk. `selectScene` is built later and
+// may still be null while the world is coming up.
+function gfxScenes() {
+  return [scene, rampScene, beachScene, undergroundScene, houseScene, selectScene];
+}
+
+// The lights that were AUTHORED as shadow casters, captured on the first
+// apply — the toggle switches those and only those, so a point light that never
+// cast a shadow (they are ruinously expensive) cannot be switched on by it.
+let gfxCasters = null;
+let gfxShadowsOn = null;   // the state the materials were last compiled for
+
+function gfxApplyShadows() {
+  const changed = gfxShadowsOn !== gfx.shadows;
+  gfxShadowsOn = gfx.shadows;
+  renderer.shadowMap.enabled = gfx.shadows;
+  if (!gfxCasters) {
+    gfxCasters = [];
+    for (const s of gfxScenes()) {
+      if (!s) continue;
+      s.traverse((o) => { if (o.isLight && o.castShadow) gfxCasters.push(o); });
+    }
+  }
+  for (const l of gfxCasters) l.castShadow = gfx.shadows;
+  if (!changed) return;
+  // three.js bakes the shadow state into each material's shader program, so
+  // bump every material to force a recompile against the new setting — without
+  // this the old program keeps running and the toggle appears to do nothing.
+  const seen = new Set();
+  for (const s of gfxScenes()) {
+    if (!s) continue;
+    s.traverse((o) => {
+      const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+      for (const m of mats) {
+        if (m && !seen.has(m)) { seen.add(m); m.needsUpdate = true; }
+      }
+    });
+  }
+}
+
+function gfxApplyFar() {
+  // The plan view owns the far plane while it is up and restores it on the way
+  // out (see the top-down branch in updateCamera) — racing it here would snap
+  // the depth range mid-view.
+  if (topDown.active) return;
+  if (camera.far !== gfx.far) {
+    camera.far = gfx.far;
+    camera.updateProjectionMatrix();
+  }
+}
+
+// Anti-alias is a context attribute: it cannot be changed on a live WebGL
+// context, so the renderer is rebuilt and its canvas swapped in place. The new
+// context is created BEFORE the old one is disposed, and a failure leaves the
+// game on the renderer it already has.
+let gfxRendererAA = null;   // the antialias value the live renderer was built with
+
+function gfxApplyAA() {
+  if (gfxRendererAA === gfx.aa) return false;
+  const old = renderer;
+  let next;
+  try {
+    next = new THREE.WebGLRenderer({ antialias: gfx.aa });
+  } catch (e) {
+    gfx.aa = gfxRendererAA;
+    return false;
+  }
+  next.setPixelRatio(gfxPixelRatio());
+  next.setSize(window.innerWidth, window.innerHeight);
+  next.shadowMap.enabled = gfx.shadows;
+  next.shadowMap.type = THREE.PCFSoftShadowMap;
+  old.domElement.parentNode.replaceChild(next.domElement, old.domElement);
+  next.domElement.addEventListener('pointerdown', onCanvasPointerDown);
+  renderer = next;
+  gfxRendererAA = gfx.aa;
+  gfxShadowsOn = gfx.shadows;   // fresh context: nothing to recompile for it
+  try { old.dispose(); } catch (e) {}
+  return true;
+}
+
+// ===== Frame-rate readout =====
+// Counted from the frame loop itself, paused frames included — while the
+// Graphics tab is up the game is paused, and that is exactly the moment the
+// number is being read.
+let gfxFpsFrames = 0;
+let gfxFpsAt = performance.now();
+let gfxFps = 0;
+function gfxFpsTick() {
+  gfxFpsFrames++;
+  const now = performance.now();
+  const span = now - gfxFpsAt;
+  if (span < 500) return;
+  gfxFps = Math.round(gfxFpsFrames * 1000 / span);
+  gfxFpsFrames = 0;
+  gfxFpsAt = now;
+  const el = document.getElementById('gfx-fps-value');
+  if (el) {
+    el.textContent = String(gfxFps);
+    el.className = 'gfx-fps-num ' + (gfxFps >= 50 ? 'good' : gfxFps >= 30 ? 'ok' : 'bad');
+  }
+  gfxUpdateGearFps();
+  gfxAutoTick();
+  if (window.__debug && window.__debug.perf) window.__debug.perfFps = gfxFps;
+}
+
+// The optional little frame-rate badge that lives beside the gear icon, so the
+// number is visible during play and not only while the Graphics tab is open.
+// Toggled by the "show it next to the gear" checkbox on that tab.
+function gfxUpdateGearFps() {
+  const el = document.getElementById('gear-fps');
+  if (!el) return;
+  const show = !!gfx.showFps;
+  el.classList.toggle('show', show);
+  if (!show) return;
+  el.textContent = gfxFps > 0 ? gfxFps + ' fps' : '-- fps';
+  el.className = 'gfx-gear-fps show ' + (gfxFps >= 50 ? 'good' : gfxFps >= 30 ? 'ok' : 'bad');
+}
+
+// ===== Automatic quality =====
+// The safety net for a machine that cannot hold the frame rate: the settings
+// walk themselves DOWN one rung at a time until the frame rate recovers, and
+// then walk back UP again once there is headroom to spare.
+//
+// The walk is armed by a sustained dip below GFX_AUTO_FLOOR (25fps). Once it is
+// moving it keeps cutting until the frame rate is back at GFX_AUTO_TARGET (30),
+// or until the ladder runs out. When the frame rate has instead been comfortably
+// above GFX_AUTO_RISE (40fps) for a while, it hands one rung back at a time —
+// all the way to the user's original settings. The gap between the cut line (30)
+// and the rise line (40) is deliberate hysteresis: it stops the two directions
+// from fighting over a machine that sits right on the boundary.
+//
+// Draw distance is NOT part of this walk. The camera far plane is the one
+// setting a player is expected to tune by hand, so the automatic system never
+// touches it — `gfx.far` is only ever changed by the slider. "Max" (gfx.max) is
+// the user saying "I want this picture whatever the frame rate" and switches the
+// whole walk off.
+const GFX_AUTO_FLOOR = 25;       // the dip that arms the walk
+const GFX_AUTO_TARGET = 30;      // what it cuts to reach
+const GFX_AUTO_SUSTAIN = 1000;   // ms under the floor before the first cut
+const GFX_AUTO_RISE = 40;        // fps above which the walk starts climbing back
+const GFX_AUTO_RISE_SUSTAIN = 1500;   // ms above the rise line before handing one back
+const GFX_AUTO_COOLDOWN = 1500;  // ms between steps (either direction), so a change can settle
+// Most aggressive-of-each-key is applied cumulatively, so the rungs only ever
+// reduce. The bottom rung is the blocky end: a tenth-resolution buffer. The
+// draw distance is left out on purpose — see the note above.
+const GFX_AUTO_LADDER = [
+  { scale: 1.0, shadows: true, aa: false },
+  { scale: 1.0, shadows: false, aa: false },
+  { scale: 0.8, shadows: false, aa: false },
+  { scale: 0.65, shadows: false, aa: false },
+  { scale: 0.5, shadows: false, aa: false },
+  { scale: 0.4, shadows: false, aa: false },
+  { scale: 0.32, shadows: false, aa: false },
+  { scale: 0.25, shadows: false, aa: false },
+  { scale: 0.2, shadows: false, aa: false },
+  { scale: 0.16, shadows: false, aa: false },
+  { scale: 0.13, shadows: false, aa: false },
+  { scale: GFX_SCALE_MIN, shadows: false, aa: false },
+];
+let gfxAutoStep = -1;       // last rung applied (-1 = the walk has not started)
+let gfxAutoBase = null;     // the settings the walk reduces FROM
+let gfxAutoLowSince = 0;    // when the current sub-floor dip began
+let gfxAutoHighSince = 0;   // when the current above-the-rise-line spell began
+let gfxAutoLastStep = 0;    // when the last step (either direction) was made
+
+// Any manual change re-arms the walk: the user's new settings become the base it
+// reduces from, and a walk that was in progress is abandoned.
+function gfxAutoReset() {
+  gfxAutoStep = -1;
+  gfxAutoBase = null;
+  gfxAutoLowSince = 0;
+  gfxAutoHighSince = 0;
+}
+
+function gfxAutoApply(step) {
+  const base = gfxAutoBase || gfx;
+  // `far` and `max` are deliberately absent: the walk never changes the draw
+  // distance, and it always leaves itself armed (max stays false).
+  const next = { scale: base.scale, fogTie: base.fogTie, shadows: base.shadows, aa: base.aa };
+  for (let i = 0; i <= step; i++) {
+    const s = GFX_AUTO_LADDER[i];
+    if (s.scale !== undefined) next.scale = Math.min(next.scale, s.scale);
+    if (s.shadows !== undefined) next.shadows = next.shadows && s.shadows;
+    if (s.aa !== undefined) next.aa = next.aa && s.aa;
+  }
+  next.max = false;
+  Object.assign(gfx, next);
+  gfxApply();
+}
+
+function gfxAutoTick() {
+  // Never touch the picture while paused (the Graphics tab is open), and never
+  // at all under Max.
+  if (gfx.max || isPaused || !gfxFps) return;
+  const now = performance.now();
+  const active = gfxAutoStep >= 0;
+  const cooled = now - gfxAutoLastStep >= GFX_AUTO_COOLDOWN;
+
+  // --- Hand quality back ---
+  // Only once the walk has actually lowered something. The rise line sits well
+  // above the target so a machine hovering at 30-40fps keeps the settings it
+  // has instead of flapping between two rungs.
+  if (active && gfxFps >= GFX_AUTO_RISE) {
+    if (!gfxAutoHighSince) { gfxAutoHighSince = now; }
+    if (cooled && now - gfxAutoHighSince >= GFX_AUTO_RISE_SUSTAIN) {
+      gfxAutoStep--;
+      if (gfxAutoStep < 0) {
+        // Fully recovered: restore the user's own settings wholesale and retire
+        // the walk until the next dip re-arms it.
+        Object.assign(gfx, gfxAutoBase);
+        gfxAutoBase = null;
+        gfxApply();
+      } else {
+        gfxAutoApply(gfxAutoStep);
+      }
+      gfxAutoLastStep = now;
+      gfxAutoHighSince = 0;
+      gfxAutoLowSince = 0;
+      return;
+    }
+  } else {
+    gfxAutoHighSince = 0;
+  }
+
+  // --- Take quality away ---
+  if (gfxFps >= (active ? GFX_AUTO_TARGET : GFX_AUTO_FLOOR)) { gfxAutoLowSince = 0; return; }
+  if (!cooled) return;
+  // Arming the walk takes a sustained dip; once it is moving, the cooldown is
+  // the only brake, so it can keep stepping down promptly.
+  if (!active) {
+    if (!gfxAutoLowSince) { gfxAutoLowSince = now; return; }
+    if (now - gfxAutoLowSince < GFX_AUTO_SUSTAIN) return;
+  }
+  if (gfxAutoStep >= GFX_AUTO_LADDER.length - 1) return;   // already at the floor
+  if (!gfxAutoBase) {
+    gfxAutoBase = { scale: gfx.scale, far: gfx.far, fogTie: gfx.fogTie, shadows: gfx.shadows, aa: gfx.aa };
+  }
+  gfxAutoStep++;
+  gfxAutoApply(gfxAutoStep);
+  gfxAutoLastStep = now;
+  gfxAutoLowSince = 0;
+}
+
+// ===== The Graphics tab's own controls =====
+function gfxEl(id) { return document.getElementById(id); }
+
+function gfxUpdateUI() {
+  const scale = gfxEl('gfx-scale');
+  if (scale) scale.value = String(gfx.scale);
+  const far = gfxEl('gfx-far');
+  if (far) far.value = String(gfx.far);
+  const tie = gfxEl('gfx-fog-tie');
+  if (tie) tie.checked = gfx.fogTie;
+  const set = (id, text) => { const el = gfxEl(id); if (el) el.textContent = text; };
+  set('gfx-scale-value', gfx.scale.toFixed(2) + '\u00d7');
+  const eff = gfxPixelRatio();
+  set('gfx-scale-hint',
+    `${eff.toFixed(2)}\u00d7 the display's pixel ratio — a ` +
+    `${Math.round(window.innerWidth * eff)}\u00d7${Math.round(window.innerHeight * eff)} render buffer.`);
+  set('gfx-far-value', gfx.far + ' units');
+  const toggle = (id, on) => {
+    const el = gfxEl(id);
+    if (!el) return;
+    el.setAttribute('aria-checked', String(on));
+    const state = el.querySelector('.gfx-state');
+    if (state) state.textContent = on ? 'On' : 'Off';
+  };
+  toggle('gfx-shadows', gfx.shadows);
+  toggle('gfx-aa', gfx.aa);
+  const preset = Object.keys(GFX_PRESETS).find((name) =>
+    GFX_KEYS.every((k) => GFX_PRESETS[name][k] === gfx[k]));
+  const isDefault = GFX_KEYS.every((k) => gfx[k] === GFX_DEFAULTS[k]);
+  for (const name of ['low', 'medium', 'high', 'max']) {
+    const el = gfxEl('gfx-preset-' + name);
+    // Max is a mode, not just a matching set of values: light it from the flag
+    // so it stays lit for as long as the walk is switched off.
+    if (el) el.classList.toggle('active', name === 'max' ? !!gfx.max : preset === name);
+  }
+  set('gfx-preset-note', preset ? preset + ' preset' : (isDefault ? 'Default' : 'Custom'));
+  set('gfx-auto-note', gfx.max ? 'Off (Max)' : 'On');
+  const showFps = gfxEl('gfx-show-fps');
+  if (showFps) showFps.checked = !!gfx.showFps;
+  gfxUpdateGearFps();
+}
+
+function gfxApply() {
+  gfxApplyAA();                     // first: it may swap the renderer out
+  renderer.setPixelRatio(gfxPixelRatio());
+  gfxApplyShadows();
+  gfxApplyFar();
+  gfxApplyFog();
+  gfxSave();
+  gfxUpdateUI();
+}
+
+// A step of a focused slider, for the pad's left / right (and A). The value is
+// moved by the input's own step and re-dispatched as an 'input' event, so the
+// readouts and the live settings update through exactly the path a mouse drag
+// takes.
+function gfxNudgeRange(el, dir) {
+  const step = Number(el.step) || 1;
+  const now = Number(el.value);
+  const next = Math.min(Number(el.max), Math.max(Number(el.min), now + dir * step));
+  if (next === now) return;
+  el.value = String(next);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// Wired once, here, because the panel is in the page before this module runs
+// (module scripts are deferred) and there is no Apply button: every listener
+// writes its arm of `gfx` and applies the whole object, so no control can
+// leave the renderer and the UI disagreeing.
+function gfxBind() {
+  const on = (id, ev, fn) => { const el = gfxEl(id); if (el) el.addEventListener(ev, fn); };
+  on('gfx-scale', 'input', (e) => {
+    gfx.scale = gfxNum(e.target.value, GFX_SCALE_MIN, GFX_SCALE_MAX, GFX_DEFAULTS.scale);
+    gfx.max = false;      // a hand on a slider is not "Max" any more
+    gfxAutoReset();
+    gfxApply();
+  });
+  on('gfx-far', 'input', (e) => {
+    gfx.far = gfxNum(e.target.value, 50, 500, GFX_DEFAULTS.far);
+    gfx.max = false;
+    gfxAutoReset();
+    gfxApply();
+  });
+  on('gfx-fog-tie', 'change', (e) => { gfx.fogTie = !!e.target.checked; gfx.max = false; gfxAutoReset(); gfxApply(); });
+  on('gfx-shadows', 'click', () => { gfx.shadows = !gfx.shadows; gfx.max = false; gfxAutoReset(); gfxApply(); });
+  on('gfx-aa', 'click', () => { gfx.aa = !gfx.aa; gfx.max = false; gfxAutoReset(); gfxApply(); });
+  for (const name of ['low', 'medium', 'high', 'max']) {
+    on('gfx-preset-' + name, 'click', () => { Object.assign(gfx, GFX_PRESETS[name]); gfxAutoReset(); gfxApply(); });
+  }
+  on('gfx-show-fps', 'change', (e) => {
+    gfx.showFps = !!e.target.checked;
+    gfxSave();            // a display preference: persists with the rest of `gfx`
+    gfxUpdateGearFps();
+  });
+}
+gfxBind();
+gfxUpdateUI();   // the saved settings are already in `gfx` — paint the controls to match
+
 // ===== Scene, camera, renderer =====
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x07101c);
-scene.fog = new THREE.FogExp2(0x07101c, 0.01);   // light haze so the ramp flight stays visible when the camera zooms out
+gfxAddFog(scene, 0x07101c, 0.01);   // light haze so the ramp flight stays visible when the camera zooms out
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 300);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, gfx.far);
 
 const cameraOrbit = {
   radius: 8,
@@ -90,13 +518,16 @@ const cameraOrbit = {
   minPhi: 0.6,
   maxPhi: 1.45,
 };
-// Eased camera distance from the car. It pulls way out when the giant robot is
-// close so its whole body — and face — stays in view the whole time.
+// Eased camera distance from the car. It pulls way out to frame the giant
+// robot's whole body — but only while that robot is actually coming for the
+// PLAYER (see robot.isAboutToEat). A robot merely patrolling the neighbourhood,
+// or busy eating traffic, leaves the chase camera on your own car.
 let camRadius = cameraOrbit.radius;
-const ROBOT_CAM_DIST = 55;        // robot within this many units starts zooming out
-const ROBOT_CAM_MAX_RADIUS = 42;  // fully zoomed distance when the robot is right on you
+let robotCamBlend = 0;            // eased 0..1 wash of the robot-cam framing
+const ROBOT_CAM_MAX_RADIUS = 42;  // fully zoomed distance when the robot is about to eat you
 const SPIDER_CAM_DIST = 55;       // giant tarantula within this many units starts zooming out
 const TARANTULA_CAM_MAX_RADIUS = 34;  // fully zoomed distance so the whole spider fits the frame
+const MONSTER_CAM_MAX_RADIUS = 48;  // monster truck is huge, so pull back a bit further
 // User yaw offset (radians) added to the car's heading for the chase cam
 let cameraYawOffset = 0;
 const cameraTarget = new THREE.Vector3(0, 0.6, 0);
@@ -366,6 +797,19 @@ const _camHouseAim = new THREE.Vector3();
 const _fadeOverlay = document.createElement('div');
 _fadeOverlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:#000;z-index:9999;opacity:0;pointer-events:none';
 document.body.appendChild(_fadeOverlay);
+// Cinematic-only uniform scale for the whole car, applied while it drives into
+// the giant scallop (or the suburban garage) so it visibly shrinks to fit
+// inside. Folded into updateFlatCarState's per-frame scale so it composes with
+// the flatten and taffy deformations instead of fighting them, and reset to 1
+// the instant a portal swap completes, so the car is full size everywhere it
+// actually drives.
+let portalCarScale = 1;
+const PORTAL_CAR_SHRINK = 0.15;   // how small the car gets at the bottom of a portal
+// Blue wash shown while the car is under the beach's sea surface, deepening with
+// depth so the basin reads as underwater rather than as dark sand. It is drawn
+// INSIDE the canvas (see the tint pass built after the renderer below) rather
+// than as a fixed full-screen div, so it tints the game view only and never
+// covers the minimap, controls, settings or any other HUD layer.
 // Initial camera sits behind the car (car faces -X at spawn)
 const startX = cameraOrbit.radius * Math.sin(cameraOrbit.phi);
 const startY = cameraOrbit.radius * Math.cos(cameraOrbit.phi) + 2.2;
@@ -386,12 +830,35 @@ let pinchActive = false;
 let pinchStartDist = 1;            // finger spacing when the pinch began
 let pinchStartRadius = cameraOrbit.radius;
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+let renderer = new THREE.WebGLRenderer({ antialias: gfx.aa });
+gfxRendererAA = gfx.aa;
+renderer.setPixelRatio(gfxPixelRatio());
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = gfx.shadows;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+
+// ===== Underwater tint (in-canvas overlay) =====
+// A full-screen quad drawn over the finished frame, in the canvas, so the beach's
+// underwater wash stays inside the game view. Living in the WebGL canvas means
+// every DOM HUD layer (minimap, joystick, gear button, picker panels) sits on
+// top of it and can never be dimmed by it. `opacity` is set each frame from the
+// car's depth below the sea surface.
+const _tintScene = new THREE.Scene();
+const _tintCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const _tintQuad = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.MeshBasicMaterial({
+    color: 0x0b4f76, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false,
+  }));
+_tintScene.add(_tintQuad);
+function renderUnderwaterTint() {
+  if (_tintQuad.material.opacity <= 0.001) return;
+  const prevAutoClear = renderer.autoClear;
+  renderer.autoClear = false;
+  renderer.render(_tintScene, _tintCamera);
+  renderer.autoClear = prevAutoClear;
+}
 
 // ===== Lights =====
 const hemiLight = new THREE.HemisphereLight(0xb9d7ff, 0x283322, 1.2);
@@ -527,6 +994,11 @@ function isPositionBlocked(x, z, radius, ignoreAIOnly = false) {
   // the wash's soap-glide owns their containment (smooth recentring to the
   // lane centre instead of a knock).
   return list.some((collider) =>
+    // A `gate` collider (the substation fence sections) only blocks while its
+    // knockable is standing: a heavy ride knocks each section over and frees
+    // it, but a light ride, which carries no `heavy` flag and so can never
+    // knock the section, is walled off by it.
+    !(collider.gate && collider.gate.state !== 'standing') &&
     !collider.soft &&
     !collider.soapy &&
     !(ignoreAIOnly && collider.aiOnly) &&
@@ -560,6 +1032,28 @@ function isPositionBlockedByFiretruck(x, z, radius) {
   return dx * dx + dz * dz <= (radius + firetruckColliderR) * (radius + firetruckColliderR);
 }
 
+// The house cat is a solid body to the car too: driving into her is a bump you
+// slide off, not a pass-through. Unlike the static colliders this is tested
+// against her live position every frame.
+const CAT_COLLIDER_R = 3.0;
+function isPositionBlockedByCat(x, z, radius) {
+  if (worldState !== 'house') return false;
+  const dx = x - houseCat.mesh.position.x;
+  const dz = z - houseCat.mesh.position.z;
+  return dx * dx + dz * dz <= (radius + CAT_COLLIDER_R) * (radius + CAT_COLLIDER_R);
+}
+
+// Furniture the cat has to walk around. houseWorld.furnitureColliders is the
+// real built footprints (house/index.js); the car rides over furniture via the
+// surface list, so this list is kept out of the car's colliders and used only to
+// steer the animal.
+function catBlockedByFurniture(x, z, radius) {
+  const list = houseWorld && houseWorld.furnitureColliders;
+  if (!list) return false;
+  for (const c of list) if (rectCircleIntersect(x, z, c, radius)) return true;
+  return false;
+}
+
 // And the giant robot is a colossal moving obstacle — you can't drive through
 // its legs (unless it's currently holding you in its claw).
 function isPositionBlockedByRobot(x, z, radius) {
@@ -577,13 +1071,11 @@ function isPositionBlockedByRobot(x, z, radius) {
 // pre-wrapped into the car's unwrapped space so the pure math sees them.
 function playerSolids() {
   const list = activeColliders();
-  const solids = [];
-  for (const c of list) {
-    // soapy (car wash lattice) colliders are excluded too — the wash's
-    // soap-glide clamps the car to the bay smoothly instead of the anti-stuck
-    // pass shoving it out along the shortest escape (a "jerk" inside the wash).
-    if (!c.soft && !c.soapy) solids.push({ kind: 'rect', x: c.x, z: c.z, hw: c.halfW, hd: c.halfD });
-  }
+  // soft/soapy colliders are dropped, and DISC colliders (beach coral, the
+  // underground platter) are handed over as circles rather than boxes — a disc
+  // mapped to a rect means undefined halfW/halfD and NaN penetration, which
+  // poisoned the car's position the moment the anti-stuck pass fired.
+  const solids = collidersToSolids(list, playerCarRadius);
   if (worldState === 'city') {
     solids.push({
       kind: 'circle',
@@ -598,6 +1090,14 @@ function playerSolids() {
       r: playerCarRadius + robot.radius,
     });
   }
+  if (worldState === 'house') {
+    solids.push({
+      kind: 'circle',
+      x: houseCat.mesh.position.x,
+      z: houseCat.mesh.position.z,
+      r: playerCarRadius + CAT_COLLIDER_R,
+    });
+  }
   return solids;
 }
 
@@ -607,7 +1107,8 @@ function playerSolids() {
 function carIsOverlappingSolid() {
   return isPositionBlocked(car.position.x, car.position.z, playerCarRadius, true) ||
     isPositionBlockedByFiretruck(car.position.x, car.position.z, playerCarRadius) ||
-    isPositionBlockedByRobot(car.position.x, car.position.z, playerCarRadius);
+    isPositionBlockedByRobot(car.position.x, car.position.z, playerCarRadius) ||
+    isPositionBlockedByCat(car.position.x, car.position.z, playerCarRadius);
 }
 
 // Car-following: target following gap and hard-stop gap behind the car ahead.
@@ -939,6 +1440,12 @@ let ugDbg = null;   // ?debug: which underground physics branch ran last frame
 // gate. Captured at the end of each underground physics pass so the gate can
 // tell rolling-in from genuinely driving up and out over a pipe lip.
 let playerPrevX = 0, playerPrevZ = 0;
+// The house heightfield (levels/house/surfaces.js) is sampled once per frame at
+// the car's centre, so a fast car on a low frame rate can skip clean over a ramp
+// or, worse, be below a surface it just crossed and snap down to the floor. These
+// remember where the car was last frame so the house branch can walk the segment
+// it actually travelled, sampling the heightfield in ~0.5-unit steps.
+let housePrevX = 0, housePrevZ = 0, houseWasGrounded = false;
 const gravity = 18;
 const groundHeight = 0.15;
 let flatCarState = createFlatCarState(false);
@@ -1323,9 +1830,9 @@ function updateFlatCarState(delta) {
   if (taffyState.active) {
     taffyState = stepTaffyState(taffyState, delta);
     const s = getTaffyScale(taffyState);
-    car.scale.set(s.sx, scaleY, s.sz);
+    car.scale.set(s.sx * portalCarScale, scaleY * portalCarScale, s.sz * portalCarScale);
   } else {
-    car.scale.set(1, scaleY, 1);
+    car.scale.set(portalCarScale, scaleY * portalCarScale, portalCarScale);
   }
 }
 
@@ -1341,11 +1848,11 @@ const rampScene = new THREE.Scene();
 rampScene.background = new THREE.Color(0x9566e8);       // bright twilight purple
 const beachScene = new THREE.Scene();
 beachScene.background = new THREE.Color(0xffd07b);
-beachScene.fog = new THREE.FogExp2(0xffe5b3, 0.0015);
+gfxAddFog(beachScene, 0xffe5b3, 0.0015);
 // Light haze only ??? the ground plane is huge, and a dense fog would wash the
 // whole dirt landscape into the lavender fog colour (making it look like the
 // sky). At 0.0025 the dirt stays clearly visible out to the horizon.
-rampScene.fog = new THREE.FogExp2(0xa87cf0, 0.0025);
+gfxAddFog(rampScene, 0xa87cf0, 0.0025);
 
 const rampHemi = new THREE.HemisphereLight(0xc9b0ff, 0x5a3a6a, 1.6);
 rampScene.add(rampHemi);
@@ -1428,7 +1935,7 @@ wheelOfDeath.cooldown = 0;
 // tunnel foot again returns to the city.
 const undergroundScene = new THREE.Scene();
 undergroundScene.background = new THREE.Color(0x120820);
-undergroundScene.fog = new THREE.FogExp2(0x180e28, 0.003);
+gfxAddFog(undergroundScene, 0x180e28, 0.003);
 
 const ugHemi = new THREE.HemisphereLight(0x8866cc, 0x332244, 1.8);
 undergroundScene.add(ugHemi);
@@ -1934,6 +2441,12 @@ const housePortal = {
     cam: new THREE.Vector3(),
     hasCam: false,
     toHouse: true,
+    // The axis the car rolls along during the shot, and the car heading that
+    // faces down it. The normal driving block is gated OFF while the watch is
+    // live, so nothing else advances the car - the watch drives it itself, or
+    // it would just sit there and shrink.
+    dir: new THREE.Vector3(0, 0, -1),
+    heading: 0,
   },
 };
 
@@ -1941,7 +2454,7 @@ const houseScene = new THREE.Scene();
 houseScene.background = new THREE.Color(0xbcd9ee);
 // Very light fog: just enough to give the far end of a 200-long house some
 // depth. Heavy fog would fight the window light, which is the whole point.
-houseScene.fog = new THREE.FogExp2(0xcfe2f0, 0.0016);
+gfxAddFog(houseScene, 0xcfe2f0, 0.0016);
 
 const houseRoot = new THREE.Group();
 houseScene.add(houseRoot);
@@ -1963,8 +2476,51 @@ houseScene.add(houseSun);
 const houseSky = new THREE.HemisphereLight(0xd8ecff, 0xc9b393, 1.5);
 houseScene.add(houseSky);
 
+// House mirror reflections
+const houseMirrorRT = new THREE.WebGLCubeRenderTarget(64, { generateMipmaps: false });
+const houseMirrorCam = new THREE.CubeCamera(1, 120, houseMirrorRT);
+houseScene.add(houseMirrorCam);
+let houseMirrorLast = -1;
+
 const houseWorld = await addHouse(houseRoot, {});
 let houseColliders = houseWorld.colliders;
+// Furniture footprints, for the cat. The car's collider list is walls only: the
+// car rides over furniture via the surface list. The cat is a walking animal and
+// has to go around the sofa, so it gets this second, cat-only list, measured off
+// the built geometry with a Box3 before the cat is added to the same root. Every
+// furniture helper returns one Group added straight to the house group, so the
+// direct children that contain meshes (plus any lone floor box) are the
+// furniture; scenery outside the shell is dropped by the room bounds.
+houseWorld.furnitureColliders = (() => {
+  const out = [];
+  const root = houseWorld.group;
+  root.updateMatrixWorld(true);
+  const bb = new THREE.Box3();
+  const put = (o) => {
+    bb.setFromObject(o);
+    if (bb.isEmpty()) return;
+    const w = bb.max.x - bb.min.x, d = bb.max.z - bb.min.z;
+    if (bb.max.y - bb.min.y < 2) return;           // a rug, not an obstacle
+    if (w < 2 && d < 2) return;                    // a lamp stem, not furniture
+    const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+    if (cx < HOUSE.minX || cx > HOUSE.maxX || cz < HOUSE.minZ || cz > HOUSE.maxZ) return;
+    out.push({ x: cx, z: cz, halfW: w / 2, halfD: d / 2 });
+  };
+  for (const child of root.children) {
+    if (child.isMesh) {
+      if (child.userData && child.userData.structure) continue;
+      const geo = child.geometry;
+      if (!geo || geo.type !== 'BoxGeometry') continue;
+      const hgt = Number(geo.parameters && geo.parameters.height);
+      if (!(hgt > 1 && hgt < 20)) continue;        // structure reaches the ceiling
+      if (child.position.y - hgt / 2 > 2) continue;
+      put(child);
+    } else if (child.children.some((c) => c.isMesh)) {
+      put(child);
+    }
+  }
+  return out;
+})();
 // The garage trigger was filled in by addCityBuildings during buildMap; turn its
 // local box into the world-space AABB the portal check reads every frame.
 housePortal.trigger = houseGarageTrigger();
@@ -1973,6 +2529,59 @@ housePortal.trigger = houseGarageTrigger();
 // first time the house is actually on camera.
 const houseCat = addCat(houseRoot, { spots: houseWorld.catSpots });
 houseCat.update(0, { playerPos: car.position, playerR: playerCarRadius });
+
+// ===== The dark garage: darkness that lives in the room =====
+// The garage is the one room in the house with no lights of its own — "pitch
+// dark; the way out". It used to be enforced by swapping the WHOLE house scene's
+// fog for a dense near-black one whenever the car crossed the threshold, so the
+// dark appeared to travel with the car (and its trailing camera) instead of
+// belonging to the room. gfxAddFog can only set one colour and density for the
+// whole scene, so the fix is a world-position fog patched into the house's own
+// materials: daylight haze everywhere, near-black fog only for fragments that
+// are actually inside the garage's world box. The darkness is therefore anchored
+// to the room, and you can stand in the lit kitchen and see the garage go black
+// on the far side of its doorway.
+//
+// The daylight colour/density are read from the scene's own fog uniforms
+// (`fogColor` / `fogDensity`, kept in sync with the draw-distance slider by
+// gfxApplyFog), so this only overrides them inside the box.
+const GARAGE_FOG_MIN = new THREE.Vector3(ROOMS.darkGarage.x0 - 0.5, -1, ROOMS.darkGarage.z0 - 0.5);
+const GARAGE_FOG_MAX = new THREE.Vector3(ROOMS.darkGarage.x1 + 0.5, 32, ROOMS.darkGarage.z1 + 0.5);
+const GARAGE_FOG_DARK = new THREE.Color(0x06080d);
+const GARAGE_FOG_DARK_DENSITY = 0.045;
+function installHouseGarageFog(material) {
+  if (!material || material.userData.garageFog || material.isSpriteMaterial) return;
+  material.userData.garageFog = true;
+  const prev = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev(shader, renderer);
+    shader.uniforms.uGarageMin = { value: GARAGE_FOG_MIN };
+    shader.uniforms.uGarageMax = { value: GARAGE_FOG_MAX };
+    shader.uniforms.uGarageDark = { value: GARAGE_FOG_DARK };
+    shader.uniforms.uGarageDarkDensity = { value: GARAGE_FOG_DARK_DENSITY };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vHouseFogPos;')
+      .replace('#include <fog_vertex>', '#include <fog_vertex>\n  vHouseFogPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vHouseFogPos;\nuniform vec3 uGarageMin;\nuniform vec3 uGarageMax;\nuniform vec3 uGarageDark;\nuniform float uGarageDarkDensity;')
+      .replace('#include <fog_fragment>', [
+        '#ifdef USE_FOG',
+        '  vec3 gd = min(vHouseFogPos - uGarageMin, uGarageMax - vHouseFogPos);',
+        '  float inGarage = smoothstep(-4.0, 0.0, min(min(gd.x, gd.y), gd.z));',
+        '  float gDensity = mix(fogDensity, uGarageDarkDensity, inGarage);',
+        '  vec3 gColor = mix(fogColor, uGarageDark, inGarage);',
+        '  float gFactor = 1.0 - exp(-gDensity * gDensity * vFogDepth * vFogDepth);',
+        '  gl_FragColor.rgb = mix(gl_FragColor.rgb, gColor, gFactor);',
+        '#endif',
+      ].join('\n'));
+  };
+  material.needsUpdate = true;
+}
+houseRoot.traverse((o) => {
+  if (!o.material) return;
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  for (const m of mats) installHouseGarageFog(m);
+});
 
 // ===== The fire, and what it does to the car =====
 // The rule lives in ash.js; this is the part that needs a renderer.
@@ -1987,6 +2596,12 @@ const ashState = makeAsh();
 // The car's own colours, remembered the first time we soot it so the revert is a
 // return rather than a guess. Cleared whenever the soot is fully off.
 let ashBaseColors = null;
+// Sand daubed over the car by the beach's collapsing castle, 0 (clean) to 1
+// (caked). It fades on its own over a couple of seconds. It shares the ash
+// colour cache below, because both are the same kind of thing: a transient warp
+// of the car's real paint.
+let sandCoat = 0;
+const SAND_COAT_COLOR = new THREE.Color(0xd9c08a);
 // Ash flakes: one small sprite each, taken from a fixed pool and re-used, so a
 // long burnout never allocates. A fleck is a soft grey dot — a canvas texture
 // rather than a plain quad, because a flat square reads as a bug and a soft dot
@@ -2069,8 +2684,9 @@ function stepSootFromFire(delta, hearth) {
   }
   // A settled car hands its colours back and forgets them, so the next visit to
   // a fire starts from whatever paint it is wearing now (which might be a
-  // different car — see resetHouseAsh on the car swap).
-  if (ashBlack(ashState) === 0 && ashBaseColors) restoreAshColors();
+  // different car — see resetHouseAsh on the car swap). Only when the sand coat
+  // is off too, or we would scrub that off with it.
+  if (ashBlack(ashState) === 0 && sandCoat <= 0 && ashBaseColors) restoreAshColors();
 }
 
 // The spider and the skater do not catch fire: the hearth throws them clear
@@ -2123,7 +2739,7 @@ function knockCarOffHearth(H, repulse) {
 // black has to start from the real colour every frame, or the car would slide all
 // the way to black the moment it was touched and could never come back.
 function applyAshToCar(amount) {
-  if (amount <= 0) {
+  if (amount <= 0 && sandCoat <= 0) {
     if (ashBaseColors) restoreAshColors();
     return;
   }
@@ -2143,7 +2759,13 @@ function applyAshToCar(amount) {
   for (const rec of ashBaseColors) {
     if (!rec.color || !rec.mat.color) continue;
     rec.mat.color.copy(rec.color).lerp(soot, amount);
+    if (sandCoat > 0) rec.mat.color.lerp(SAND_COAT_COLOR, sandCoat * 0.8);
   }
+}
+
+// Daub the car with sand and let it fade. Called the frame the castle comes down.
+function coatCarInSand(amount = 1) {
+  sandCoat = Math.max(sandCoat, amount);
 }
 
 // Put every remembered colour back and stop remembering them.
@@ -2158,6 +2780,7 @@ function restoreAshColors() {
 // Full reset, for leaving the house or swapping car.
 function resetHouseAsh() {
   restoreAshColors();
+  sandCoat = 0;
   ashState.mode = 'clean';
   ashState.t = 0;
   ashFlakeCarry = 0;
@@ -3391,7 +4014,10 @@ function enterRampWorld() {
 // bowl and the valves snap shut over you; once they meet, cut to black and the
 // swap happens while the screen is dark. Coming back, the valves are already
 // shut when you arrive and reopen behind you as the screen clears.
-const shellPortal = { armed: false, fadeTimer: -1 };
+// `phase` is the exit cinematic: after a trip we drop the car back in the bowl
+// already facing out and let it DRIVE clear of the trigger before the lid lifts
+// behind it, so the car never re-trips the portal the moment control returns.
+const shellPortal = { armed: false, fadeTimer: -1, phase: null, exitTimer: 0 };
 
 function resetShellTripPhysics() {
   velocity.value = 0;
@@ -3423,7 +4049,9 @@ function enterBeachWorld() {
   shellPortal.armed = false;
   beachShellPortal.armed = false;
   beachShellPortal.fadeTimer = -1;
-  // Arrive on the sand, facing out to sea - the way out is straight ahead.
+  // Arrive on the sand, facing out to sea - the way out is straight ahead. The
+  // shrink was cinematic-only, so the car is full size again the moment it lands.
+  portalCarScale = 1;
   car.position.set(BEACH_START.x, groundHeight + beachGroundOffsetAt(BEACH_START.x, BEACH_START.z), BEACH_START.z);
   car.rotation.set(0, BEACH_START.yaw, 0);
   car.visible = true;
@@ -3455,11 +4083,16 @@ function returnToPark() {
   beachShellPortal.fadeTimer = -1;
   shellPortal.armed = false;
   // Back down in the bowl you left from, which is exactly where the trip began.
+  // Full size again - the shrink only ever belonged to the cut - and DRIVING
+  // out: the shell stays shut and lifts behind the car once it has cleared the
+  // trigger. Leaving it open under the car would re-catch it instantly.
+  portalCarScale = 1;
   car.position.set(clamShell.x, clamBowlHeightAt(clamShell.x, clamShell.z), clamShell.z);
-  car.rotation.set(0, -Math.PI / 2, 0);   // face +X, back out the way you came
+  car.rotation.set(0, -Math.PI / 2, 0);   // face the way out of the mouth
   car.visible = true;
   shake.intensity = Math.max(shake.intensity, 0.35);
-  clamShell.reopen();
+  shellPortal.phase = 'exit';
+  shellPortal.exitTimer = 0;
   beachShell.reopen();
 }
 
@@ -3746,13 +4379,30 @@ function houseFadeSwap(toHouse) {
   if (toHouse) {
     const t = housePortal.trigger;
     if (t) {
-      const enterAt = t.x0 + playerCarRadius;      // car centre when the nose trips the trigger
-      const arriveAt = t.mouthX - playerCarRadius; // centre when the nose meets the mouth
-      const roll = arriveAt - enterAt;
+      // The car rolls from the street-side edge of the trigger all the way to the
+      // back of the bay, so the shot shows it actually driving IN - and shrinking
+      // to fit - rather than stopping dead at the threshold. The axis is the
+      // mouth -> apron line, so the sign is right whichever way the garage faces.
+      const dx = t.apronX - t.mouthX, dz = t.apronZ - t.mouthZ;
+      const alongX = Math.abs(dx) >= Math.abs(dz);
+      const street = (alongX ? Math.sign(dx) : Math.sign(dz)) || 1;   // +1 toward the street
+      const lo = alongX ? t.x0 : t.z0;
+      const hi = alongX ? t.x1 : t.z1;
+      const enterAt = street > 0 ? hi : lo;                            // centre when it trips the box
+      const arriveAt = (street > 0 ? lo : hi) + street * playerCarRadius;
+      const roll = Math.abs(arriveAt - enterAt);
       if (roll > 0) hold = Math.min(roll / watchSpeed, 2.5);
       // The outside spot, looking back at the car as it backs up into the bay.
       housePortal.watch.cam.set(t.camX, t.camY, t.camZ);
       housePortal.watch.hasCam = true;
+      // The roll axis points INTO the garage: from the apron back through the
+      // mouth. Stored as a unit vector plus the car heading that faces it, so
+      // the watch can actually drive the car in (see updateHousePortal).
+      const adx = t.apronX - t.mouthX, adz = t.apronZ - t.mouthZ;
+      const alen = Math.hypot(adx, adz) || 1;
+      const wx = -adx / alen, wz = -adz / alen;
+      housePortal.watch.dir.set(wx, 0, wz);
+      housePortal.watch.heading = Math.atan2(wz, -wx);
     }
   } else {
     // Coming out of the dark garage the camera stands back INSIDE, and the car
@@ -3769,6 +4419,12 @@ function houseFadeSwap(toHouse) {
     const arriveAt = e.mouthX - 14;
     const roll = Math.abs(arriveAt - enterAt);
     if (roll > 0) hold = Math.min(roll / watchSpeed, 2.5);
+    // The exit roll axis comes straight from the level data (dirX/dirZ) - west,
+    // out through the roller door and away down the drive.
+    const elen = Math.hypot(e.dirX, e.dirZ) || 1;
+    const wx = e.dirX / elen, wz = e.dirZ / elen;
+    housePortal.watch.dir.set(wx, 0, wz);
+    housePortal.watch.heading = Math.atan2(wz, -wx);
   }
   housePortal.watch.active = true;
   housePortal.watch.t = 0;
@@ -3814,6 +4470,8 @@ function completeHouseSwap(toHouse) {
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  // The garage shrink was cinematic-only - full size in both worlds.
+  portalCarScale = 1;
   // Leaving the house means leaving the fire. Whatever soot was on the car is
   // dropped here rather than carried into the city — and the car's own colours
   // are put back, because the materials are shared with the city scenes and a
@@ -3864,6 +4522,27 @@ function updateHousePortal(delta) {
     steering.value = 0;
     jumpState.inAir = false;
     jumpState.yVelocity = 0;
+    // Drive the car down the shot axis. The normal driving block (which owns
+    // position integration) is gated OFF while the watch is live, so without
+    // this the car would just sit on the spot and shrink. Easing the heading
+    // onto the axis first straightens it into the doorway rather than letting it
+    // crab sideways, and the wheels spin to match so it reads as driving rather
+    // than sliding. The camera is pinned to the shot spot, so the car is what
+    // moves across frame.
+    const dy = Math.atan2(Math.sin(w.heading - car.rotation.y), Math.cos(w.heading - car.rotation.y));
+    car.rotation.y += dy * Math.min(1, 10 * delta);
+    const step = w.speed * delta;
+    car.position.x += w.dir.x * step;
+    car.position.z += w.dir.z * step;
+    const wheels = car.userData && car.userData.wheels;
+    if (wheels) for (const wh of wheels) wh.rotation.y += step * 2.6;
+    // Rolling INTO the garage, shrink the car as it noses into the dark bay, so
+    // it reads as fitting through the doorway and down the shaft. Coming OUT,
+    // it stays full size.
+    if (w.toHouse) {
+      const p = Math.min(1, w.t / Math.max(0.001, w.hold));
+      portalCarScale = 1 - p * (1 - PORTAL_CAR_SHRINK);
+    }
     if (w.t >= w.hold) {
       w.active = false;
       // Now do the actual cut.
@@ -4725,6 +5404,28 @@ function drawMinimap() {
 }
 
 // ===== Input =====
+// H on the keyboard, A on the pad: the horn. The Holy Mountain shrine reacts
+// too (idea #24), so both inputs go through here rather than duplicating it.
+function honkHorn() {
+  playHorn();
+  if (undergroundWorld.holy && undergroundWorld.holy.honk) undergroundWorld.holy.honk();
+}
+// B on the keyboard, R3 on the pad: bookmark where you are. Minimap
+// coordinates, because that is the numbering the map prints — see AGENTS.md.
+function bookmarkLocation() {
+  const worldXHi = 90, worldZHi = 123;
+  const mapX = Math.round(worldXHi - car.position.x);
+  const mapZ = Math.round(worldZHi - car.position.z);
+  const level = worldState || 'city';
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set('level', level);
+    url.searchParams.set('x', String(mapX));
+    url.searchParams.set('z', String(mapZ));
+    window.history.pushState({}, '', url.toString());
+    console.log('bookmark', level, mapX, mapZ, url.toString());
+  } catch (e) { console.log('bookmark error', e); }
+}
 window.addEventListener('keydown', (event) => {
   keys[event.code] = true;
   // Spacebar pauses / unpauses the game (for screenshots). Pausing hides the
@@ -4737,18 +5438,7 @@ window.addEventListener('keydown', (event) => {
   // B: bookmark current location (minimap coords)
   if (event.code === 'KeyB') {
     event.preventDefault();
-    const worldXHi = 90, worldZHi = 123;
-    const mapX = Math.round(worldXHi - car.position.x);
-    const mapZ = Math.round(worldZHi - car.position.z);
-    const level = worldState || 'city';
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set('level', level);
-      url.searchParams.set('x', String(mapX));
-      url.searchParams.set('z', String(mapZ));
-      window.history.pushState({}, '', url.toString());
-      console.log('bookmark', level, mapX, mapZ, url.toString());
-    } catch (e) { console.log('bookmark error', e); }
+    bookmarkLocation();
   }
   // Car-showroom keys (gear screen): ←/→ carousel the cars, Enter drives the
   // car on show (returns to the game), Esc backs out without changing.
@@ -4760,17 +5450,7 @@ window.addEventListener('keydown', (event) => {
   }
   // H: car horn. Also makes the Holy Mountain shrine react (idea #24).
   if (event.code === 'KeyH') {
-    playHorn();
-    if (undergroundWorld.holy && undergroundWorld.holy.honk) undergroundWorld.holy.honk();
-  }
-  // U: instant teleport into the underground (no mine-dive, no spiral arrival).
-  // event.code is the physical key, so Shift/case doesn't matter. Park the car
-  // at the tunnel foot and hand control back immediately.
-  if (event.code === 'KeyU') {
-    if (worldState !== 'underground') {
-      enterUndergroundWorld();
-      if (spiralCine.active) finishSpiralCine();
-    }
+    honkHorn();
   }
   // C: toggle the top-down camera. Pressed again it goes back to the chase cam,
   // with the chase cam's own zoom and pitch restored rather than reset.
@@ -4827,6 +5507,260 @@ if (joyBase && joyKnob && joyHit) {
   joyHit.addEventListener('pointerup', joyRelease);
   joyHit.addEventListener('pointercancel', joyRelease);
 }
+
+// ===== Xbox / gamepad controller =====
+// Any standard-mapping pad (Xbox over USB or Bluetooth) plays the whole game.
+// The Gamepad API only hands out snapshots, so the pads are polled once per
+// frame — even while paused, so Start can unpause — and the analog values are
+// published on `pad` for the driving code to read. Every keyboard and mouse
+// binding has a twin here; the Controls tab in the gear screen lists them
+// side by side.
+//
+//   RT / LT     accelerate · brake-reverse     (D-pad up / down too)
+//   left stick  steer                          (D-pad left / right too)
+//   X (hold)    2× boost          A horn          B top-down camera
+//   Y           go underground   R3 bookmark     Start pause
+//   LB / RB     zoom in / out     View opens the gear screen
+//   right stick orbits the camera
+//
+//   In the settings modal: A accepts (or activates the highlighted control),
+//   B backs out, LB / RB step the tab row, and the D-pad or left stick walks
+//   the buttons on screen.
+const pad = {
+  connected: false,
+  id: '',
+  steer: 0,        // -1 (left) .. 1 (right), deadzoned
+  throttle: 0,     // 0 .. 1
+  reverse: 0,      // 0 .. 1
+  boost: false,    // X held
+  focus: -1,       // highlighted control in padFocusEls (-1 = none)
+};
+let padPrev = [];          // button state from the previous frame
+let padFocusEls = [];      // the controls the pad can reach on the current screen
+let padFocusDirty = true;  // the screen changed: rebuild padFocusEls
+let padLastNow = performance.now();
+const padRep = {};         // auto-repeat countdown per direction
+const padWas = {};         // is this direction still held
+
+const PAD_DEAD = 0.18;
+// Rescale an axis past the deadzone so a half-pushed stick reads as a
+// proportional 0..1 rather than a snap to full deflection.
+function padAxis(v, dead = PAD_DEAD) {
+  const a = Math.abs(v || 0);
+  if (a < dead) return 0;
+  return (v > 0 ? 1 : -1) * (a - dead) / (1 - dead);
+}
+
+// The "controller connected?" line on the Controls tab.
+function updatePadStatus() {
+  const el = document.getElementById('pad-status');
+  if (!el) return;
+  el.textContent = pad.connected
+    ? `Controller connected — ${pad.id}. Everything in the table is live now.`
+    : 'No controller found. Plug one in (or pair it over Bluetooth) and it starts working.';
+  el.classList.toggle('on', pad.connected);
+}
+
+// The buttons the pad can reach: whatever screen the gear modal is showing.
+// Rebuilt whenever the screen changes (padFocusDirty), so a highlighted
+// control can never outlive the screen it was on.
+function padRebuildFocus() {
+  // Drop the highlight from the screen being left before collecting the new
+  // one — the panels are reused, so a stale outline would come back with them.
+  for (const el of document.querySelectorAll('.pad-focus')) el.classList.remove('pad-focus');
+  let scope = null;
+  if (document.body.classList.contains('object-open')) scope = document.getElementById('obj-view');
+  else if (document.body.classList.contains('tab-levels')) scope = document.getElementById('levels-panel');
+  else if (document.body.classList.contains('tab-objects')) scope = document.getElementById('objects-panel');
+  else if (document.body.classList.contains('tab-controls')) scope = document.getElementById('controls-panel');
+  else if (document.body.classList.contains('tab-graphics')) scope = document.getElementById('graphics-panel');
+  else if (document.body.classList.contains('tab-about')) scope = document.getElementById('about-panel');
+  // Inputs count as controls on the Graphics tab: the pad walks a slider with
+  // left / right (see sideways in pollGamepad) and flicks a checkbox with A,
+  // so those have to be in the list alongside the buttons.
+  padFocusEls = scope
+    ? [...scope.querySelectorAll('button, input[type="range"], input[type="checkbox"]')].filter((el) => el.offsetParent !== null && !el.disabled)
+    : [];
+  // On the car tabs there is nothing to walk — A means "drive this car", the
+  // same as Enter. Everywhere else the first control starts highlighted, so a
+  // pad player landing on Levels can press A straight away.
+  const carTab = pickerTab === 'player' || pickerTab === 'chase';
+  pad.focus = (!carTab && padFocusEls.length) ? 0 : -1;
+  padPaintFocus();
+}
+
+function padPaintFocus() {
+  for (let i = 0; i < padFocusEls.length; i++) {
+    const on = i === pad.focus;
+    if (padFocusEls[i].classList.contains('pad-focus') !== on) {
+      padFocusEls[i].classList.toggle('pad-focus', on);
+    }
+  }
+}
+
+function padMoveFocus(step) {
+  if (!padFocusEls.length) { pad.focus = -1; return; }
+  pad.focus = pad.focus < 0
+    ? (step > 0 ? 0 : padFocusEls.length - 1)
+    : (pad.focus + step + padFocusEls.length) % padFocusEls.length;
+  padPaintFocus();
+  const el = padFocusEls[pad.focus];
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+}
+
+// LB / RB: step to the previous / next tab, wrapping round the list — the
+// pad's equivalent of clicking along the tab row.
+function padStepTab(dir) {
+  const tabs = ['player', 'chase', 'levels', 'controls', 'graphics', 'about'];
+  const i = tabs.indexOf(pickerTab);
+  setPickerTab(tabs[(i + dir + tabs.length) % tabs.length]);
+}
+
+function pollGamepad(dt) {
+  const list = (navigator.getGamepads && navigator.getGamepads()) || [];
+  let gp = null;
+  for (const p of list) { if (p && p.connected) { gp = p; break; } }
+
+  const wasConnected = pad.connected;
+  pad.connected = !!gp;
+  if (!gp) {
+    pad.steer = 0; pad.throttle = 0; pad.reverse = 0; pad.boost = false;
+    padPrev = [];
+    if (wasConnected) updatePadStatus();
+    return;
+  }
+  if (!wasConnected) { pad.id = gp.id || 'Controller'; updatePadStatus(); }
+
+  // Snapshot the edges BEFORE padPrev is overwritten, so every press() below
+  // reads last frame's state no matter where it appears in the function.
+  const prev = padPrev;
+  const b = (i) => !!(gp.buttons[i] && gp.buttons[i].pressed);
+  const press = (i) => b(i) && !prev[i];
+  // Written by index rather than buttons.map(): some browsers hand back an
+  // array-like button list that has no array methods on it.
+  const now = [];
+  for (let i = 0; i < gp.buttons.length; i++) now[i] = b(i);
+  padPrev = now;
+  // Fresh press returns true once, then repeats while held: a 0.4s delay
+  // before the first repeat and a 0.13s cadence after that, so walking a long
+  // level list is one held press rather than twenty taps.
+  const pulse = (on, k) => {
+    if (!on) { padWas[k] = false; padRep[k] = 0.4; return false; }
+    if (!padWas[k]) { padWas[k] = true; padRep[k] = 0.4; return true; }
+    padRep[k] -= dt;
+    if (padRep[k] <= 0) { padRep[k] = 0.13; return true; }
+    return false;
+  };
+
+  // ---- Driving: published for the frame loop ----
+  const stickY = padAxis(gp.axes[1]);
+  let throttle = Math.max(0, -stickY);        // stick up = go
+  let reverse = Math.max(0, stickY);          // stick down = back
+  if (gp.buttons[7] && gp.buttons[7].value > 0.08) throttle = Math.max(throttle, gp.buttons[7].value);
+  if (gp.buttons[6] && gp.buttons[6].value > 0.08) reverse = Math.max(reverse, gp.buttons[6].value);
+  if (b(12)) throttle = 1;                    // D-pad up / down are the
+  if (b(13)) reverse = 1;                     // digital fallback for the triggers
+  pad.throttle = throttle;
+  pad.reverse = reverse;
+  pad.steer = padAxis(gp.axes[0]);
+  if (!pad.steer) {                           // D-pad left / right likewise
+    if (b(14)) pad.steer = -1;
+    else if (b(15)) pad.steer = 1;
+  }
+  pad.boost = b(2);                           // X held = the Shift boost
+
+  // ---- Camera: LB / RB zoom like the wheel, right stick orbits like a drag.
+  // Both run whether or not the game is paused (the mouse wheel and drag do
+  // too), so you can frame a screenshot from the pad. Skipped with the modal
+  // up, where LB / RB belong to the tab row instead.
+  if (!selectMode) {
+    const zoomDir = (b(4) ? -1 : 0) + (b(5) ? 1 : 0);
+    if (zoomDir) {
+      cameraManualTimer = CAMERA_MANUAL_HOLD;
+      const factor = Math.exp(zoomDir * 1.5 * dt);
+      if (topDown.active) {
+        topDown.target = THREE.MathUtils.clamp(topDown.target * factor, TOPDOWN_ZOOM_MIN, TOPDOWN_ZOOM_MAX);
+      } else {
+        cameraOrbit.radius = THREE.MathUtils.clamp(cameraOrbit.radius * factor, CAM_ZOOM_MIN, CAM_ZOOM_MAX);
+      }
+    }
+    const ox = padAxis(gp.axes[2], 0.22);
+    const oy = padAxis(gp.axes[3], 0.22);
+    if (ox || oy) {
+      cameraManualTimer = CAMERA_MANUAL_HOLD;
+      // Same signs and same feel as the mouse drag: stick right swings the yaw
+      // the way a rightward drag does, stick down tips the camera the same way.
+      cameraYawOffset -= ox * 1.9 * dt;
+      cameraOrbit.phi = THREE.MathUtils.clamp(
+        cameraOrbit.phi + oy * 1.5 * dt, cameraOrbit.minPhi, cameraOrbit.maxPhi);
+    }
+  }
+
+  // ---- Buttons that act on the game (mouse twins noted in the comments) ----
+  if (press(9) && !selectMode) setPaused(!isPaused);   // Start = Space
+  if (press(11)) bookmarkLocation();                   // R3 = B
+  if (press(8)) {                                      // View = the gear button
+    if (selectMode) exitSelectMode(false);
+    else enterSelectMode();
+  }
+
+  if (selectMode) {
+    // Settings modal: A accepts, B backs out, LB / RB switch tabs, and the
+    // D-pad (or left stick) walks whatever is on screen.
+    if (padFocusDirty) { padRebuildFocus(); padFocusDirty = false; }
+    // Tab steps come first and end the frame: the highlighted control belongs
+    // to the screen that was up, and clicking one of that screen's buttons on
+    // the very frame the screen changed would fire a control nobody can see.
+    if (press(4)) { padStepTab(-1); return; }
+    if (press(5)) { padStepTab(1); return; }
+    if (press(1)) { exitSelectMode(false); return; }   // B = Esc
+    if (press(0)) {
+      const el = pad.focus >= 0 ? padFocusEls[pad.focus] : null;
+      if (el && el.type === 'range') { gfxNudgeRange(el, 1); return; }   // A steps the slider up
+      if (el) el.click();            // click the highlighted level / button
+      else exitSelectMode(true);     // nothing highlighted: drive the car on show
+      return;
+    }
+    const carTab = pickerTab === 'player' || pickerTab === 'chase';
+    // On the car tabs left / right carousel the cars (the arrow keys); on a
+    // focused slider they step its value; on the browsers they just walk the
+    // buttons with the rest of the directions.
+    const sideways = (dir) => {
+      if (carTab) { cycleCar(dir); return; }
+      const el = pad.focus >= 0 ? padFocusEls[pad.focus] : null;
+      if (el && el.type === 'range') gfxNudgeRange(el, dir);
+      else padMoveFocus(dir);
+    };
+    if (pulse(b(13), 'down')) padMoveFocus(1);
+    if (pulse(b(12), 'up')) padMoveFocus(-1);
+    if (pulse(b(14), 'left')) sideways(-1);
+    if (pulse(b(15), 'right')) sideways(1);
+    const sx = padAxis(gp.axes[0]);
+    const sy = padAxis(gp.axes[1]);
+    if (pulse(sy > 0.5, 'sy-down')) padMoveFocus(1);
+    if (pulse(sy < -0.5, 'sy-up')) padMoveFocus(-1);
+    if (pulse(sx < -0.5, 'sx-left')) sideways(-1);
+    if (pulse(sx > 0.5, 'sx-right')) sideways(1);
+    return;   // the driving buttons mean nothing with the modal up
+  }
+
+  // ---- Driving-context buttons ----
+  if (press(0)) honkHorn();                 // A = H
+  if (press(1)) toggleTopDownCamera();      // B = C
+}
+
+// The connect / disconnect events are only for instant status feedback; the
+// per-frame poll above is what actually reads the pad.
+window.addEventListener('gamepadconnected', (e) => {
+  pad.connected = true;
+  pad.id = (e.gamepad && e.gamepad.id) || 'Controller';
+  updatePadStatus();
+});
+window.addEventListener('gamepaddisconnected', () => {
+  pad.connected = false;
+  pad.steer = 0; pad.throttle = 0; pad.reverse = 0; pad.boost = false;
+  updatePadStatus();
+});
 
 // ===== Pause (Spacebar) & scroll-wheel camera zoom =====
 // Spacebar freezes the whole world — physics AND animations — for screenshots.
@@ -4907,11 +5841,12 @@ const CAR_KINDS = [
   // the seat, the AI engine stands down and parks out of sight, because two
   // engines answering the same call is one too many. See playerFiretruck.
   { id: 'firetruck', label: 'Fire Truck', color: '#c8202a', scale: 1, build: () => createFiretruck() },
-  // Play as the crab. A beach crab at driveable size: carapace, two claws, eight
-  // scissoring legs. It faces +Z like the robot and the skater, so `faceZ`
-  // quarter-turns it onto the cars' -X forward axis, and `show` shrinks it for
-  // the showroom stage.
-  { id: 'crab', label: 'Crab', color: '#d9502f', scale: 1, faceZ: true, show: 1.5, build: () => createCrab() },
+  // Play as the crab. It is the beach crab — the same builder, the same leg
+  // windmill — taken up to drivable size, so what you pick here is what you met
+  // on the sand. It really does face +Z (claws along +Z), so `faceZ`
+  // quarter-turns it onto the cars' -X forward axis and it travels claws-first
+  // instead of sideways; `show` keeps it car-sized on the showroom stage.
+  { id: 'crab', label: 'Crab', color: '#d9502f', scale: 1.8, faceZ: true, show: 1.2, build: () => createPlayerCrab() },
 ];
 let playerCarKind = CAR_KINDS[0].id;
 // Gear screen: which tab is on show ('player' swaps your ride, 'chase' swaps
@@ -4939,35 +5874,53 @@ let playerFiretruck = false;
 // Beacon flash clock for the player's own engine. The AI truck keeps its own in
 // firetruck.js; this is the same lightbar pattern driven from the frame loop.
 let playerFiretruckFlash = 0;
-// Scuttle phase for the drivable crab. It has no wheels, so its legs scissor
-// side to side off the car's speed instead — the same trick the tarantula uses,
-// on a rig it carries in `car.userData.crabLegs`.
+// Scuttle phase for the drivable crab. It has no wheels: its legs windmill in a
+// travelling wave off the car's speed, the same gait the beach's own crabs use,
+// on the rig it carries in `car.userData.crabLegs`.
 let playerCrabPhase = 0;
 function updatePlayerCrabScuttle(delta, speed) {
   const legs = car.userData.crabLegs;
   if (!legs || !legs.length) return;
-  const rate = 0.9 + Math.abs(speed) * 1.9;
-  playerCrabPhase += delta * rate;
   const t = THREE.MathUtils.clamp(Math.abs(speed) / 1.4, 0, 1);
-  const swing = Math.sin(playerCrabPhase) * 0.55 * t;
-  // Alternating diagonal pairs, like the tarantula: legs 0,5 and 3,6 (and the
-  // rest of each diagonal) move together, the opposite diagonal counter to it.
-  const A = [0, 3, 5, 6];
+  // Faster you go, faster the windmill — and it never quite stops, so the crab
+  // reads as an animal standing there rather than as a model.
+  playerCrabPhase += delta * (3.5 + Math.abs(speed) * 2.6);
+  const scuttle = playerCrabPhase;
+  // Each leg lags the one in front of it, which is what makes the eight read as
+  // a wave travelling down the side rather than as all of them kicking at once.
   for (let i = 0; i < legs.length; i++) {
-    const drive = (A.indexOf(i) >= 0 ? swing : -swing)
-      + 0.05 * Math.sin(playerCrabPhase * 1.6 + i * 1.1);
-    legs[i].rotation.y = drive;
+    legs[i].rotation.x = Math.sin(scuttle + i * 1.7) * 0.34 * (0.25 + 0.75 * t);
   }
-  // The claws pinch while it is moving, and hold open when it is parked.
+  // The claws are held up while it is moving and dropped when it parks.
   const claws = car.userData.crabClaws;
   if (claws) {
-    const pinch = (Math.sin(playerCrabPhase * 1.5) * 0.5 + 0.5) * t;
-    for (const c of claws) {
-      for (const j of c.jaws) j.jaw.rotation.z = (j.jy > 0 ? -1 : 1) * pinch * 0.35;
-      // Opposite claws swing slightly out of phase, so it does not look rigid.
-      c.arm.rotation.y = Math.sin(playerCrabPhase + (c.sz > 0 ? 0 : Math.PI)) * 0.16 * t;
+    for (let i = 0; i < claws.length; i++) {
+      claws[i].rotation.x = -0.18 * t + Math.sin(scuttle * 0.7 + i * 2) * 0.12;
     }
   }
+}
+
+// The crab the player drives — and the one the showroom shows — is the beach's
+// own crab, not a second model of one. That matters for direction as much as
+// looks: this model is built with its claws along +Z, so the `faceZ` quarter
+// turn lands them on the cars' -X forward axis and the crab travels
+// claws-first instead of shuffling sideways the way the old build did.
+//
+// `makeCrab()` fits the model to a ground-standing scale inside its own group,
+// so that group goes into the wrapper whole. Stripping its children out (which
+// the swap code does for every other builder) would drop that scale and leave
+// the crab floating at its unscaled size.
+function createPlayerCrab() {
+  const c = makeCrab(0, 0, { x: 0, z: 0 });
+  const wrap = new THREE.Group();
+  wrap.add(c.group);
+  wrap.userData.wheels = [];
+  wrap.userData.wheelPivots = [];
+  // Eight leg pivots and the two claw arms, in the same slots cars.js used to
+  // fill for its own crab.
+  wrap.userData.crabLegs = c.legs;
+  wrap.userData.crabClaws = c.claws;
+  return wrap;
 }
 // Stride phase + walk updater for the giant tarantula (its 8 legs scissor in
 // an alternating diagonal gait instead of spinning wheels).
@@ -4995,6 +5948,10 @@ let trainCars = [];
 let selectMode = false;
 let selectWasPaused = false;
 let selectPreview = CAR_KINDS[0].id;
+// The leg rig of whatever is standing on the showroom stage, when the thing on
+// the stage has legs. Captured when the preview is built and driven from
+// updateSelectCar; null for anything with wheels.
+let selectWalkRig = null;
 let globalDarkness = false;
 
 // Leg/arm swing for the drivable robot, driven by how fast you're moving.
@@ -5075,6 +6032,9 @@ function swapPlayerCar(kind) {
   car.userData.crabClaws = kind === 'crab' ? newMesh.userData.crabClaws : null;
   // The engine's lightbar halves, for the beacon flash in the frame loop.
   car.userData.firetruckLights = kind === 'firetruck' ? newMesh.userData.warningLights : null;
+  // The taco truck's hanging rail of chillies and pots, swung by the frame loop
+  // from the truck's own acceleration and steering.
+  car.userData.swing = newMesh.userData.swing || null;
   while (car.children.length > 0) car.remove(car.children[0]);
   car.add(inner);
   playerCarKind = kind;
@@ -5419,14 +6379,23 @@ let selectLastNow = 0;
 // the frame at, leaving generous dark space around it on the stage.
 const SELECT_CAR_SHOW_SCALE = 0.5;
 
-// Object-browser framing. The showroom camera is fixed at (0, 2.4, 10.5) looking
-// at (0, 0.95, 0) with a 42-degree lens, which works out to roughly 8.3 units of
-// visible height at the stage. These two numbers turn that into the rule the
-// object browser uses: normalise each model to PREVIEW_TARGET_H tall (about a
-// quarter of the frame, comfortably inside the 8x8 glow) and hang its middle on
-// the camera's focus height so short and tall objects both sit centred.
-const PREVIEW_TARGET_H = 2.2;
+// Object-browser framing. The showroom camera sits at orbit radius 10.5 with a
+// 42-degree lens, which works out to roughly 8.1 units of visible height at the
+// stage — see selectFrameSize() for that arithmetic done live, against the
+// window's actual aspect, because a width budget fixed in world units runs wide
+// objects straight off a narrow window.
+//
+// The rule the object browser uses: normalise each model to at most half the
+// visible height (PREVIEW_TARGET_H) and at most PREVIEW_FILL_W of the visible
+// width, then rest its base on the glowing disc with the camera aimed at its
+// middle — so the object fills the frame and still stands on the stage.
+const PREVIEW_TARGET_H = 4.0;
+const PREVIEW_FILL_H = 0.5;      // half the frame's height, never more
+const PREVIEW_FILL_W = 0.55;     // a bit over half the frame's width
 const SELECT_PREVIEW_FOCUS_Y = 0.95;
+// The stage disc itself. Objects are framed to stay inside this, so a wide
+// model never stands off the glow it is supposed to be standing on.
+const SELECT_GLOW_SIZE = 8;
 
 // Radial blue-haze texture for the showroom stage: bright at the centre and
 // fading to fully transparent, so the glow melts away instead of ending at a
@@ -5456,9 +6425,10 @@ function buildSelectScene() {
 
   // Soft haze under the car: one wide additive-bright plane whose texture
   // fades out at the edges. Bigger and further from the car than a hard disc,
-  // so there's breathing room all around.
+  // so there's breathing room all around. SELECT_GLOW_SIZE is also the width
+  // budget the object browser never exceeds, so nothing stands off its own disc.
   const glow = new THREE.Mesh(
-    new THREE.PlaneGeometry(8, 8),
+    new THREE.PlaneGeometry(SELECT_GLOW_SIZE, SELECT_GLOW_SIZE),
     new THREE.MeshBasicMaterial({
       map: makeGlowTexture(),
       transparent: true,
@@ -5482,10 +6452,70 @@ function buildSelectScene() {
   selectScene.add(back);
 }
 
+// The stage camera's orbit — the object explorer's mouse-wheel zoom and
+// click-drag orbit (the car tabs get it too; it is the same stage). The home
+// values rebuild the framing this camera used to be bolted at: eye (0, 2.4,
+// 10.5) aimed at (0, 0.95, 0), i.e. yaw along +Z, radius hypot(1.45, 10.5)
+// and phi (measured off +Y) the angle that puts the eye 1.45 above the focus.
+const SELECT_ORBIT_TARGET = new THREE.Vector3(0, SELECT_PREVIEW_FOCUS_Y, 0);
+const SELECT_ORBIT_HOME = {
+  yaw: Math.PI / 2,
+  phi: Math.atan2(10.5, 2.4 - SELECT_PREVIEW_FOCUS_Y),
+  radius: Math.hypot(2.4 - SELECT_PREVIEW_FOCUS_Y, 10.5),
+};
+const selectOrbit = {
+  yaw: SELECT_ORBIT_HOME.yaw,
+  phi: SELECT_ORBIT_HOME.phi,
+  radius: SELECT_ORBIT_HOME.radius,
+};
+const SELECT_ZOOM_MIN = 4;
+const SELECT_ZOOM_MAX = 24;
+const SELECT_PHI_MIN = 0.2;     // just off the overhead pole...
+const SELECT_PHI_MAX = 2.6;     // ...to just past under, so the base is viewable
+let selectDrag = null;          // live stage drag: { id, x, y, yaw, phi }
+
+// The stage's visible size at the focal plane, for the HOME orbit distance and
+// the window's CURRENT aspect. This is the frame the object browser sizes
+// against: world units the object is allowed to occupy, recomputed every time
+// something is opened rather than guessed from a fixed ratio.
+function selectFrameSize() {
+  const d = SELECT_ORBIT_HOME.radius;
+  const h = 2 * d * Math.tan((selectCamera.fov * Math.PI) / 360);
+  const w = h * (window.innerWidth / Math.max(1, window.innerHeight));
+  return { h, w };
+}
+
+// Place the stage camera from the orbit numbers, called every showroom frame —
+// the wheel and drag handlers only have to write those three numbers.
+function updateSelectCamera() {
+  // Keep the projection locked to the window on EVERY frame, whatever is (or
+  // is not) on the stage. This used to live behind the "nothing on the disc"
+  // early return in updateSelectCar, so a stale aspect could survive until the
+  // first object landed — and a camera whose aspect disagrees with the canvas
+  // is exactly what renders a model stretched across the wrong shape of frame.
+  const aspect = window.innerWidth / Math.max(1, window.innerHeight);
+  if (selectCamera.aspect !== aspect) {
+    selectCamera.aspect = aspect;
+    selectCamera.updateProjectionMatrix();
+  }
+  const sp = Math.sin(selectOrbit.phi);
+  selectCamera.position.set(
+    SELECT_ORBIT_TARGET.x + selectOrbit.radius * sp * Math.cos(selectOrbit.yaw),
+    SELECT_ORBIT_TARGET.y + selectOrbit.radius * Math.cos(selectOrbit.phi),
+    SELECT_ORBIT_TARGET.z + selectOrbit.radius * sp * Math.sin(selectOrbit.yaw),
+  );
+  selectCamera.lookAt(SELECT_ORBIT_TARGET);
+}
+
 function refreshSelectCar(kind) {
   const entry = CAR_KINDS.find((k) => k.id === kind);
   if (!entry) return;
   const model = entry.build();
+  // Only the crab has legs to stride, and the rig lives on the builder's own
+  // group — grab it before the children are moved out below.
+  selectWalkRig = kind === 'crab' && model.userData.crabLegs
+    ? { legs: model.userData.crabLegs, claws: model.userData.crabClaws || [], phase: 0 }
+    : null;
   const inner = new THREE.Group();
   // Show cars at half size on the showroom stage so they sit small within the
   // glow instead of filling the frame (the little car scales too). The robot's
@@ -5494,6 +6524,9 @@ function refreshSelectCar(kind) {
   inner.scale.setScalar(entry.scale * SELECT_CAR_SHOW_SCALE * (entry.show || 1));
   while (model.children.length > 0) inner.add(model.children[0]);
   setSelectPreview(inner);
+  // Cars stand on the disc under the fixed focus line; only the object browser
+  // re-aims the camera at whatever it has just framed.
+  SELECT_ORBIT_TARGET.y = SELECT_PREVIEW_FOCUS_Y;
   selectPreview = kind;
   // The arrows arm the tab you're on; the other tab's arm is left alone.
   if (pickerTab === 'chase') chasePreview = kind;
@@ -5520,7 +6553,9 @@ function setSelectPreview(group) {
 // Empty the stage. The Levels tab has nothing to show, and leaving the last car
 // spinning under a level list just looks like a bug.
 function clearSelectPreview() {
+  selectWalkRig = null;
   setSelectPreview(null);
+  SELECT_ORBIT_TARGET.y = SELECT_PREVIEW_FOCUS_Y;
 }
 
 function enterSelectMode() {
@@ -5545,7 +6580,7 @@ function exitSelectMode(apply) {
   document.body.classList.remove('select-mode');
   // Leaving the modal drops the stage furniture too, so reopening it starts
   // from the tab that was showing rather than a stale object or a bare glow.
-  document.body.classList.remove('tab-levels', 'tab-objects', 'browser-mode', 'object-open');
+  document.body.classList.remove('tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-about', 'browser-mode', 'object-open');
   clearSelectPreview();
   gearBtn.textContent = '⚙';
   gearBtn.title = 'Settings';
@@ -5570,18 +6605,22 @@ function cycleCar(dir) {
   refreshSelectCar(CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id);
 }
 
-// Switch the showroom to one of its three tabs.
+// Switch the showroom to one of its five tabs.
 //
 // PLAYER and CHASE spin a car and commit a choice. LEVELS and OBJECTS are
 // browsers: they do not change what you drive, they take you somewhere or show
 // you something, and they leave the car tabs' armed previews untouched.
-// OBJECTS has no tab button of its own — it is a screen inside LEVELS, opened
-// from a level's own Objects button — but the body classes below still drive
-// its panel.
+// CONTROLS is a reference table — every keyboard/mouse binding beside its Xbox
+// controller twin — and it is a browser too, so it hides the stage furniture
+// the same way. GRAPHICS edits the live renderer, so it is a browser as well,
+// but it drops back to rendering the real world behind the panel (see animate)
+// instead of the empty showroom stage. OBJECTS has no tab button of its own —
+// it is a screen inside LEVELS, opened from a level's own Objects button — but
+// the body classes below still drive its panel.
 function setPickerTab(tab) {
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
-  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels']]) {
+  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-graphics', 'graphics'], ['tab-about', 'about']]) {
     const el = tabEl(id);
     if (el) el.classList.toggle('active', tab === name);
   }
@@ -5590,20 +6629,48 @@ function setPickerTab(tab) {
   // is up.
   document.body.classList.toggle('tab-levels', tab === 'levels');
   document.body.classList.toggle('tab-objects', tab === 'objects');
-  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects');
+  document.body.classList.toggle('tab-controls', tab === 'controls');
+  document.body.classList.toggle('tab-graphics', tab === 'graphics');
+  document.body.classList.toggle('tab-about', tab === 'about');
+  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects' || tab === 'controls' || tab === 'graphics' || tab === 'about');
   // The object-on-the-disc layout belongs to the objects screen alone. Leaving
   // it has to put the grid furniture back, or the panel comes back empty.
   if (tab !== 'objects') document.body.classList.remove('object-open');
+  // The pad's highlighted control belongs to the screen it was picked on.
+  padFocusDirty = true;
 
   if (tab === 'levels') {
     clearSelectPreview();
     renderLevelList();
   } else if (tab === 'objects') {
     renderObjectBrowser();
+  } else if (tab === 'controls') {
+    clearSelectPreview();
+    updatePadStatus();
+  } else if (tab === 'graphics') {
+    clearSelectPreview();
+    gfxUpdateUI();   // repaint from `gfx`, so reopening the tab always shows the applied settings
+  } else if (tab === 'about') {
+    clearSelectPreview();
   } else {
     // Restore that tab's own armed preview — the other one is left untouched.
     refreshSelectCar(tab === 'chase' ? chasePreview : playerPreview);
   }
+  // The tab row may have just wrapped to a different number of rows at this
+  // width; keep the panels sitting under it.
+  syncPickerTabLayout();
+}
+
+// The tab row is fixed near the top and wraps onto extra rows on a narrow
+// screen. The browser panels below used to start at a hard-coded 74px, so a
+// second row overran the panel and overlapped its content. Measure where the
+// row actually ends and publish it as the CSS variable the panels read, so they
+// always begin under the LAST row. Called on every tab switch and on resize.
+function syncPickerTabLayout() {
+  const tabs = document.getElementById('picker-tabs');
+  if (!tabs || !tabs.offsetHeight) return;   // hidden (not in the modal) — leave the CSS fallback
+  const bottom = Math.round(tabs.getBoundingClientRect().bottom + 12);
+  document.documentElement.style.setProperty('--picker-tabs-bottom', bottom + 'px');
 }
 
 function updateSelectCar() {
@@ -5626,9 +6693,14 @@ function updateSelectCar() {
   }
 
   if (!selectCarGroup) return;
-  if (selectCamera.aspect !== window.innerWidth / window.innerHeight) {
-    selectCamera.aspect = window.innerWidth / window.innerHeight;
-    selectCamera.updateProjectionMatrix();
+  // The crab on the stage strides rather than just turning: its legs and claws
+  // are driven here on the same wave the driven one uses, because a crab posed
+  // mid-step and never moving reads as a toy.
+  if (selectWalkRig) {
+    const r = selectWalkRig;
+    r.phase += dt * 3.2;
+    r.legs.forEach((l, i) => { l.rotation.x = Math.sin(r.phase + i * 1.7) * 0.34; });
+    r.claws.forEach((cl, i) => { cl.rotation.x = Math.sin(r.phase * 0.7 + i * 2) * 0.12; });
   }
   selectCarGroup.rotation.y += dt * OBJECT_SPIN;
 }
@@ -5646,6 +6718,12 @@ if (tabPlayerBtn) tabPlayerBtn.addEventListener('click', () => setPickerTab('pla
 const tabChaseBtn = document.getElementById('tab-chase');
 if (tabChaseBtn) tabChaseBtn.addEventListener('click', () => setPickerTab('chase'));
 const tabLevelsBtn = document.getElementById('tab-levels');
+const tabControlsBtn = document.getElementById('tab-controls');
+if (tabControlsBtn) tabControlsBtn.addEventListener('click', () => setPickerTab('controls'));
+const tabGraphicsBtn = document.getElementById('tab-graphics');
+if (tabGraphicsBtn) tabGraphicsBtn.addEventListener('click', () => setPickerTab('graphics'));
+const tabAboutBtn = document.getElementById('tab-about');
+if (tabAboutBtn) tabAboutBtn.addEventListener('click', () => setPickerTab('about'));
 
 // The chase defaults to the little blue car, so dress the chaser right away.
 applyChaseCar(chaseCarKind);
@@ -5723,7 +6801,17 @@ function objectIndex(category, name) {
 // the history of what you looked at rather than leaving the game.
 
 function pushBrowserUrl() {
-  const p = new URLSearchParams();
+  // Start from whatever is already on the query so flags that are not ours —
+  // `?debug`, most notably — survive a click through the browser. The old
+  // blank-slate search dropped them, which meant arriving on an object with
+  // ?debug and then clicking anything silently threw the debug hooks away.
+  // The jump params x/z are the deliberate exception: they are a one-shot
+  // instruction to the loader, not a description of the screen, and replaying
+  // them on a refresh would drop the car back at the spawn.
+  let p;
+  try { p = new URLSearchParams(location.search); } catch { p = new URLSearchParams(); }
+  p.delete('x');
+  p.delete('z');
   p.set('level', objLevel);
   if (objCat) p.set('cat', objCat);
   if (objOpen) p.set('objects', objOpen);
@@ -5778,6 +6866,7 @@ const levelListEl = document.getElementById('level-list');
 
 function renderLevelList() {
   if (!levelListEl) return;
+  padFocusDirty = true;   // the pad walks this list: rebuild its buttons
   levelListEl.textContent = '';
   for (const lvl of LEVELS) {
     // The row is a wrapper, not a button: the level's own button travels you
@@ -5919,6 +7008,7 @@ const odPrevBtn = document.getElementById('od-prev');
 const odNextBtn = document.getElementById('od-next');
 
 function renderObjectBrowser() {
+  padFocusDirty = true;   // grid / pager / detail buttons all change here
   const cats = currentCategories();
   // Category chips.
   if (objCatsEl) {
@@ -6216,10 +7306,20 @@ function normalizedModelGroup(model, targetH, widthRatio = 1.7) {
 // Put an object's model on the spinning stage and fill in the detail card.
 function openObject(o) {
   objOpen = o.name;
-  const inner = normalizedModelGroup(o.build(), PREVIEW_TARGET_H);
-  // Lift so the box's middle lands on the showroom camera's focus height rather
-  // than the base, so short and tall objects both sit centred in frame.
-  inner.position.y = SELECT_PREVIEW_FOCUS_Y;
+  // Size against the frame THIS window has: at most half its visible height,
+  // a bit over half its visible width, and never wider than the glow disc.
+  // All three come off selectFrameSize(), so a wide object is framed against
+  // the aspect it is actually being shown in instead of a fixed world budget.
+  const frame = selectFrameSize();
+  const targetH = Math.min(PREVIEW_TARGET_H, frame.h * PREVIEW_FILL_H);
+  const maxW = Math.min(frame.w * PREVIEW_FILL_W, SELECT_GLOW_SIZE * 0.95);
+  const inner = normalizedModelGroup(o.build(), targetH, maxW / targetH);
+  // Rest the base ON the disc and aim the camera at the object's own middle.
+  // Hanging the middle on a fixed focus line (what this did before) is fine
+  // for a two-unit model but drops a four-unit one through the stage floor.
+  const box = new THREE.Box3().setFromObject(inner);
+  inner.position.y = -(box.min.y);
+  SELECT_ORBIT_TARGET.y = inner.position.y;
   setSelectPreview(inner);
 
   renderObjectBrowser();
@@ -6326,12 +7426,19 @@ window.addEventListener('popstate', () => {
 // Scroll-wheel camera zoom: wheel up zooms in, wheel down zooms out. Works
 // paused or not, so you can zoom in on the action for a screenshot. On touch
 // screens the two-finger pinch below drives the same cameraOrbit.radius.
+// While the showroom stage is up (the object explorer especially) the wheel
+// zooms THAT camera instead — see selectOrbit — and leaves the hidden game
+// camera untouched.
 const CAM_ZOOM_MIN = 4;
 const CAM_ZOOM_MAX = 85;
 window.addEventListener('wheel', (event) => {
   event.preventDefault();
-  cameraManualTimer = CAMERA_MANUAL_HOLD;
   const factor = Math.exp(event.deltaY * 0.0012);
+  if (selectMode && pickerTab !== 'graphics') {
+    selectOrbit.radius = THREE.MathUtils.clamp(selectOrbit.radius * factor, SELECT_ZOOM_MIN, SELECT_ZOOM_MAX);
+    return;
+  }
+  cameraManualTimer = CAMERA_MANUAL_HOLD;
   // In top-down mode the wheel drives the plan view's own height, which is not
   // bounded by the chase cam's CAM_ZOOM_MAX 85 — the whole point of the mode is
   // being able to pull out and see where you are.
@@ -6854,6 +7961,23 @@ const clock = new THREE.Clock();
 // stay live so you can frame a screenshot while the world holds perfectly
 // still. (The shake decay doubles as a stabilizer: pause right after a jump
 // and the camera settles flat for the shot.)
+// Beach camera keep-in. The cliffs are the beach's walls, so on the beach the
+// camera always ends its frame inside the slab the car can actually drive -
+// never behind the back cliff or out past the side cliffs, no matter how far
+// the orbit is zoomed out or how the player spins it. Away from the boundaries
+// the clamp does nothing and the camera is untouched, so it naturally releases
+// when you drive back out into the open sand.
+function clampBeachCamera() {
+  if (worldState !== 'beach') return;
+  // The side cliffs run at |x| = BEACH_HALF_W + face (+r). The playable space
+  // inside the walls is at |x| < ~BEACH_HALF_W; clamp a little inside the sheer
+  // walls so the chase cam never slips past the rock face.
+  camera.position.x = THREE.MathUtils.clamp(camera.position.x, -BEACH_HALF_W + 2.8, BEACH_HALF_W - 2.8);
+  // Back cliff at z = BEACH_CLIFF_Z (cliff face near there) — keep the camera
+  // in front of the back wall (south of it) and above the offshore trench.
+  camera.position.z = THREE.MathUtils.clamp(camera.position.z, BEACH_TRENCH_Z + 1.6, BEACH_CLIFF_Z - 2.2);
+}
+
 function updateCamera(delta) {
   cameraManualTimer = Math.max(0, cameraManualTimer - delta);
 
@@ -7221,11 +8345,12 @@ function updateCamera(delta) {
       _lookTarget.y = Math.max(_lookTarget.y, camera.position.y - drop * 0.2);
     }
 
-    // The perspective far plane is 300, which the chase cam never approaches.
+    // The perspective far plane is the player's draw distance (300 unless the
+    // Graphics tab says otherwise), which the chase cam never approaches.
     // Zooming the plan view out to 600 would otherwise clip the world into
     // black at the frame edges, so stretch the far plane to suit the height
     // whenever the view is high. Restored by the chase cam on the way back.
-    const wantedFar = Math.max(300, camera.position.y + topDown.zoom * 0.5 + 120);
+    const wantedFar = Math.max(gfx.far, camera.position.y + topDown.zoom * 0.5 + 120);
     if (camera.far !== wantedFar) {
       camera.far = wantedFar;
       camera.updateProjectionMatrix();
@@ -7239,9 +8364,10 @@ function updateCamera(delta) {
     // Coming back down: ride `blend` out so the return is a descent, not a cut.
     if (topDown.blend > 0) topDown.blend = Math.max(0, topDown.blend - delta * 2.2);
     // Undo the far-plane stretch once the plan view is off, so the chase cam
-    // goes back to the tight depth range it was authored for.
-    if (topDown.blend <= 0 && camera.far !== 300) {
-      camera.far = 300;
+    // goes back to the tight depth range it was authored for — at whatever
+    // draw distance the Graphics tab has set.
+    if (topDown.blend <= 0 && camera.far !== gfx.far) {
+      camera.far = gfx.far;
       camera.updateProjectionMatrix();
     }
   }
@@ -7358,16 +8484,16 @@ function updateCamera(delta) {
     }
   }
 
-  // Zoom way out whenever the giant robot is close so its whole body — and
-  // face — stays in view, not just while it's eating. The robot only exists
-  // in the city, so there's no robot zoom in the ramp world.
-  const robotZoomT =
-    worldState === 'city'
-      ? THREE.MathUtils.clamp(
-          1 - Math.hypot(wrappedDeltaX(car.position.x, robot.mesh.position.x), wrappedDeltaZ(car.position.z, robot.mesh.position.z)) / ROBOT_CAM_DIST,
-          0, 1
-        )
-      : 0;
+  // Pull way out whenever the giant robot is coming for the player — homing in,
+  // or already lifting the player's car toward its mouth — so its whole body and
+  // face stay in view through the meal. Gated on the player-specific
+  // `isAboutToEat()` rather than mere proximity, so a robot stomping around the
+  // block (or eating traffic) doesn't yank the camera off your car. The robot
+  // only exists in the city, so there's no robot zoom in the ramp world. Eased
+  // so the framing glides in and out instead of popping.
+  const robotCamTarget = worldState === 'city' && robot.isAboutToEat() ? 1 : 0;
+  robotCamBlend += (robotCamTarget - robotCamBlend) * Math.min(1, 4.0 * delta);
+  const robotZoomT = robotCamBlend;
 
   // Flight zoom: as the car climbs the mega ramp (and while it's airborne) the
   // camera pulls way out and sits higher so you can watch yourself fly off the
@@ -7407,18 +8533,22 @@ function updateCamera(delta) {
 
   const zoomT = Math.max(robotZoomT, flightZoomT, tarantulaZoomT);
   // When the spider is the reason we're zoomed out it uses its OWN, tighter
-  // frame — it's about a third of the robot's bulk, so the full 62-unit
+  // frame - it's about a third of the robot's bulk, so the full 62-unit
   // robot/flight radius would shrink it to a speck.
   const spiderDominant = tarantulaZoomT > Math.max(robotZoomT, flightZoomT) + 0.001;
   // Driving the robot: hold the camera far enough BACK (and, via the chest
   // target above, up) that the whole 14-tall mech, head to feet, fits in view.
-  const camTargetRadius = playerRobot
+  let camTargetRadius = playerRobot
     ? 18
     : playerTrain
       ? trainCamRadius
       : spiderDominant
         ? cameraOrbit.radius + (TARANTULA_CAM_MAX_RADIUS - cameraOrbit.radius) * tarantulaZoomT
         : cameraOrbit.radius + (Math.max(ROBOT_CAM_MAX_RADIUS, FLIGHT_CAM_MAX_RADIUS) - cameraOrbit.radius) * zoomT;
+  if (playerMonster) {
+    const monsterT = THREE.MathUtils.clamp(Math.max(Math.abs(velocity.value), 2) / 14, 0.3, 1);
+    camTargetRadius = Math.max(camTargetRadius, MONSTER_CAM_MAX_RADIUS * monsterT);
+  }
   camRadius += (camTargetRadius - camRadius) * Math.min(1, 4.0 * delta);
 
   // Driving the train: lift the camera a touch higher and steeper so the whole
@@ -7610,6 +8740,16 @@ function updateCamera(delta) {
   camOffset.lerp(desiredOffset, holeFallActive ? 0.6 : 0.12);
   camera.position.copy(cameraTarget).add(camOffset);
 
+  // Keep the chase camera out of the beach sand. The profile climbs into the
+  // dunes and the side banks, so a camera trailing a car that has dropped toward
+  // the water can end up buried under the sand it is looking across. Lift it to
+  // sit a little above whatever the sand is doing under it - never lower than
+  // the ground, so it skims the dunes instead of sinking through them.
+  if (worldState === 'beach') {
+    const camFloor = groundHeight + beachGroundOffsetAt(camera.position.x, camera.position.z) + 1.4;
+    if (camera.position.y < camFloor) camera.position.y = camFloor;
+  }
+
   // Keep the chase camera OUT of the Holy Mountain. The cinematic overrides
   // above all `return` early, so this only ever runs for the free chase cam:
   // if it lands inside the cone's solid volume (below the summit and inside
@@ -7664,8 +8804,21 @@ function gullHasTheCar() {
   return worldState === 'beach' && beachWorld && beachWorld.carCarry;
 }
 
+// Mirrors cityPowerOut() so the street lamp bulbs are only touched when the
+// substation's transformer actually goes over or is stood back up.
+let streetLightsOut = false;
+
 function animate() {
   requestAnimationFrame(animate);
+  gfxFpsTick();
+
+  // The controller is polled every frame — including while paused, so Start
+  // can unpause and the settings screen stays navigable from the pad. Its own
+  // clock, because clock.getDelta() below is the physics tick and must not be
+  // consumed here (and it does not run at all while paused).
+  const padNow = performance.now();
+  pollGamepad(Math.min(0.05, (padNow - padLastNow) / 1000) || 1 / 60);
+  padLastNow = padNow;
 
   // If a background underground rebuild finished while we were away, swap it
   // in now that the underground is off camera (already guarded inside).
@@ -7678,12 +8831,19 @@ function animate() {
   // updating so scroll-wheel zoom + drag orbit still work for screenshots,
   // and the frame keeps rendering so you can grab it.
   if (isPaused) {
-    if (selectMode) {
+    // On the Graphics tab the panel is semi-transparent on purpose: the world
+    // you actually play keeps rendering behind it, so the sliders (and the FPS
+    // readout) show their effect on the real scene rather than on the empty
+    // showroom stage.
+    if (selectMode && pickerTab !== 'graphics') {
+      updateSelectCamera();
       updateSelectCar();
       renderer.render(selectScene, selectCamera);
     } else {
       updateCamera(1 / 60);
+      clampBeachCamera();
       renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
+      renderUnderwaterTint();
     }
     return;
   }
@@ -7707,9 +8867,13 @@ function animate() {
   let reverse = 0;
   if (keys['ArrowUp'] || keys['KeyW']) forward = 1;
   if (keys['ArrowDown'] || keys['KeyS']) reverse = 1;
-  // Hold Shift anywhere for a nitro-style 2× boost: acceleration AND top speed
-  // both double, in either direction (forward or reverse).
-  const boost = (keys['ShiftLeft'] || keys['ShiftRight']) ? 2 : 1;
+  // The pad's triggers / stick / D-pad are analog and digital at once: any
+  // meaningful reading takes over from (or adds to) the keyboard.
+  if (pad.throttle > 0.05) forward = Math.max(forward, pad.throttle);
+  if (pad.reverse > 0.05) reverse = Math.max(reverse, pad.reverse);
+  // Hold Shift (or X on the pad) anywhere for a nitro-style 2× boost:
+  // acceleration AND top speed both double, in either direction.
+  const boost = (keys['ShiftLeft'] || keys['ShiftRight'] || pad.boost) ? 2 : 1;
   if (joy.active) {
     // Analog joystick: push up = go, pull down = reverse
     const f = Math.max(0, -joy.y);
@@ -7736,8 +8900,12 @@ function animate() {
   }
 
   if (joy.active) {
-    // Analog steering: push right = turn right, push left = turn left
+    // Analog joystick: push right = turn right, push left = turn left
     steering.value += (-joy.x * 0.9 - steering.value) * Math.min(1, 12 * delta);
+  } else if (pad.steer) {
+    // Xbox left stick / D-pad steer the same way the touch joystick does —
+    // positive is right, and the same easing keeps it from snapping.
+    steering.value += (-pad.steer * 0.9 - steering.value) * Math.min(1, 12 * delta);
   } else {
     if (keys['ArrowLeft'] || keys['KeyA']) {
       steering.value = Math.min(steering.value + turnRate * 1.2, 0.9);
@@ -7821,7 +8989,8 @@ function animate() {
     elevated ||
     (!isPositionBlocked(nextCarPos.x, nextCarPos.z, playerCarRadius, true) &&
       !isPositionBlockedByFiretruck(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
-      !isPositionBlockedByRobot(nextCarPos.x, nextCarPos.z, playerCarRadius)));
+      !isPositionBlockedByRobot(nextCarPos.x, nextCarPos.z, playerCarRadius) &&
+      !isPositionBlockedByCat(nextCarPos.x, nextCarPos.z, playerCarRadius)));
   if (canMove) {
     car.position.copy(nextCarPos);
   } else {
@@ -7881,7 +9050,8 @@ function animate() {
             // wedges pinch, and there the anti-stuck pass below frees us.
             if (!isPositionBlocked(slideX, slideZ, playerCarRadius, true) &&
                 !isPositionBlockedByFiretruck(slideX, slideZ, playerCarRadius) &&
-                !isPositionBlockedByRobot(slideX, slideZ, playerCarRadius)) {
+                !isPositionBlockedByRobot(slideX, slideZ, playerCarRadius) &&
+                !isPositionBlockedByCat(slideX, slideZ, playerCarRadius)) {
               car.position.x = slideX;
               car.position.z = slideZ;
             }
@@ -8256,14 +9426,12 @@ function animate() {
       }
     }
   } else if (worldState === 'house') {
-    // A house has a flat floor and a ceiling, not hills and ramps. Everything in
-    // it is at floor level, so the only vertical interest is being knocked
-    // airborne by the cat and landing again on the same plank.
-    //
-    // buildingTopAt is deliberately NOT consulted here: the house's colliders
-    // are its walls, and they carry h = ceiling height, so a wall would read as
-    // a 26-unit rooftop and snap the car on top of it. Nothing in the house is
-    // climbable anyway.
+    // A house is mostly a flat floor and a ceiling. But a few things in it are
+    // meant to be driven on: the raised tiled deck, the surfboard ramp and the
+    // bathtub's dish (house/surfaces.js). buildingTopAt is deliberately NOT
+    // consulted here — the house's colliders are its walls with h = ceiling
+    // height, so a wall would read as a 26-unit rooftop and snap the car on top.
+    const surfs = houseWorld.surfaces;
     if (jumpState.inAir) {
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
@@ -8276,24 +9444,66 @@ function animate() {
         car.position.y = HOUSE.ceil;
         if (jumpState.yVelocity > 0) jumpState.yVelocity = 0;
       }
-      if (car.position.y <= HOUSE.floorY) {
-        car.position.y = HOUSE.floorY;
+      // Land on the highest thing under the car — deck, tub rim or dish —
+      // rather than always the plank, so a cat swat into the bath lands in it.
+      const landing = houseLandingY(surfs, car.position.x, car.position.z);
+      const floor = landing === null ? HOUSE.floorY : Math.max(HOUSE.floorY, landing);
+      if (car.position.y <= floor) {
+        car.position.y = floor;
         const impact = Math.abs(jumpState.yVelocity);
         jumpState.yVelocity = 0;
         jumpState.inAir = false;
         shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
       }
     } else {
-      car.position.y = HOUSE.floorY;
+      // Ride the house heightfield. `fromY` is the car's own height, so it only
+      // steps onto something it could actually climb — the low tile kerb and the
+      // ramp yes, the rim of the tub no (that is the surfboard's job).
+      //
+      // Sampled along the whole segment the car moved this frame, not just at its
+      // end point. At 60fps that is a nicety; at a low frame rate a car doing
+      // several units a frame would otherwise skip the 4.8-unit surfboard ramp
+      // entirely and drop through the bowl, so the fix is what makes the bath
+      // drivable on a slow machine rather than a 60fps-only party trick.
+      const x0 = car.position.x, z0 = car.position.z;
+      const travelled = Math.hypot(x0 - housePrevX, z0 - housePrevZ);
+      const sweep = houseWasGrounded && travelled < 12;
+      const steps = sweep ? Math.max(1, Math.ceil(travelled / 0.5)) : 1;
+      const fromX = sweep ? housePrevX : x0, fromZ = sweep ? housePrevZ : z0;
+      let y = car.position.y;
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const s = houseSurfaceY(surfs, fromX + (x0 - fromX) * t, fromZ + (z0 - fromZ) * t, y);
+        y = s === null ? HOUSE.floorY : s;
+      }
+      car.position.y = y;
     }
+    housePrevX = car.position.x;
+    housePrevZ = car.position.z;
+    houseWasGrounded = !jumpState.inAir;
   } else if (jumpState.inAir) {
     ugDbg = 'airborne';
     currentRamp = null;   // airborne — level back out
     // Ballistic flight — hang in the air, then fall hard.
     jumpState.yVelocity -= gravity * delta;
+    // Ghost water. On the beach there are no rooftops or ramps to land on: the
+    // only surface is the sand/sea-floor profile. rampSurfaceY and buildingTopAt
+    // both report 0 out over the water — which is (near enough) the sea surface
+    // itself — so using them made a car that drove off the sand, or was dropped
+    // by the gull, "land" on the top of the waves and stick there. Land on the
+    // real beach floor instead.
+    const surface = worldState === 'beach'
+      ? cityGroundHeightAt(car.position.x, car.position.z)
+      : Math.max(rampSurfaceY(car.position.x, car.position.z, car.position.y), buildingTopAt(car.position.x, car.position.z));
+    // Once the car is below the waterline the sea takes over: drag caps the
+    // descent to a slow terminal sink, so you fall through the surface and drift
+    // down to the bottom rather than slamming onto the floor. Above the surface
+    // it is ordinary falling.
+    if (worldState === 'beach' && car.position.y < groundHeight + BEACH_SEA_Y) {
+      const SINK_SPEED = 6;      // terminal sink rate through the water
+      jumpState.yVelocity = Math.max(jumpState.yVelocity, -SINK_SPEED);
+    }
     car.position.y += jumpState.yVelocity * delta;
-    // Land on the street — or on a rooftop if we're coming down over a building.
-    const surface = Math.max(rampSurfaceY(car.position.x, car.position.z, car.position.y), buildingTopAt(car.position.x, car.position.z));
     if (car.position.y <= surface) {
       car.position.y = surface;
       const impact = Math.abs(jumpState.yVelocity);
@@ -8335,11 +9545,30 @@ function animate() {
           car.position.y = Math.max(car.position.y, roof);
         } else if (minePortal.active) {
           // Mine dive: let the portal code control Y (sinking into the earth)
-        } else if (car.position.y > groundHeight + 1) {
+        } else if (car.position.y > cityGroundHeightAt(car.position.x, car.position.z) + 1) {
+          // More than a step above the LOCAL ground (not the flat city datum):
+          // a roof edge in town, or - because the beach rides three metres up
+          // on its own sand profile - nothing at all on the sand. Comparing to
+          // `groundHeight` alone flagged the car airborne every other frame on
+          // the beach, and an airborne car ignores colliders, so it crept
+          // straight through the cove walls and wrapped across the torus.
           jumpState.inAir = true;
           jumpState.yVelocity = 0;
         } else {
           car.position.y = cityGroundHeightAt(car.position.x, car.position.z);
+          if (worldState === 'beach') {
+            // Pitch the body to the sand slope, sampled at the two axles. The
+            // beach profile only varies in Z, but the car can face any way, so
+            // sampling along `direction` keeps the nose down whichever way the
+            // slope runs under it.
+            const halfBase = 1.35;
+            const fx = car.position.x + direction.x * halfBase;
+            const fz = car.position.z + direction.z * halfBase;
+            const rx = car.position.x - direction.x * halfBase;
+            const rz = car.position.z - direction.z * halfBase;
+            terrainPitch = -Math.atan2(
+              beachGroundOffsetAt(fx, fz) - beachGroundOffsetAt(rx, rz), halfBase * 2);
+          }
         }
       }
       wasOnRamp = null;
@@ -8402,6 +9631,29 @@ function animate() {
       fl.children[1].scale.y = Math.min(l, 0.65);   // inner core, always shy
     }
   }
+
+  // Taco truck: the stock on the hanging rail is loose, so it surges when the
+  // truck accelerates or brakes and swings out toward the side of the turn.
+  // Each thing on the rail hangs from its own pivot and is driven as a little
+  // spring-damper, so it overshoots and settles instead of snapping to a pose.
+  if (car.userData.swing) {
+    const sw = car.userData.swing;
+    const accel = (velocity.value - sw.prevV) / Math.max(delta, 1e-4);
+    sw.prevV = velocity.value;
+    // Positive steering lifts the nose toward local +Z, which is the driver's
+    // left — so a left turn pushes the hangers to +Z.
+    const lean = THREE.MathUtils.clamp(steering.value * velocity.value, -9, 9) * -0.024;
+    const surge = THREE.MathUtils.clamp(accel, -70, 70) * 0.005;
+    for (const h of sw.hangers) {
+      h.vx += ((lean - h.ax) * 24 - h.vx * 5.2) * delta;
+      h.ax += h.vx * delta;
+      h.vz += ((surge - h.az) * 24 - h.vz * 5.2) * delta;
+      h.az += h.vz * delta;
+      h.pivot.rotation.x = h.ax;
+      h.pivot.rotation.z = h.az;
+    }
+  }
+
   // Body lean. On a ramp the car pitches to match the slope (nose up when
   // climbing, nose down when descending) so all four tires sit on the slanted
   // ground. Off the ramp it just does the usual steering roll + accel lean.
@@ -8442,6 +9694,12 @@ function animate() {
   } else if (worldState === 'ramp' && !jumpState.inAir) {
     // Ramp-world dirt: follow the two-point terrain pitch with a weighty
     // arcade rock — nose up over the bumps, tail up after, then settle.
+    car.rotation.z += (terrainPitch - car.rotation.z) * 0.25;
+    car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
+  } else if (worldState === 'beach' && !jumpState.inAir) {
+    // Beach sand: pitch the body to the slope so the nose noses down as the car
+    // rolls off the shelf toward the water, then rides level again on the flat.
+    // Same two-point pitch the ramp world uses; only the height source differs.
     car.rotation.z += (terrainPitch - car.rotation.z) * 0.25;
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
   } else if (minePortal.active) {
@@ -8611,7 +9869,13 @@ function animate() {
   // knock uses the torus spans; the ramp world's props sit well inside the
   // band, so it knocks without wrap (which would otherwise let a ramp prop
   // near the edge also topple city props folded across the seam).
-  const vehicle = { kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster };
+  // `heavy` gates the few props only the biggest rides can take out - above all
+  // the substation's transformer, whose destruction blacks the city out. The
+  // steamroller, the monster truck and the fire engine all qualify.
+  const vehicle = {
+    kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster,
+    firetruck: playerFiretruck, heavy: playerSteamroller || playerMonster || playerFiretruck,
+  };
   if (worldState === 'city') knockAt(car.position, playerKnockRadius, worldSizeX, worldSizeZ, velocity.value, vehicle);
   else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
@@ -9219,6 +10483,7 @@ function animate() {
   // Chase camera — held in updateCamera() so it can also keep running while
   // the game is paused (scroll-wheel zoom + drag orbit stay live).
   updateCamera(delta);
+  clampBeachCamera();   // keep the camera on the playable side of the beach cliffs
   // After the camera has settled, so the fade tests the view the player
   // actually gets this frame rather than last frame's position.
   updateHouseFade(delta);
@@ -9255,6 +10520,13 @@ function animate() {
 
   // Blinking alarms and beacons on the new city landmarks
   updateCityBuildings(clock.elapsedTime);
+  // Knocking the substation's transformer over blacks the city out; the street
+  // lamps live in props.js, so the state is handed across only when it changes.
+  const powerOut = cityPowerOut();
+  if (powerOut !== streetLightsOut) {
+    streetLightsOut = powerOut;
+    setStreetLights(!powerOut);
+  }
 
   // Small NW-corner marker arrow: spin on its axis, planted on the ground
   updateNwCornerArrow(delta);
@@ -9403,7 +10675,7 @@ function animate() {
     houseCat.update(delta, {
       playerPos: car.position,
       playerR: playerCarRadius,
-      blocked: (x, z, r) => isPositionBlocked(x, z, r),
+      blocked: (x, z, r) => isPositionBlocked(x, z, r) || catBlockedByFurniture(x, z, r),
       onSwipe: (dx, dz) => catSwipeAway(dx, dz, houseCat.mesh.position.x, houseCat.mesh.position.z),
     });
   }
@@ -9438,7 +10710,28 @@ function animate() {
   // happening. Everything else is gated on which half of the trip we are on.
   if (worldState === 'city') {
     const shutNow = clamShell.update(delta);
-    if (portalGrace <= 0 && !shellPortal.armed && !clamShell.closing && !jumpState.inAir &&
+    // The exit drive-out: barrel the car forward along its heading until it is
+    // clear of the bowl, then lift the lid behind it. No driving input, no
+    // physics - the shot owns the car until it is out.
+    if (shellPortal.phase === 'exit') {
+      shellPortal.exitTimer += delta;
+      const t = Math.min(shellPortal.exitTimer / 0.9, 1);
+      const dist = 3.4 * t;
+      car.rotation.set(0, -Math.PI / 2, 0);
+      const fx = -Math.cos(car.rotation.y), fz = Math.sin(car.rotation.y);
+      car.position.x = clamShell.x + fx * dist;
+      car.position.z = clamShell.z + fz * dist;
+      car.position.y = clamBowlHeightAt(car.position.x, car.position.z);
+      velocity.value = 0;
+      steering.value = 0;
+      if (t >= 1) {
+        shellPortal.phase = null;
+        clamShell.reopen();
+        portalGrace = 1.2;
+      }
+    }
+    if (portalGrace <= 0 && !shellPortal.armed && shellPortal.phase === null &&
+        !clamShell.closing && !jumpState.inAir &&
         clamInsideShell(car.position.x, car.position.z)) {
       shellPortal.armed = true;
       clamShell.close();
@@ -9456,6 +10749,10 @@ function animate() {
       velocity.value *= Math.max(0, 1 - 9 * delta);
       steering.value = 0;
       if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
+      // Shrink the car as the lid comes down, so it visibly fits inside the
+      // shell (cinematic only; restored on arrival).
+      const p = (clamShell.openAngle - clamShell.angle) / (clamShell.openAngle - clamShell.shutAngle);
+      portalCarScale = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
     }
   }
   if (shellPortal.fadeTimer >= 0) {
@@ -9468,6 +10765,9 @@ function animate() {
     }
   }
 
+  // The underwater wash only exists on the beach; clear it everywhere else.
+  if (worldState !== 'beach') _tintQuad.material.opacity = 0;
+
   // ===== The way home: drive into the giant scallop =====
   if (worldState === 'beach') {
     // The world's update drives the shell as well as the sea and the wildlife,
@@ -9475,10 +10775,25 @@ function animate() {
     const shutNow = beachWorld.update(delta, car.position, playerCarRadius,
       beachShellPortal.armed || beachShell.closing || beachShellPortal.fadeTimer >= 0);
 
+    // ===== The sand castle =====
+    // Drive into it and it comes down. The level flags the frame it happens;
+    // daub the car with sand, then let the coat dry off over a few seconds. The
+    // tint is actually applied by the fire pass just below (same shared colour
+    // cache), so this only has to set the amount.
+    if (beachWorld.castle && beachWorld.castle.consumeCollapse()) coatCarInSand();
+    if (sandCoat > 0) sandCoat = Math.max(0, sandCoat - delta * 0.34);
+
     // ===== The campfire =====
     // Same ash rule as the house hearth, against the ring's own box. Living on
     // the sand next to the fire is not a safe place to park.
     updateBeachFire(delta);
+
+    // ===== Underwater wash =====
+    // Blue tint that deepens with depth below the sea surface. BEACH_SEA_Y is an
+    // offset from groundHeight, and the car's Y is absolute, so compare there.
+    const seaSurface = groundHeight + BEACH_SEA_Y;
+    const underDepth = seaSurface - car.position.y;
+    _tintQuad.material.opacity = Math.min(0.62, Math.max(0, underDepth / 9) * 0.62);
 
     // ===== Held: a gull has the car in her talons =====
     // The world publishes a pose and we apply it here, at the very end of the
@@ -9520,6 +10835,10 @@ function animate() {
       velocity.value *= Math.max(0, 1 - 9 * delta);
       steering.value = 0;
       if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
+      // Same shrink as the park shell: the car fits inside the valves as they
+      // come together, then is full size again back in the city.
+      const p = (beachShell.openAngle - beachShell.angle) / (beachShell.openAngle - beachShell.shutAngle);
+      portalCarScale = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
     }
     if (beachShellPortal.fadeTimer >= 0) {
       beachShellPortal.fadeTimer += delta;
@@ -9704,7 +11023,20 @@ function animate() {
 
   drawMinimap();
 
+  // House mirror: update throttled every 0.5s when in house
+  if (worldState === 'house' && clock) {
+    const now = clock.elapsedTime;
+    if (now - houseMirrorLast > 0.5) {
+      houseMirrorLast = now;
+      setMirrorEnv(null);
+      houseMirrorCam.position.copy(car.position);
+      houseMirrorCam.update(renderer, houseScene);
+      setMirrorEnv(houseMirrorRT.texture);
+    }
+  }
+
   renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : scene, camera);
+  renderUnderwaterTint();
 }
 
 animate();
@@ -9945,6 +11277,8 @@ if (location.search.includes('debug')) {
         room: r,
         watch: housePortal.watch.active,
         swapping: housePortal.swapping,
+        furniture: (houseWorld.furnitureColliders || []).length,
+        surfaces: (houseWorld.surfaces || []).length,
         cat: houseCat
           ? {
             mode: houseCat.state.mode,
@@ -10333,6 +11667,49 @@ if (location.search.includes('debug')) {
       tris: renderer.info.render.triangles,
       geometries: renderer.info.memory.geometries,
     }),
+    // Object-explorer stage probe: what the showroom camera and the real canvas
+    // are doing (aspect vs buffer vs CSS box) and where the model on the disc
+    // projects onto the screen. Framing complaints — "it is stretched", "only
+    // half the screen is used" — are measurements, not opinions, once these
+    // three numbers are on screen.
+    stage: () => {
+      const el = renderer.domElement;
+      const out = {
+        win: [window.innerWidth, window.innerHeight],
+        buf: [el.width, el.height],
+        css: [el.clientWidth, el.clientHeight],
+        aspect: selectCamera ? +selectCamera.aspect.toFixed(4) : null,
+        fov: selectCamera ? selectCamera.fov : null,
+        eye: selectCamera ? selectCamera.position.toArray().map((n) => +n.toFixed(2)) : null,
+        orbit: { yaw: +selectOrbit.yaw.toFixed(3), phi: +selectOrbit.phi.toFixed(3), radius: +selectOrbit.radius.toFixed(2) },
+        open: objOpen,
+      };
+      if (!selectCarGroup || !selectCamera) return out;
+      const box = new THREE.Box3().setFromObject(selectCarGroup);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      out.modelSize = size.toArray().map((n) => +n.toFixed(2));
+      const pts = [];
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            const v = new THREE.Vector3(x, y, z).project(selectCamera);
+            pts.push([(v.x * 0.5 + 0.5) * window.innerWidth, (-v.y * 0.5 + 0.5) * window.innerHeight]);
+          }
+        }
+      }
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      out.screenBox = [
+        Math.round(Math.min(...xs)), Math.round(Math.min(...ys)),
+        Math.round(Math.max(...xs)), Math.round(Math.max(...ys)),
+      ];
+      out.screenSize = [
+        Math.round(Math.max(...xs) - Math.min(...xs)),
+        Math.round(Math.max(...ys) - Math.min(...ys)),
+      ];
+      return out;
+    },
     // Task #36 audit: mesh/shadow-caster counts per world. `smallCasters`
     // counts sub-unit-radius meshes that STILL cast shadows — should stay 0
     // after capShadowCasters() runs.
@@ -10401,8 +11778,17 @@ if (location.search.includes('debug')) {
 // finger spacing, exactly like the scroll-wheel zoom (same min/max clamp),
 // and holds the view while your fingers are moving. `touch-action: none` on
 // the canvas and body keeps the browser's own pinch/scroll out of the way so
-// the gestures reach these handlers.
-renderer.domElement.addEventListener('pointerdown', (event) => {
+// the gestures reach these handlers. Named (rather than inline) because the
+// Graphics tab's anti-alias toggle rebuilds the renderer and re-attaches this
+// to the fresh canvas.
+function onCanvasPointerDown(event) {
+  // On the showroom stage the drag orbits the STAGE camera (the object
+  // explorer's click-drag view), not the hidden game camera — and it must
+  // start here, on the canvas, so drags on the panels keep their own meaning.
+  if (selectMode && pickerTab !== 'graphics') {
+    selectDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: selectOrbit.yaw, phi: selectOrbit.phi };
+    return;
+  }
   pinchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (pinchPointers.size === 1) {
     // First finger: begin the orbit drag.
@@ -10427,9 +11813,17 @@ renderer.domElement.addEventListener('pointerdown', (event) => {
       cameraManualTimer = CAMERA_MANUAL_HOLD;
     }
   }
-});
+}
+renderer.domElement.addEventListener('pointerdown', onCanvasPointerDown);
 
 window.addEventListener('pointermove', (event) => {
+  // Stage orbit drag: yaw swings around the model, phi tips over/under it,
+  // both clamped so the camera can never flip through the floor plane.
+  if (selectDrag && event.pointerId === selectDrag.id) {
+    selectOrbit.yaw = selectDrag.yaw - (event.clientX - selectDrag.x) * 0.005;
+    selectOrbit.phi = THREE.MathUtils.clamp(selectDrag.phi + (event.clientY - selectDrag.y) * 0.005, SELECT_PHI_MIN, SELECT_PHI_MAX);
+    return;
+  }
   if (!pinchPointers.has(event.pointerId)) return;
   pinchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
@@ -10457,6 +11851,7 @@ window.addEventListener('pointermove', (event) => {
 });
 
 function endPointer(event) {
+  if (selectDrag && event.pointerId === selectDrag.id) selectDrag = null;
   pinchPointers.delete(event.pointerId);
   if (pinchActive && pinchPointers.size < 2) {
     // Pinch ended: if one finger is still down, re-arm the orbit drag from
@@ -10487,4 +11882,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  // The tab row can wrap to a different number of rows at the new width, so
+  // re-seat the panels beneath it.
+  syncPickerTabLayout();
 });

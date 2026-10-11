@@ -10,6 +10,35 @@ class V3 {
   set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
   copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; return this; }
   clone() { return new V3(this.x, this.y, this.z); }
+  // Used by the knockable physics while animating a prop. The headless build
+  // only constructs vectors, but a test that steps the physics should not blow
+  // up on a missing method, so the cheap ones are here.
+  add(v) { this.x += v.x; this.y += v.y; this.z += v.z; return this; }
+  multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; }
+  crossVectors(a, b) {
+    this.x = a.y * b.z - a.z * b.y;
+    this.y = a.z * b.x - a.x * b.z;
+    this.z = a.x * b.y - a.y * b.x;
+    return this;
+  }
+  applyQuaternion() { return this; }
+  normalize() { return this; }
+  lengthSq() { return this.x * this.x + this.y * this.y + this.z * this.z; }
+}
+
+class Quaternion {
+  constructor(x = 0, y = 0, z = 0, w = 1) { this.x = x; this.y = y; this.z = z; this.w = w; }
+  set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w; return this; }
+  copy(q) { this.x = q.x; this.y = q.y; this.z = q.z; this.w = q.w; return this; }
+  clone() { return new Quaternion(this.x, this.y, this.z, this.w); }
+  // The knockable physics mutates a prop's quaternion to animate it, even in a
+  // headless build, so the stub has to answer these rather than be a bare object.
+  premultiply() { return this; }
+  multiply() { return this; }
+  slerp() { return this; }
+  setFromAxisAngle() { return this; }
+  setFromEuler() { return this; }
+  normalize() { return this; }
 }
 
 class Obj3 {
@@ -21,6 +50,7 @@ class Obj3 {
     this.name = '';
     this.position = new V3();
     this.rotation = new V3();
+    this.quaternion = new Quaternion();
     this.scale = new V3(1, 1, 1);
     this.visible = true;
     this.userData = {};
@@ -57,6 +87,12 @@ class MeshBasicMaterial extends Material {}
 class LineBasicMaterial extends Material {}
 class Geometry {
   constructor(kind, params) { this.kind = kind; this.params = params; }
+  // The stub keeps sizes in `params` and has no vertices to transform, so the
+  // bake-in rotations are inert — exactly as they are in the root stub. They
+  // exist so builder code that spins a plane in its own plane still runs.
+  rotateX() { return this; }
+  rotateY() { return this; }
+  rotateZ() { return this; }
   dispose() {}
 }
 // The real geometry classes are constructible, and the builder calls them with
@@ -80,7 +116,6 @@ class Color {
 class Vector2 { constructor(x = 0, y = 0) { this.x = x; this.y = y; } }
 class Raycaster { set() { return this; } intersectObjects() { return []; } }
 class Line3 {}
-class Quaternion {}
 class Matrix4 {}
 class LineSegments extends Mesh {}
 class Clock { constructor() { this.t = 0; } getDelta() { return 0; } getElapsedTime() { return this.t; } start() {} stop() {} }
@@ -96,7 +131,7 @@ export const NormalBlending = 1;
 export const ACESFilmicToneMapping = 4;
 export const PCFSoftShadowMap = 2;
 export const MathUtils = { clamp: (v, a, b) => Math.max(a, Math.min(b, v)), lerp: (a, b, t) => a + (b - a) * t };
-export { Group, Scene, Mesh, PointLight, DirectionalLight, HemisphereLight, Fog, Material, MeshStandardMaterial, MeshBasicMaterial, LineBasicMaterial, LineSegments, Texture, Color, Vector2, Raycaster, Line3, Quaternion, Matrix4, Clock, Shape };
+export { V3 as Vector3, Group, Scene, Mesh, PointLight, DirectionalLight, HemisphereLight, Fog, Material, MeshStandardMaterial, MeshBasicMaterial, LineBasicMaterial, LineSegments, Texture, Color, Vector2, Raycaster, Line3, Quaternion, Matrix4, Clock, Shape };
 export const BoxGeometry = geo('box');
 export const SphereGeometry = geo('sphere');
 export const CylinderGeometry = geo('cylinder');

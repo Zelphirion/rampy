@@ -1,18 +1,20 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { makeClamShell } from '../../props.js';
+import { makeClamShell } from '../../props.js?v=1791570000000';
+import { addKnockable } from '../../physics.js';
 import { shellRadius } from '../../clam.js';
-import { addBeachCliffs } from './cliffs.js?v=1791039533400';
-import { addBeachLife } from './critters.js?v=1791041466326';
-import { buildReefs } from './reefs.js?v=1791039533418';
+import { addBeachCliffs } from './cliffs.js?v=1791600000000';
+import { addBeachLife, makeCrab } from './critters.js?v=1791600000000';
+import { buildReefs } from './reefs.js?v=1791600000000';
 import { buildBoat, updateBoat, BOAT_SPOT } from './boat.js?v=1791038847704';
-import { createGulls } from './seagulls.js?v=1791039533421';
+import { createGulls } from './seagulls.js?v=1791600000000';
+import { buildSandcastle } from './sandcastle.js?v=1791600000000';
 import {
   BEACH_START, BEACH_SHELL, BEACH_SAND_Y, BEACH_SEA_Y, BEACH_SHORE_Z,
-  BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_CLIFF_Z, BEACH_HALF_W,
+  BEACH_SHELF_Z0, BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_CLIFF_Z, BEACH_HALF_W,
   BEACH_EDGE_X, BEACH_BASIN_Y, BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0,
   BEACH_MAP_Z1, CLIFF_REACH, BEACH_PALMS, BEACH_ROCKS, BEACH_CAMPFIRE,
   beachGroundOffsetAt, beachSandOffsetAt, beachColliders, clamp01,
-} from './layout.js?v=1791038381904';
+} from './layout.js?v=1791600000000';
 
 // Re-exported so main.js keeps one import for the beach, exactly as before.
 export {
@@ -20,13 +22,17 @@ export {
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_BASIN_Y,
   BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_CAMPFIRE,
 };
-export { BEACH_SHELL } from './layout.js?v=1791038381904';
+export { BEACH_SHELL } from './layout.js?v=1791600000000';
 
 // The object browser builds the REST of the beach from these same builders, so
 // a preview is the real geometry rather than a miniature. They are geometry
 // only (position is baked in at build time, no scene registration), which is
 // what makes that safe.
 export { makePalm, makeRock, makeBeachShell, makeCampfire };
+// The crab the player drives is this crab too, so main.js takes it from the
+// same module instance the beach's own AI is using rather than loading a
+// second copy of critters.js.
+export { makeCrab };
 
 // ===== Beach World =====
 //
@@ -147,6 +153,19 @@ function makeRock(x, z, r, seed) {
   return m;
 }
 
+// A rock seated in the sand, with its pivot at the BASE rather than at its
+// centre. The wobble knockable rocks the whole group about a horizontal axis, so
+// a base-centred pivot is what makes it lean in the sand and settle back instead
+// of spinning about its own middle.
+function makeRockBody(x, z, r, seed) {
+  const mesh = makeRock(x, z, r, seed);
+  const g = new THREE.Group();
+  g.position.set(x, beachGroundOffsetAt(x, z), z);
+  mesh.position.set(0, r * 0.34, 0);
+  g.add(mesh);
+  return g;
+}
+
 // A washed-up valve, half buried in the sand. Decoration only - these are not
 // the way home, and they are far too small to drive into.
 function makeBeachShell(x, z, scale, tilt) {
@@ -195,46 +214,72 @@ function sandY(x, z) {
   return y - (inFanAt(x, z, RIM_T) ? VALVE_SINK : 0);
 }
 
-function buildSand(base) {
-  const nx = Math.round((SAND_MAX_X - SAND_MIN_X) / SAND_STEP);
-  const nz = Math.round((SAND_MAX_Z - SAND_MIN_Z) / SAND_STEP);
-  const geo = new THREE.PlaneGeometry(
-    SAND_MAX_X - SAND_MIN_X, SAND_MAX_Z - SAND_MIN_Z, nx, nz,
-  );
-  geo.rotateX(-Math.PI / 2);
-  geo.translate((SAND_MIN_X + SAND_MAX_X) / 2, 0, (SAND_MIN_Z + SAND_MAX_Z) / 2);
+// Row spacing of the sand grid, by Z. The profile only slopes along Z, so the
+// columns stay uniform; the rows bunch up where the surface tilts into the sea
+// and at the drop-off lip. A uniform grid aliases those slopes at grazing angles
+// into one-pixel slivers that flicker out, so the extra rows go exactly where
+// the beach is steep and where the waterline sits.
+function sandRowStep(z) {
+  if (z >= BEACH_SHORE_Z - 10 && z <= BEACH_SHELF_Z0 + 4) return 0.34; // the waterline
+  if (z >= BEACH_TRENCH_Z - 2 && z <= BEACH_RIM_Z + 2) return 0.5;     // the lip
+  return SAND_STEP;
+}
 
-  const pos = geo.attributes.position;
-  const col = new Float32Array(pos.count * 3);
+function buildSand(base) {
+  const xs = [];
+  for (let x = SAND_MIN_X; x < SAND_MAX_X - 1e-6; ) { xs.push(x); x += SAND_STEP; }
+  if (SAND_MAX_X - xs[xs.length - 1] > 1e-4) xs.push(SAND_MAX_X);
+  const zs = [];
+  for (let z = SAND_MIN_Z; z < SAND_MAX_Z - 1e-6; ) { zs.push(z); z += sandRowStep(z); }
+  if (SAND_MAX_Z - zs[zs.length - 1] > 1e-4) zs.push(SAND_MAX_Z);
+
+  const cols = xs.length;
+  const rows = zs.length;
+  const positions = new Float32Array(cols * rows * 3);
+  const col = new Float32Array(cols * rows * 3);
   const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
-    const y = sandY(x, z);
-    pos.setY(i, y);
-    sandColour(y - VALVE_SINK * 0.5, c);
-    col[i * 3] = c.r;
-    col[i * 3 + 1] = c.g;
-    col[i * 3 + 2] = c.b;
+  for (let iz = 0; iz < rows; iz++) {
+    const z = zs[iz];
+    for (let ix = 0; ix < cols; ix++) {
+      const x = xs[ix];
+      const y = sandY(x, z);
+      const i = iz * cols + ix;
+      positions[i * 3] = x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = z;
+      sandColour(y - VALVE_SINK * 0.5, c);
+      col[i * 3] = c.r;
+      col[i * 3 + 1] = c.g;
+      col[i * 3 + 2] = c.b;
+    }
   }
+
+  // Drop the cells that fall inside the pit. Those left on its edge are ragged,
+  // so the collar below is drawn out past them to the shell's real outline -
+  // that is what keeps the hole's border off the ground. Winding (a,c,b)+(b,c,d)
+  // is counter-clockwise from above, matching the old PlaneGeometry's +Y faces.
+  const keep = [];
+  for (let iz = 0; iz < rows - 1; iz++) {
+    for (let ix = 0; ix < cols - 1; ix++) {
+      const a = iz * cols + ix;
+      const b = a + 1;
+      const cc = a + cols;
+      const d = cc + 1;
+      const cx = (xs[ix] + xs[ix + 1]) * 0.5;
+      const cz = (zs[iz] + zs[iz + 1]) * 0.5;
+      if (inFanAt(cx, cz, HOLE_T)) continue;
+      keep.push(a, cc, b, b, cc, d);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(keep);
   geo.computeVertexNormals();
 
-  // Drop the quads that fall inside the pit. The quads left on its edge are
-  // ragged, so the collar below is drawn out past them to the shell's real
-  // outline - that is what keeps the hole's border off the ground.
-  const idx = geo.index.array;
-  const keep = [];
-  for (let t = 0; t < idx.length; t += 3) {
-    const cx = (pos.getX(idx[t]) + pos.getX(idx[t + 1]) + pos.getX(idx[t + 2])) / 3;
-    const cz = (pos.getZ(idx[t]) + pos.getZ(idx[t + 1]) + pos.getZ(idx[t + 2])) / 3;
-    if (inFanAt(cx, cz, HOLE_T)) continue;
-    keep.push(idx[t], idx[t + 1], idx[t + 2]);
-  }
-  geo.setIndex(keep);
-
   const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 1, metalness: 0,
+    vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide,
   }));
   mesh.position.y = base;
   mesh.receiveShadow = true;
@@ -466,6 +511,102 @@ function makeCampfire(base) {
     embers.push({ mesh: e, t: i * 0.37, life: 2.4 + (i % 5) * 0.4, rise: 1.5 + (i % 4) * 0.5, a: i * 1.9, r: 0.3 + (i % 3) * 0.22 });
   }
 
+  // ===== Beach furniture =====
+  // A striped umbrella and two towels laid out beside the fire, on the open
+  // sand away from the seats and the coals. Built off the same (x, z) as the
+  // fire so the camp reads as one little spot rather than parts that drift.
+  {
+    // Umbrella: a pole leaning into the sand, a scalloped panel canopy and a
+    // finial. The canopy is a hand-built fan with alternating panels so it is
+    // actually two colours, which a single cone can never be.
+    const ux = 6.4, uz = -4.2;
+    const canopy = new THREE.Group();
+    const R = 2.9, Hh = 1.5, N = 8;
+    const pos = [];
+    const col = [];
+    const C1 = new THREE.Color(0xff6f61);   // coral
+    const C2 = new THREE.Color(0xfff1d6);   // cream
+    const rimCol = new THREE.Color(0xffc24b);
+    const apex = [0, Hh, 0];
+    const rim = [];
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      rim.push([Math.cos(a) * R, 0, Math.sin(a) * R]);
+    }
+    for (let i = 0; i < N; i++) {
+      const p0 = rim[i];
+      const p1 = rim[(i + 1) % N];
+      const c = i % 2 ? C1 : C2;
+      pos.push(...apex, ...p1, ...p0);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b, c.r, c.g, c.b);
+      // Scalloped hem: a second, tiny skirt triangle along the same edge.
+      const mx = (p0[0] + p1[0]) * 0.5, mz = (p0[2] + p1[2]) * 0.5;
+      pos.push(...p0, ...p1, mx, -0.3, mz);
+      col.push(c.r, c.g, c.b, c.r, c.g, c.b, rimCol.r, rimCol.g, rimCol.b);
+    }
+    const cgeo = new THREE.BufferGeometry();
+    cgeo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    cgeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    cgeo.computeVertexNormals();
+    const canopyMesh = new THREE.Mesh(cgeo, new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 1, metalness: 0, side: THREE.DoubleSide, flatShading: true,
+    }));
+    canopyMesh.castShadow = true;
+    canopy.add(canopyMesh);
+
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0xb7b2a6, roughness: 0.6, metalness: 0.2 });
+    const tilt = 0.16;
+    // Pole from the sand up into the canopy, and a finial crowning it. Both live
+    // in the camp group (local y = 0 is the sand), not in the canopy.
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 5.4, 8), poleMat);
+    pole.position.set(ux, 2.7, uz);
+    pole.rotation.z = tilt;
+    pole.castShadow = true;
+    g.add(pole);
+    const finial = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 6), poleMat);
+    finial.position.set(ux, 5.6, uz);
+    g.add(finial);
+    canopy.position.set(ux, 4.9, uz);
+    canopy.rotation.z = -tilt * 0.6;
+    g.add(canopy);
+
+    // Two BIG beach towels, laid flat and slightly rumpled. Sized for a mermaid,
+    // not a mouse: a mermaid is a full person tall (PERSON_H, 7.5 - see layout.js)
+    // and lies the long way down the towel, so each has to be well longer than
+    // her or she hangs off both ends - and wide enough to lie down on, not perch
+    // on. These are deliberately generous: a mermaid should fit with room to
+    // spare.
+    const towel = (tx, tz, rot, colr, len, wid) => {
+      const grp = new THREE.Group();
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 0.07, wid),
+        new THREE.MeshStandardMaterial({ color: colr, roughness: 0.95 }),
+      );
+      body.castShadow = true;
+      body.receiveShadow = true;
+      grp.add(body);
+      const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(len + 0.04, 0.075, wid * 0.2),
+        new THREE.MeshStandardMaterial({ color: 0xf7f2e8, roughness: 0.95 }),
+      );
+      stripe.receiveShadow = true;
+      grp.add(stripe);
+      // A little fold at one end, so it does not read as a painted rectangle.
+      const fold = new THREE.Mesh(
+        new THREE.BoxGeometry(len, 0.16, wid * 0.3),
+        new THREE.MeshStandardMaterial({ color: colr, roughness: 0.95 }),
+      );
+      fold.position.set(0, 0.05, wid * 0.42);
+      fold.castShadow = true;
+      grp.add(fold);
+      grp.position.set(tx, 0.05, tz);
+      grp.rotation.y = rot;
+      g.add(grp);
+    };
+    towel(ux - 3.0, uz - 6.2, 0.24, 0x3fb6a8, 12.0, 5.0);
+    towel(ux - 3.0, uz - 12.6, -0.16, 0xff6f61, 10.6, 4.4);
+  }
+
   return {
     group: g,
     // The ash trigger, read by main.js exactly like the house's FIREPLACE.hearth.
@@ -633,13 +774,36 @@ export function createBeachWorld(scene, opts = {}) {
   });
 
   // ===== Things you can hit =====
+  // Palms and boulders are knockables now, not colliders: clip a palm and it
+  // topples and lies where it fell; catch a rock and it rocks in the sand and
+  // settles back upright, exactly like the city's little shops. Nothing here
+  // stops the car, so the grove and the boulder field are for ploughing through.
   const palms = [];
   BEACH_PALMS.forEach(([x, z, s], i) => {
     const p = makePalm(x, z, s, (i % 2 ? 1 : -1) * (0.5 + i * 0.12));
     group.add(p.group);
-    palms.push(p.crown);
+    // A palm is rooted: hit it and the whole tall trunk sways a long way in the
+    // sand, rocking back and forth for a while before it settles upright again.
+    // It never topples - light damping and a slow rock are what let the sway
+    // read as "pretty far" instead of a quick shudder.
+    const k = addKnockable(p.group, 0.7 * s, {
+      mode: 'wobble', fallTime: 1.6,
+      wobbleAmp: 0.5, wobbleFreq: 4.2, wobbleDamping: 1.5,
+    });
+    palms.push({ crown: p.crown, k });
   });
-  BEACH_ROCKS.forEach(([x, z, r], i) => group.add(makeRock(x, z, r, i + 1)));
+  BEACH_ROCKS.forEach(([x, z, r], i) => {
+    const body = makeRockBody(x, z, r, i + 1);
+    group.add(body);
+    // Boulders do not just rock in place - they are shoved and bounced away from
+    // the hit like a city traffic car, spinning as they skid, and settle
+    // wherever they stop. They carry no collider, so the car still ploughs
+    // through, but they are never ghost rocks: every hit moves them. Hit one
+    // again while it lies down and it is batted further.
+    addKnockable(body, r * 0.9, {
+      mode: 'slide', fallTime: 0.5, slideDistance: 4.2, shovePower: 12, shoveSpinPower: 2.6,
+    });
+  });
   // The coral heads in the basin. They are built at the sand's own height and
   // the mesh carries the level's base, exactly as the palms above do.
   const reefs = buildReefs();
@@ -654,17 +818,14 @@ export function createBeachWorld(scene, opts = {}) {
   const campfire = makeCampfire(base);
   group.add(campfire.group);
 
-  // Rocks are surfaces a flat car can sit on; palms are bare obstacles.
+  // The castle in the far corner, diagonally across from the shell. It carries
+  // no collider: the car drives into it and it comes down in a heap.
+  const castle = buildSandcastle(base);
+  group.add(castle.group);
+
+  // With the palms and rocks now knockables, the only solid things left in the
+  // level are the cliffs and the shell's outline.
   const colliders = beachColliders();
-  for (const [x, z, s] of BEACH_PALMS) {
-    colliders.push({ x, z, halfW: 0.55 * s, halfD: 0.55 * s, noRoof: true });
-  }
-  for (const [x, z, r] of BEACH_ROCKS) {
-    colliders.push({
-      x, z, halfW: r * 0.9, halfD: r * 0.9,
-      h: beachGroundOffsetAt(x, z) + r * 0.34 + r * 0.55,
-    });
-  }
 
   // ===== Wildlife =====
   const life = addBeachLife(group, base);
@@ -696,6 +857,57 @@ export function createBeachWorld(scene, opts = {}) {
   const gulls = createGulls(base);
   group.add(gulls.group);
 
+  // ===== Underwater bubbles =====
+  // A small recycled pool of translucent bubbles that fizz up from the car while
+  // it is below the sea surface. Fixed size, no per-frame allocation: each
+  // bubble is teleported under the car, drifts up, and is parked out of sight
+  // once it reaches the surface or its life runs out.
+  const BUBBLE_COUNT = 44;
+  const bubbleGroup = new THREE.Group();
+  group.add(bubbleGroup);
+  const bubbleMat = new THREE.MeshBasicMaterial({
+    color: 0xcdeeff, transparent: true, opacity: 0.5, depthWrite: false,
+  });
+  const bubbles = [];
+  for (let i = 0; i < BUBBLE_COUNT; i++) {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.055 + (i % 5) * 0.016, 8, 6), bubbleMat);
+    mesh.visible = false;
+    bubbleGroup.add(mesh);
+    bubbles.push({ mesh, vy: 0, drift: 0, life: 0 });
+  }
+  let bubbleSeq = 0;
+  let bubbleAcc = 0;
+  // A tiny deterministic RNG: the file avoids Math.random elsewhere so a build is
+  // reproducible, and the bubbles should be too.
+  let bubbleSeed = 1;
+  const bubbleRnd = () => {
+    bubbleSeed = (bubbleSeed * 48271) % 2147483647;
+    return bubbleSeed / 2147483647;
+  };
+  const spawnBubble = (cx, cy, cz) => {
+    const b = bubbles[bubbleSeq % BUBBLE_COUNT];
+    bubbleSeq++;
+    b.mesh.visible = true;
+    b.mesh.position.set(cx + (bubbleRnd() - 0.5) * 2.0, cy - 0.2, cz + (bubbleRnd() - 0.5) * 2.0);
+    b.vy = 1.5 + bubbleRnd() * 1.3;
+    b.drift = (bubbleRnd() - 0.5) * 0.6;
+    b.life = 2.0 + bubbleRnd() * 1.4;
+  };
+  const updateBubbles = (delta, carPos) => {
+    const surface = base + BEACH_SEA_Y;
+    if (carPos && carPos.y < surface - 0.15) {
+      bubbleAcc += delta * 20;
+      while (bubbleAcc >= 1) { bubbleAcc -= 1; spawnBubble(carPos.x, carPos.y, carPos.z); }
+    }
+    for (const b of bubbles) {
+      if (!b.mesh.visible) continue;
+      b.life -= delta;
+      b.mesh.position.y += b.vy * delta;
+      b.mesh.position.x += b.drift * delta;
+      if (b.life <= 0 || b.mesh.position.y > surface) b.mesh.visible = false;
+    }
+  };
+
   let t = 0;
   return {
     group,
@@ -704,6 +916,9 @@ export function createBeachWorld(scene, opts = {}) {
     // The fire. main.js reads `hearth` for the ash trigger and calls `update`
     // every frame the beach is live — exactly as it does for the house fireplace.
     fireplace: campfire,
+    // The castle. main.js reads `castle.justCollapsed` once after update() to
+    // know it should daub the car with sand.
+    castle,
     // The crab discs that went into `colliders` above, published so main.js can
     // take them back out again when the player IS a crab (see activeColliders).
     crabColliders: life.crabColliders,
@@ -728,21 +943,29 @@ export function createBeachWorld(scene, opts = {}) {
         f.mesh.position.z = f.z;
         f.mesh.position.y = base + BEACH_SEA_Y + 0.06 + Math.sin(t * 1.4 + f.bob) * 0.06;
       }
-      for (const c of palms) c.rotation.z = Math.sin(t * 0.7 + c.position.x) * 0.035;
+      for (const p of palms) {
+        // Wind in the fronds - but only while the palm is still standing. Once
+        // it has toppled, the physics owns its transform.
+        if (p.k.state === 'standing' || p.k.state === 'wobbling') {
+          p.crown.rotation.z = Math.sin(t * 0.7 + p.k.group.position.x) * 0.035;
+        }
+      }
       for (const c of clouds) {
         c.position.x += delta * 1.4;
         if (c.position.x > 320) c.position.x = -320;
       }
       life.update(delta, carPos ? carPos.x : 0, carPos ? carPos.z : 0, carR);
       campfire.update(t);
+      castle.update(delta, carPos, carR);
       // `blocked` is true while the shell is closing, or during a fade: she does
       // not start a ten-second count towards robbing a car that is already on
       // its way home.
       gulls.update(delta, carPos, !!blocked);
       updateBoat(boat, t);
+      updateBubbles(delta, carPos);
       return shut;
     },
   };
 }
 
-export { BEACH_SAND_Y };
+export { BEACH_SAND_Y, BEACH_SEA_Y };

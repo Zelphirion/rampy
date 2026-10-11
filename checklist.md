@@ -53,7 +53,7 @@ This list captures all requested changes. Mark `[x]` when completed so you can r
 ## City
 
 ### Giant robot camera behavior
-- [ ] **Change robot camera zoom rules.** In city/robot code, the giant robot camera must never zoom out unless about to eat you. When about to eat, zoom out starts ~3 seconds before eating; if you drive away in those 3 seconds it won't eat you. Update logic in relevant file (`src/robot.js` or `src/main.js` robot section).
+- [x] **Change robot camera zoom rules.** In city/robot code, the giant robot camera must never zoom out unless about to eat you. When about to eat, zoom out starts ~3 seconds before eating; if you drive away in those 3 seconds it won't eat you. Update logic in relevant file (`src/robot.js` or `src/main.js` robot section).
 
 ### Beach world entrance (clam shell)
 - [ ] **Add giant open clam shell in park.** In city park by little pond, add a giant open clam shell with iridescent pearls. If you drive into it, it closes around you.

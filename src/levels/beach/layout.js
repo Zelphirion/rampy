@@ -1,4 +1,4 @@
-import { createClamSite } from '../../clam.js';
+import { createClamSite, LOWER_SIZE } from '../../clam.js';
 import { worldXLo, worldXHi, worldZLo, worldZHi } from '../../modules/world.js';
 
 // ===== Beach World layout =====
@@ -25,9 +25,9 @@ import { worldXLo, worldXHi, worldZLo, worldZHi } from '../../modules/world.js';
 // (+Z) and on both sides, and the only way out is the one giant seashell lying
 // in the sand. Nothing here wraps: the beach is a box, not a torus.
 //
-// The box is not an arbitrary size - it is THE map. The cliffs stand a few
-// units inside the world's own limits so they read as the edge of the world
-// rather than as a fence in the middle of it, and the drop-off stands the same
+// The box is not an arbitrary size - it is THE map. The cliffs stand AT the
+// world's own limits exactly, so the walled cove IS the edge of the world, and
+// the whole map width and depth is driveable sand; the drop-off stands its own
 // distance in from the southern edge, which is why the water looks like it goes
 // on for ever while the last thing between the car and the dark is a lip.
 export const BEACH_MAP_X0 = worldXLo;   // -90, the map's west edge
@@ -35,8 +35,8 @@ export const BEACH_MAP_X1 = worldXHi;   // +90, the map's east edge
 export const BEACH_MAP_Z0 = worldZLo;   // -90, the map's seaward edge
 export const BEACH_MAP_Z1 = worldZHi;   // +123, the map's landward edge
 
-export const BEACH_HALF_W = BEACH_MAP_X1 - 4;   // 86: side cliff faces
-export const BEACH_CLIFF_Z = BEACH_MAP_Z1 - 23;  // 100: foot of the back cliff wall
+export const BEACH_HALF_W = BEACH_MAP_X1;   // 90: side cliff faces at the world's edge
+export const BEACH_CLIFF_Z = BEACH_MAP_Z1;  // 123: foot of the back cliff wall at the edge
 export const BEACH_SEA_Y = 0;         // sea surface, as an offset
 export const BEACH_SHORE_Z = 0;       // waterline: sand above this, sea floor below
 export const BEACH_SHELF_Z0 = 18;     // flat dry sand starts (the foot of the beach)
@@ -57,24 +57,43 @@ export const BEACH_EDGE_X = BEACH_MAP_X1;        // 90: outer backstop, in the c
 export const BEACH_START = { x: 0, z: 26, yaw: Math.PI };  // yaw PI = facing -Z, the sea
 
 // ---- The one way home ----
-// The same scallop you drove in through, bedded in the flat sand east of the
-// spawn, so you turn right off the spawn line and drive straight at it.
+// The same scallop you drove in through, bedded ALL the way out at the far
+// north-east corner of the cove - the very corner of the beach, diagonally
+// opposite the sand castle in the south-west - so you turn off the spawn line
+// and drive clear across the sand to reach it.
 //
 // Two details are copied from the park shell on purpose, because they are what
 // keep the drawn shell and the drivable bowl describing the SAME hole:
 //   - the default yaw, which is what puts the drawn fan's bisector on world +X
 //     (the bowl maths is fixed to +X regardless of yaw, so any other yaw would
 //     draw the shell at 90 degrees to the ground the car actually drives on),
-//   - being bedded on sand that is dead flat (the shelf), so the shell's bowl is
-//     cut for one single ground height, BEACH_SAND_Y.
+//   - being bedded on flat sand, so the shell's bowl is cut for one single
+//     ground height.
+//
+// That corner is up on the gentle side bank, not the dead-flat shelf, so the
+// shell takes its surface height from the sand ACTUALLY under it (the same bank
+// term the ground profile rides) rather than the global BEACH_SAND_Y. Cutting
+// the bowl for BEACH_SAND_Y there would leave the pit rim standing proud of the
+// bank around it by the whole bank height.
 //
 // Approach: the fan's gap faces -X, so the car comes in from the west heading
 // east and rolls down onto the umbo - exactly the way the park shell is taken.
+const SHELL_X = 72, SHELL_Z = 30;
+// sideBank()'s bank term at the shell: 0.8 * k^2, with k = (|x| - 46) / 44.
+// (The dune fade is 1 this far down the shelf, and the ripples are damped to
+// nothing under the shell, so this is the whole local rise.)
+const SHELL_BANK = 0.8 * Math.pow(
+  Math.min(1, Math.max(0, (Math.abs(SHELL_X) - (BEACH_HALF_W - 44)) / 44)), 2);
+const SHELL_GROUND_Y = BEACH_SAND_Y + SHELL_BANK;
 export const BEACH_SHELL = createClamSite({
-  x: 22, z: 26, umboY: BEACH_SAND_Y - 0.46, surfaceY: BEACH_SAND_Y,
+  x: SHELL_X, z: SHELL_Z, umboY: SHELL_GROUND_Y - 0.46, surfaceY: SHELL_GROUND_Y,
+  // A touch bigger than the park shell so it reads as the landmark you sail
+  // across the sand to - and so a full-size car tucked into the dish still has
+  // room when the valves close over it.
+  size: LOWER_SIZE * 1.4,
   // Generous enough that rolling to the bottom of the dish always counts as
-  // being IN it, but still short of the lip (surfaceHole is 0.765, so the
-  // valves never start closing over a car that is still up on the rim).
+  // being IN it, but still short of the lip, so the valves never start closing
+  // over a car that is still up on the rim.
   triggerR: 0.72,
 });
 
@@ -245,11 +264,17 @@ function shoreProfile(z) {
 // running under the hole would leave a small step where the sand meets the
 // valve's rim.
 function ripple(x, z) {
-  if (z > BEACH_CLIFF_Z) return 0;
+  // Fade the ripples to nothing well before the cliff foot rather than cutting
+  // them dead on it. A hard cutoff leaves a ~0.11 step where the corrugation
+  // ends, right on the map's own edge: the car crests it at speed, goes
+  // airborne, and - because an airborne car ignores colliders - flies the seam
+  // and wraps across the torus. Ramping them out removes the lip entirely.
+  const zFade = clamp01((BEACH_CLIFF_Z - z) / 3);
+  if (zFade <= 0) return 0;
   const dry = clamp01((z - BEACH_SHORE_Z) / 10);
   const a = 0.055 + 0.075 * smooth(clamp01((z - BEACH_SHORE_Z) / 26));
   const pad = clamp01((Math.hypot(x - BEACH_SHELL.x, z - BEACH_SHELL.z) - 3) / 5);
-  return a * dry * pad *
+  return zFade * a * dry * pad *
     (Math.sin(x * 0.52 + z * 0.11) * 0.6 + Math.sin(x * 0.17 - z * 0.4) * 0.4);
 }
 
@@ -261,13 +286,19 @@ function ripple(x, z) {
 //
 // Kept below the cliff foot height so the banks pile against the rock instead of
 // climbing over it.
+//
+// The climb is kept GENTLE and late-starting on purpose: this is the surface
+// the car rides up against the wall, and a steep bank pressed against a collider
+// is a wedge - the car noses into it, the sand keeps rising under the body, and
+// the only way out is straight back. Long, low and wide, it still reads as a
+// bowl while never offering a place to get stuck against the rock.
 function sideBank(x, z) {
-  const k = clamp01((Math.abs(x) - (BEACH_HALF_W - 34)) / 34);
+  const k = clamp01((Math.abs(x) - (BEACH_HALF_W - 44)) / 44);
   if (k <= 0) return 0;
   // Fade the bank out as the beach climbs into the back cliff, so the two
   // features meet as one continuous bank of sand.
   const zf = clamp01((z - BEACH_DUNES) / (BEACH_CLIFF_Z - BEACH_DUNES));
-  return 1.25 * k * k * (1 - 0.35 * zf);
+  return 0.8 * k * k * (1 - 0.35 * zf);
 }
 
 // Height of the drivable sand, as an offset from groundHeight. Inside the
@@ -281,7 +312,7 @@ export function beachGroundOffsetAt(x, z) {
 // the mesh's vertices, and by the tests to check the two agree away from the
 // hole.
 export function beachSandOffsetAt(x, z) {
-  return shoreProfile(z) + sideBank(x, z) + ripple(x, z);
+  return shoreProfile(z) + sideBank(x, z) + ripple(x, z) + sandPileOffsetAt(x, z);
 }
 
 // ---- Where the car may be ----
@@ -293,31 +324,83 @@ export function beachSandOffsetAt(x, z) {
 // `noRoof: true` on all of them is load-bearing: without it main.js's
 // buildingTopAt() would report each wall as a rooftop and the car could end up
 // driving along the top of the cliffs.
+// The slice of the cliff's own height that the car body occupies as it noses up
+// to the rock. The face spans CLIFF_BOTTOM -40 to CLIFF_TOP 30 (see cliffs.js);
+// the sand banks to BEACH_CLIFF_FOOT_Y 3.4, so u ~ 0.60 at the contact and a
+// little above it for the car's roof. Sampling cliffFaceZ here - and taking the
+// most seaward value - puts the barrier on the rock the car can actually touch,
+// not out at the lip leaning over the beach 25 metres up.
+const CLIFF_CAR_U0 = 0.60;
+const CLIFF_CAR_U1 = 0.66;
+const CLIFF_BARRIER_R = 2.0;      // disc radius; big enough to seal between samples
+const CLIFF_BARRIER_STEP = 3.0;   // spacing along the run (well under 2R + car)
+// The rock's lower courses are chewed back into the hill (a sea cave), so at the
+// car's height the face sits BEHIND the map's own edge. The car centre can never
+// cross that edge - main.js wraps a car past worldZ 123 / |x| 90 clean across the
+// torus - so the barrier is capped just this side of it: the car keeps its nose
+// on the rock but its centre stays clear of the seam.
+const CLIFF_BARRIER_MAX_FACE = 1.5;
+
+function cliffFaceAtCarHeight(s, seed) {
+  let face = Infinity;
+  for (let k = 0; k <= 4; k++) {
+    const v = cliffFaceZ(CLIFF_CAR_U0 + (CLIFF_CAR_U1 - CLIFF_CAR_U0) * (k / 4), s, seed);
+    if (v < face) face = v;   // most seaward = the first thing the car meets
+  }
+  return face;
+}
+
+// Lay a chain of overlapping discs along one cliff face. `from`/`to` are world
+// run coordinates; `sFrom`/`sTo` are the run coordinates that map to s=0 and s=1
+// in the wall's own frame (matching how cliffs.js places the same wall), and
+// `place` turns a run position and a face offset into a world XZ. Each disc is
+// centred one radius INTO the rock, so its seaward edge sits flush on the rock
+// the player sees. Discs rather than boxes because the face is lumpy: a chain of
+// circles follows every buttress and hollow, where axis-aligned boxes would
+// either bridge straight over the recesses or leave a diagonal gap at the seam.
+function addCliffChain(out, { seed, from, to, sFrom, sTo, place }) {
+  const n = Math.max(2, Math.round((to - from) / CLIFF_BARRIER_STEP));
+  for (let i = 0; i <= n; i++) {
+    const run = from + (to - from) * (i / n);
+    const s = (run - sFrom) / (sTo - sFrom);
+    const face = Math.min(cliffFaceAtCarHeight(s, seed), CLIFF_BARRIER_MAX_FACE);
+    const p = place(run, face, CLIFF_BARRIER_R);
+    out.push({ x: p.x, z: p.z, r: CLIFF_BARRIER_R, noRoof: true });
+  }
+}
+
 export function beachColliders() {
   const out = [];
   const wall = (x, z, halfW, halfD) => out.push({ x, z, halfW, halfD, noRoof: true });
 
-  // The three land walls. Each one is placed at the FURTHEST that any course of
-  // cliff rock ever reaches out over the beach (cliffReach().reachOut), not at
-  // the cliff's nominal base line: the overhanging top courses lean out past
-  // the face below them, and a wall set at the base line would let the car
-  // drive straight through them. Setting the barrier out at the overhang means
-  // the car is always held on the open side of every course of rock.
-  const backFace = BEACH_CLIFF_Z - CLIFF_REACH.out;
-  wall(0, backFace + 3, BEACH_EDGE_X, 3);
+  // The three land walls are the cliffs THEMSELVES: a chain of overlapping discs
+  // laid along the actual rock face, at the height the car meets it. The barrier
+  // used to stand out at the overhanging lip - six or seven units of invisible
+  // wall this side of the rock - which read as a web across the alcove. Now you
+  // drive right up to the sandstone and stop against it, nosing in under the
+  // overhang exactly as you should.
+  const backLen = (BEACH_MAP_X1 + 34) * 2;
+  addCliffChain(out, {
+    seed: BEACH_CLIFF_SEEDS[0],
+    from: -(BEACH_HALF_W + 26), to: BEACH_HALF_W + 26,
+    sFrom: -backLen / 2, sTo: backLen / 2,
+    place: (x, face, r) => ({ x, z: BEACH_CLIFF_Z + face + r }),
+  });
   // The side walls run the FULL depth of the map, from past the back cliff to
-  // past the seaward edge, because that is how far the rock now runs.
-  const sideFace = BEACH_HALF_W - CLIFF_REACH.out;
+  // past the seaward edge, because that is how far the rock runs.
   const sideFrom = BEACH_CLIFF_Z + 14;
   const sideTo = BEACH_TRENCH_Z - 10;
   const sideMid = (sideFrom + sideTo) / 2;
   const sideHalf = (sideFrom - sideTo) / 2;
-  wall(-sideFace + 4, sideMid, 4, sideHalf);
-  wall(sideFace - 4, sideMid, 4, sideHalf);
-  // The two back corners, where a wall each way leaves a notch wide enough to
-  // squeeze out of.
-  wall(-(sideFace - 4), backFace + 3, 5, 5);
-  wall(sideFace - 4, backFace + 3, 5, 5);
+  for (const sx of [1, -1]) {
+    addCliffChain(out, {
+      seed: BEACH_CLIFF_SEEDS[sx > 0 ? 1 : 2],
+      from: sideTo, to: sideFrom,
+      sFrom: sx > 0 ? sideFrom : sideTo,
+      sTo: sx > 0 ? sideTo : sideFrom,
+      place: (z, face, r) => ({ x: sx * (BEACH_HALF_W + face + r), z }),
+    });
+  }
   // The offshore drop-off. This is the one the player meets last: you can drive
   // right down across the whole basin, and this is the lip that stops you leaving
   // it. It stands just inside the map's edge, so everything past it - the
@@ -343,14 +426,25 @@ export function beachColliders() {
 // They carry an `h` because a boulder IS a surface (a flat car can sit on one);
 // a palm is a bare barrier.
 export const BEACH_PALMS = [
-  [30, 30, 1.0], [40, 22, 0.85], [-36, 34, 1.05], [34, 44, 0.9],
-  [-12, 46, 0.8], [8, 40, 0.95], [-42, 12, 0.75], [43, 6, 0.8],
+  // A loose grove along the foot of the back cliff, where palms would actually
+  // take hold - these are the trees that fill the space the cove gained when
+  // the rock moved back to the map's edge.
+  [-66, 110, 1.00], [-44, 116, 1.10], [-20, 112, 0.90], [4, 117, 1.05],
+  [28, 113, 0.95], [50, 116, 1.10], [72, 109, 1.00],
+  // Fringing the side cliffs.
+  [-81, 76, 1.00], [-83, 44, 0.90], [-78, 12, 0.95],
+  [81, 80, 1.05], [83, 46, 0.90], [78, 14, 0.95],
+  // A few standing out on the open sand.
+  [-56, 58, 0.95], [54, 62, 1.00], [-32, 30, 0.85], [46, 34, 0.90],
 ];
 
 export const BEACH_ROCKS = [
-  [-33, 22, 1.5], [12, 30, 1.15], [26, 14, 1.7], [-44, 24, 1.3],
-  [4, 14, 0.95], [36, 34, 1.25], [-20, 42, 1.05], [-8, 36, 0.8],
-  [46, 18, 1.4], [-28, 8, 1.1],
+  // Boulders strewn right across the cove, back to front, so the whole shelf is
+  // a place to weave through rather than one clump near the waterline.
+  [-70, 92, 1.40], [-34, 96, 1.20], [8, 90, 1.50], [44, 92, 1.10],
+  [72, 62, 1.30], [-62, 58, 1.15], [-16, 76, 1.00], [32, 74, 1.25],
+  [58, 38, 1.05], [-46, 46, 1.20], [16, 50, 0.95], [-74, 24, 1.10],
+  [66, 20, 1.00], [-8, 14, 1.05], [38, 22, 1.25], [-26, 6, 0.85],
 ];
 
 // ---- The campfire ----
@@ -369,16 +463,53 @@ export const BEACH_ROCKS = [
 // seconds. Nothing about the beach fire is a special case; it is the house hearth
 // with the walls taken off.
 export const BEACH_CAMPFIRE = {
-  x: -14,
-  z: 22,
+  // Out in the open back sand, so the fire is a destination you drive to across
+  // the new space rather than something wedged among the shore rocks.
+  x: -2,
+  z: 72,
   // 7 across, so the nose trips it before the middle of the car is over the
   // coals — exactly the relationship the house hearth has with its fireplace.
-  hearth: { x0: -17.5, x1: -10.5, z0: 18.5, z1: 25.5 },
-  repulse: { x: -1, z: 24 },
+  hearth: { x0: -5.5, x1: 1.5, z0: 68.5, z1: 75.5 },
+  repulse: { x: 11, z: 74 },
   // Two flat stones pushed up to the south of it to sit on, and a pair of
   // driftwood sticks leaning in with marshmallows on the ends.
-  seats: [[-16.4, 27.6], [-11.6, 27.6]],
+  seats: [[-4.4, 77.6], [0.4, 77.6]],
 };
+
+// ---- The sand castle ----
+//
+// The landmark in the opposite corner of the cove from the giant scallop: a
+// full sand castle the car can drive into. It carries NO collider of its own -
+// you are meant to be able to drive in through its gateways - and the moment the
+// car touches the structure it comes down in a heap. The wreck is a wide, low
+// mound that the car simply drives out across.
+//
+// It sits on the flat shelf in the south-west corner (the seaward-left corner),
+// diagonally across from the shell, and `x/z` is the centre of the keep.
+export const BEACH_SANDCASTLE = { x: -40, z: 21 };
+// The wreck: how wide the collapsed heap spreads and how high it piles. Kept low
+// and broad so the car never gets beached on it - the whole point is that you
+// drive in, it falls over, and you drive straight back out.
+export const SAND_PILE_R = 8.5;
+export const SAND_PILE_H = 1.15;
+
+// Whether the castle is currently a heap. The level flips this the frame the car
+// touches the standing castle; it never flips back - the castle stays collapsed.
+let sandPileActive = false;
+export const setSandPile = (on) => { sandPileActive = !!on; };
+export const isSandPileDown = () => sandPileActive;
+
+// The bare mound profile, independent of whether the pile is up. Used both to
+// build the visible heap and - once `sandPileActive` is set - as part of the
+// drivable height, so the mesh the player sees and the surface the car rides
+// are the same mound. `smooth` is the same ease the rest of the profile uses, so
+// the heap meets the flat sand with no lip.
+export function sandPileProfileAt(x, z) {
+  const d = Math.hypot(x - BEACH_SANDCASTLE.x, z - BEACH_SANDCASTLE.z);
+  if (d >= SAND_PILE_R) return 0;
+  return SAND_PILE_H * smooth(1 - d / SAND_PILE_R);
+}
+export const sandPileOffsetAt = (x, z) => (sandPileActive ? sandPileProfileAt(x, z) : 0);
 
 // ---- The scale of the wildlife ----
 //

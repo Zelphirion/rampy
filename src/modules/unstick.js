@@ -39,6 +39,26 @@ function pushOutFor(solid, x, z, radius) {
     : rectPushOut(x, z, solid.x, solid.z, solid.hw, solid.hd, radius);
 }
 
+// Map a world's collider list to solver solids, adding the car body radius to
+// each footprint. A collider carrying `r` is a DISC (the beach's coral reefs,
+// the underground platter); everything else is a box. Getting this wrong is not
+// a subtle error: a disc mapped to a box leaves hw/hd undefined, the penetration
+// maths goes NaN, and the anti-stuck pass then writes NaN straight into the car
+// position the first time it fires — the car vanishes from the minimap and the
+// camera points into the sand. `soft`/`soapy` colliders never participate.
+export function collidersToSolids(list, radius) {
+  const solids = [];
+  for (const c of list) {
+    if (c.soft || c.soapy) continue;
+    // A `gate` collider (the substation fence) is real only while its knockable
+    // is standing; a knocked-over section must never wedge the car again.
+    if (c.gate && c.gate.state !== 'standing') continue;
+    if (c.r !== undefined) solids.push({ kind: 'circle', x: c.x, z: c.z, r: c.r + radius });
+    else solids.push({ kind: 'rect', x: c.x, z: c.z, hw: c.halfW, hd: c.halfD });
+  }
+  return solids;
+}
+
 // True when the circle at (x,z) still overlaps any solid.
 export function stillBlocked(solids, x, z, radius) {
   for (const s of solids) {

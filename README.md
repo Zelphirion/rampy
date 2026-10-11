@@ -50,5 +50,15 @@ To stop the server, press `Ctrl+C` in the PowerShell window.
 - Append `?debug` to the URL for the `window.__game` test hooks (`.car()`,
   `.teleport(x,z,heading)`, surface-aware `.tp2(x,z,heading)`, per-feature
   probes like `.ugStairs()`, `.ugConveyor()`, `.perf()`, `.sceneStats()`).
-- Run the unit tests with
-  `node --test src/carFlatMode.test.mjs src/modules/portalRules.test.mjs src/modules/stairCycle.test.mjs`.
+- Run the whole unit suite with
+  `node --test --test-reporter=tap "src/**/*.test.mjs"` — every test is
+  headless, no browser needed.
+- Tests and probes that import the game's *real* modules (which pull three.js
+  off the CDN and touch `document` at import time) need
+  `src/objects/nodeShims.mjs`: it installs the DOM globals and redirects the
+  CDN three import to the local npm copy. Test files import it themselves; a
+  hand-run script takes it as a flag:
+
+  ```powershell
+  node --import ./src/objects/nodeShims.mjs src/levels/beach/probe-beach.mjs
+  ```

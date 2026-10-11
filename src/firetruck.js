@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // Stamp matches main.js's import of this module. Two different query strings are
 // two different cache keys, so an unstamped import here would have the browser
 // hold a second, potentially stale copy of cars.js.
-import { createFiretruck } from './cars.js?v=1791123166969';
+import { createFiretruck } from './cars.js?v=1791481956200';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -571,6 +571,15 @@ export function addFiretruck(scene, spots = null, home = null) {
 
     // Spin the wheels while moving
     for (const w of truck.userData.wheels) w.rotation.y += spin * 2.6;
+
+    // With the water off the gun eases back to its stow pose, which cars.js has
+    // pointing down the road. Without this the engine finishes a call and then
+    // drives round the whole city with the nozzle still laid on the building it
+    // just soaked.
+    if (state.mode !== 'fight' && truck.userData.nozzleRest) {
+      truck.userData.nozzlePivot.quaternion.slerp(
+        truck.userData.nozzleRest, 1 - Math.exp(-4 * delta));
+    }
 
     updateDroplets(delta);
   }
