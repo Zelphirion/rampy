@@ -527,9 +527,12 @@ export function addGlassCity(scene, opts = {}) {
     crystalBursts.push({ shards, ring, life: 0, max: 0.75 });
   }
 
-  function update(delta, player) {
-    // Only animate when the player is in/near the Glass City.
-    if (Math.abs(player.z - ((Z0 + Z1) / 2)) > 60) return;
+  function update(delta, player, player2) {
+    // Only animate when a player is in/near the Glass City.
+    const midZ = (Z0 + Z1) / 2;
+    const near = Math.abs(player.z - midZ) <= 60 ||
+      (player2 && Math.abs(player2.z - midZ) <= 60);
+    if (!near) return;
     birdShop.update(delta, clockT);
     tableauA.update(delta, clockT, player);
     tableauB.update(delta, clockT, player);
@@ -556,12 +559,15 @@ export function addGlassCity(scene, opts = {}) {
         r.scale.setScalar(1 + Math.sin(clockT * 3.4 + r.userData.phase) * 0.12);
       }
       if (g.recharge > 0 || !onGhostRide) continue;
-      if (ghostTouches(grp.position.x, grp.position.z, player.x, player.z, player.y)) {
+      const hitP1 = ghostTouches(grp.position.x, grp.position.z, player.x, player.z, player.y);
+      const hitP2 = !hitP1 && player2 &&
+        ghostTouches(grp.position.x, grp.position.z, player2.x, player2.z, player2.y);
+      if (hitP1 || hitP2) {
         g.recharge = GHOST_RECHARGE;
         // Fade the ghost out and back in with the recharge rather than popping.
         grp.visible = false;
         setTimeout(() => { grp.visible = true; }, GHOST_RECHARGE * 1000 * 0.7);
-        onGhostRide({ x: grp.position.x, z: grp.position.z });
+        onGhostRide({ x: grp.position.x, z: grp.position.z }, hitP2 ? 1 : 0);
       }
     }
     // The plaza balloons bob and rotate slowly; drive over one and it pops.

@@ -1268,13 +1268,47 @@
         bottom: 12px !important;
       }
       body.split-on #minimap-p2 { display: none; }
-      #mp-exit {
+      /* Off-screen rival marker: shown in a half only while the other car is
+         outside that viewport. It is the same coloured P1/P2 bubble, parked on
+         the border of the half, with an arrow that points the way to turn. */
+      .split-off-indicator {
+        position: fixed;
+        display: none;
+        align-items: center;
+        gap: 5px;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 33;
+      }
+      body.split-on .split-off-indicator.show { display: flex; }
+      .split-off-arrow {
+        width: 34px;
+        height: 16px;
+        flex: none;
+        transform-origin: 50% 50%;
+      }
+      .split-off-label {
+        padding: 2px 8px;
+        border-radius: 9px;
+        background: rgba(6, 14, 26, 0.85);
+        border: 1.5px solid currentColor;
+        color: currentColor;
+        font: 700 13px Arial, Helvetica, sans-serif;
+        letter-spacing: 0.06em;
+      }
+      #mp-bar {
         position: fixed;
         top: 14px;
         left: 50%;
         transform: translateX(-50%);
         z-index: 32;
         display: none;
+        gap: 10px;
+      }
+      body.split-on #mp-bar { display: flex; }
+      /* The bar steps aside while the settings overlay is up. */
+      body.mp-settings-open #mp-bar { display: none; }
+      #mp-exit, #mp-settings {
         padding: 8px 16px;
         border-radius: 12px;
         border: 1px solid rgba(255, 255, 255, 0.22);
@@ -1285,10 +1319,46 @@
         letter-spacing: 0.06em;
         text-transform: uppercase;
         cursor: pointer;
-        -webkit-tap-highlight-color: transparent;
       }
-      body.split-on #mp-exit { display: block; }
-      #mp-exit:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      #mp-exit:hover, #mp-settings:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      #mp-settings-screen { display: none; }
+      body.mp-settings-open #mp-settings-screen {
+        display: flex;
+        position: fixed;
+        inset: 0;
+        z-index: 46;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background: rgba(4, 9, 18, 0.86);
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #mps-title {
+        color: #eaf2ff;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      #mps-cols { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; }
+      .mps-col { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+      .mps-who {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      #mps-p1 .mps-who { color: #ff9a8f; }
+      #mps-p2 .mps-who { color: #8fb4ff; }
+      #mps-shared { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+      .mps-shared-title {
+        color: #9fb4d8;
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
       /* The single-view joystick hides in a controller split; the touch split
          brings back TWO, one per player (left = P1, right = P2). */
       body.split-on #joystick, body.split-on #joystick-hit,
@@ -1473,9 +1543,13 @@
     <div id="gear-btn" title="Settings">&#9881;</div>
     <div id="gear-fps" title="Frame rate">-- fps</div>
 
-    <!-- Leave split-screen: only shown while two players are live. The touch
-         split has no Esc key, so it needs a visible way back. -->
-    <button id="mp-exit" type="button" title="Leave split-screen">&nbsp;Exit Split&nbsp;</button>
+    <!-- Split-screen controls: only shown while two players are live. The touch
+         split has no Esc key, so it needs a visible way back. Settings opens the
+         per-player car changer with the shared settings behind it. -->
+    <div id="mp-bar">
+      <button id="mp-settings" type="button" title="Split-screen settings">&nbsp;Settings&nbsp;</button>
+      <button id="mp-exit" type="button" title="Leave split-screen">&nbsp;Exit Split&nbsp;</button>
+    </div>
 
     <!-- Car showroom overlay (pure UI; the 3D car is rendered on the canvas):
          side arrows cycle the cars, clicking the spinning car drives it. -->
@@ -1787,6 +1861,46 @@
       <div id="pick-hint">Both players lock in to start. Esc or <span class="padbtn">B</span> cancels.</div>
       <div class="pick-actions">
         <button id="pick-cancel" class="gfx-btn" type="button">&nbsp;Back&nbsp;</button>
+      </div>
+    </div>
+
+    <!-- Split-screen settings: opened from the Settings button while two players
+         are live. Each side changes its OWN car (applied live); every other
+         setting is shared and reuses the normal showroom panels. -->
+    <div id="mp-settings-screen">
+      <div id="mps-title">Split Settings</div>
+      <div id="mps-cols">
+        <div class="mps-col" id="mps-p1">
+          <div class="mps-who">Player 1</div>
+          <div class="pick-row">
+            <button class="pick-arrow" id="mps-p1-prev" type="button" title="Previous car">&#9664;</button>
+            <span class="pick-name" id="mps-p1-name">Crankshaft</span>
+            <button class="pick-arrow" id="mps-p1-next" type="button" title="Next car">&#9654;</button>
+          </div>
+          <div class="pick-state">Player 1's ride</div>
+        </div>
+        <div class="mps-col" id="mps-p2">
+          <div class="mps-who">Player 2</div>
+          <div class="pick-row">
+            <button class="pick-arrow" id="mps-p2-prev" type="button" title="Previous car">&#9664;</button>
+            <span class="pick-name" id="mps-p2-name">City Car</span>
+            <button class="pick-arrow" id="mps-p2-next" type="button" title="Next car">&#9654;</button>
+          </div>
+          <div class="pick-state">Player 2's ride</div>
+        </div>
+      </div>
+      <div id="mps-shared">
+        <div class="mps-shared-title">Shared settings (both players)</div>
+        <div class="mp-start-row">
+          <button class="gfx-btn" id="mps-shared-graphics" type="button">&nbsp;Graphics&nbsp;</button>
+          <button class="gfx-btn" id="mps-shared-controls" type="button">&nbsp;Controls&nbsp;</button>
+          <button class="gfx-btn" id="mps-shared-levels" type="button">&nbsp;Levels&nbsp;</button>
+          <button class="gfx-btn" id="mps-shared-about" type="button">&nbsp;About&nbsp;</button>
+        </div>
+      </div>
+      <div class="pick-actions">
+        <button id="mps-close" class="gfx-btn" type="button">&nbsp;Resume&nbsp;</button>
+        <button id="mps-exit" class="gfx-btn" type="button">&nbsp;Exit Split&nbsp;</button>
       </div>
     </div>
 

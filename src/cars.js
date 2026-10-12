@@ -2007,6 +2007,136 @@ export function createTacoTruck() {
   return group;
 }
 
+// ===== Shiny fuchsia Jeep (open-top 4x4) =====
+// A boxy Wrangler-style off-roader: a seven-slot grille flanked by round
+// headlights, a flat leaning windshield, an open top with a black sport bar,
+// flared fenders over four chunky off-road tires, and a spare bolted to the
+// tailgate. The paint is a clear-coated fuchsia, so it reads as genuinely shiny
+// under the scene lights. Front faces -X like every car, and it exposes the
+// usual { wheels, wheelPivots } contract. It is available both as city traffic
+// (see addTrafficCars) and as a playable ride (the `jeep` entry in CAR_KINDS).
+const jeepFuchsia = new THREE.MeshPhysicalMaterial({
+  color: 0xd400c8, roughness: 0.14, metalness: 0.2,
+  clearcoat: 1, clearcoatRoughness: 0.08,
+});
+const jeepTrim = new THREE.MeshStandardMaterial({ color: 0xe8ecf2, roughness: 0.16, metalness: 0.9 });
+const jeepDark = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.72 });
+const jeepGlassMat = new THREE.MeshStandardMaterial({
+  color: 0x22303f, roughness: 0.1, metalness: 0.1, transparent: true, opacity: 0.6,
+});
+const jeepTailMat = new THREE.MeshStandardMaterial({ color: 0xd42a2a, emissive: 0x7a1010, emissiveIntensity: 0.5 });
+
+export function createJeep(color = 0xd400c8) {
+  const group = new THREE.Group();
+  const paint = jeepFuchsia.clone();
+  paint.color.set(color);
+  const box = (w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat.clone());
+    m.position.set(x, y, z);
+    m.rotation.set(rx, ry, rz);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    group.add(m);
+    return m;
+  };
+
+  // ===== Body tub: flat-sided and boxy, x -1.85..2.05 =====
+  box(3.9, 0.92, 1.72, paint, 0.1, 1.14, 0);
+  box(1.5, 0.06, 1.5, jeepDark, -1.5, 1.61, 0);          // hood seam
+  box(2.0, 0.06, 1.5, jeepDark, 0.9, 1.61, 0);           // rear deck seam
+  // Flared fenders over each wheel (front pair steers, so no steering flares)
+  for (const sz of [-1, 1]) {
+    box(1.5, 0.3, 0.5, paint, -1.35, 1.44, sz * 1.02);
+    box(1.4, 0.3, 0.5, paint, 1.5, 1.44, sz * 1.02);
+  }
+  // Rock rails along the sills
+  box(2.3, 0.1, 0.16, jeepDark, 0.1, 0.62, 1.0);
+  box(2.3, 0.1, 0.16, jeepDark, 0.1, 0.62, -1.0);
+
+  // ===== Seven-slot grille + round headlights on the -X face =====
+  box(0.12, 0.74, 1.42, jeepDark, -1.86, 1.2, 0);
+  for (let i = 0; i < 7; i++) {
+    box(0.06, 0.62, 0.1, paint, -1.93, 1.2, -0.48 + i * 0.16);
+  }
+  const hlGeom = new THREE.CylinderGeometry(0.15, 0.15, 0.12, 16);
+  for (const sz of [-1, 1]) {
+    const hl = new THREE.Mesh(hlGeom, lightMat.clone());
+    hl.rotation.z = Math.PI / 2;
+    hl.position.set(-1.9, 1.28, sz * 0.62);
+    hl.castShadow = true;
+    group.add(hl);
+    const bezel = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.03, 8, 16), jeepTrim.clone());
+    bezel.rotation.y = Math.PI / 2;
+    bezel.position.set(-1.87, 1.28, sz * 0.62);
+    group.add(bezel);
+  }
+
+  // ===== Flat leaning windshield with a chrome frame =====
+  box(0.08, 0.66, 1.56, jeepGlassMat, -0.7, 1.96, 0, 0, 0, -0.14);
+  box(0.1, 0.1, 1.6, jeepTrim, -0.81, 2.28, 0, 0, 0, -0.14);   // header bar
+  box(0.1, 0.1, 1.6, jeepTrim, -0.59, 1.64, 0);                // cowl base
+  for (const sz of [-1, 1]) {
+    box(0.1, 0.7, 0.1, jeepTrim, -0.7, 1.96, sz * 0.78, 0, 0, -0.14);   // A-pillars
+  }
+
+  // ===== Open top: black sport bar behind the seats =====
+  box(0.12, 0.92, 0.12, jeepDark, 0.5, 2.03, 0.72);
+  box(0.12, 0.9, 0.12, jeepDark, 0.5, 2.02, -0.72);
+  box(0.12, 0.12, 1.56, jeepDark, 0.5, 2.47, 0);         // top cross bar
+  for (const sz of [-1, 1]) {                            // rear diagonal braces
+    box(1.3, 0.09, 0.09, jeepDark, 1.15, 2.03, sz * 0.72, 0, 0, -0.6);
+  }
+
+  // ===== Bumpers, tail lights, spare tire on the tailgate =====
+  box(0.3, 0.24, 2.1, jeepDark, -2.02, 0.72, 0);         // front bumper
+  box(0.3, 0.24, 2.1, jeepDark, 2.2, 0.72, 0);           // rear bumper
+  for (const sz of [-1, 1]) box(0.08, 0.28, 0.22, jeepDark, 2.1, 1.18, sz * 0.62);
+  const spare = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, 0.26, 20), jeepDark.clone());
+  spare.rotation.z = Math.PI / 2;
+  spare.position.set(2.32, 1.22, 0);
+  spare.castShadow = true;
+  spare.receiveShadow = true;
+  group.add(spare);
+  const spareHub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.3, 14), jeepTrim.clone());
+  spareHub.rotation.z = Math.PI / 2;
+  spareHub.position.set(2.32, 1.22, 0);
+  group.add(spareHub);
+
+  // Mirrors on short chrome arms
+  for (const sz of [-1, 1]) {
+    box(0.05, 0.05, 0.24, jeepTrim, -0.62, 2.0, sz * 0.9);
+    box(0.12, 0.2, 0.1, jeepDark, -0.62, 1.98, sz * 1.03);
+  }
+
+  // ===== Four chunky off-road tires (front pair steers) =====
+  const wheels = [];
+  const wheelPivots = [];
+  const wheelSpec = [
+    { x: -1.35, z: 0.98, steer: true },
+    { x: -1.35, z: -0.98, steer: true },
+    { x: 1.5, z: 0.98, steer: false },
+    { x: 1.5, z: -0.98, steer: false },
+  ];
+  for (const s of wheelSpec) {
+    const pivot = new THREE.Group();
+    pivot.position.set(s.x, 0.5, s.z);
+    const wheel = makeKnobbyWheel(pivot, 0.5, 0.42, 12);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.06, 12), jeepTrim.clone());
+    hub.rotation.x = Math.PI / 2;
+    hub.position.z = 0.23;
+    pivot.add(hub);
+    const hubB = hub.clone();
+    hubB.position.z = -0.23;
+    pivot.add(hubB);
+    group.add(pivot);
+    wheels.push(wheel);
+    if (s.steer) wheelPivots.push(pivot);
+  }
+  group.userData.wheels = wheels;
+  group.userData.wheelPivots = wheelPivots;
+  return group;
+}
+
 // ===== Traffic cars (reuse createCar) =====
 // The roads form a plus: the main road runs along X (z in [-12,12]) and the
 // cross road runs along Z (x in [-12,12]). Each traffic car drives straight
@@ -2031,12 +2161,15 @@ export function addTrafficCars(scene) {
     // Spread a row of cars down the lane; they all share the lane speed, so
     // the gaps between them stay even forever (same direction, same speed).
     for (let s = -70; s <= 70; s += 20) {
-      // Rotate through car types: regular, VW Bug, regular, '57 Chevy taxi
-      const typeIdx = colorIdx % 4;
+      // Rotate through car types: regular, VW Bug, fuchsia Jeep, regular,
+      // and the '57 Chevy taxi. The Jeep is always its signature fuchsia.
+      const typeIdx = colorIdx % 5;
       let mesh;
       if (typeIdx === 1) {
         mesh = createVWBug(TRAFFIC_COLORS[colorIdx % TRAFFIC_COLORS.length]);
-      } else if (typeIdx === 3) {
+      } else if (typeIdx === 2) {
+        mesh = createJeep();
+      } else if (typeIdx === 4) {
         mesh = createChevy57Taxi();
       } else {
         mesh = createCar(TRAFFIC_COLORS[colorIdx % TRAFFIC_COLORS.length]);

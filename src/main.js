@@ -3,7 +3,7 @@ import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from '
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, POTHOLE,
 LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1791570000000';
-import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, addTrafficCars } from './cars.js?v=1799999999999';
+import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, createJeep, addTrafficCars } from './cars.js?v=1799999999999';
 import { addFiretruck } from './firetruck.js?v=1799999999999';
 import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger, cityPowerOut } from './cityBuildings.js?v=1791700000000';
 import { addPeople } from './people.js?v=1799999999999';
@@ -52,7 +52,7 @@ import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, FRONT_DOO
 import { houseSurfaceY, houseLandingY } from './levels/house/surfaces.js';
 import { addCat } from './cat.js?v=1791479956919';
 import { makeAsh, inHearth, stepAsh, ashBlack, ashFlakeRate } from './ash.js';
-import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from './levels/underground/index.js?v=1791559660313';
+import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from   './levels/underground/index.js?v=1799999999999';
 import {
   createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_TRENCH_Z,
@@ -287,13 +287,14 @@ function gfxUpdateGearFps() {
 }
 
 // ===== Automatic quality =====
-// The safety net for a machine that cannot hold the frame rate: the settings
-// walk themselves DOWN one rung at a time until the frame rate recovers, and
-// then walk back UP again once there is headroom to spare. The decision engine
-// lives in modules/gfxQualityWalk.js (pure and headless-testable); this wrapper
-// feeds it the live settings and the measured fps every tick. Draw distance is
-// deliberately NOT part of the walk: `gfx.far` is only ever changed by the
-// slider, and "Max" (gfx.max) switches the whole walk off.
+// The safety net for a machine that cannot hold the frame rate. It is meant to
+// stay OUT of the way: it only arms when the frame rate collapses below 5fps
+// and stays there for five seconds. When it does engage it walks RESOLUTION and
+// ANTI-ALIASING down one rung at a time, and the moment the frame rate is back
+// at 40fps it hands the player's whole picture back in one go. Draw distance,
+// shadows and the fog tie are never touched by the walk — they belong to the
+// player, and "Max" (gfx.max) switches the walk off entirely. The decision
+// engine lives in modules/gfxQualityWalk.js (pure and headless-testable).
 const gfxQualState = gfxQualCreate();
 
 function gfxAutoReset() {
@@ -1139,7 +1140,8 @@ function carCollisionList() {
     // Carry P2's heavy flag so a steamroller/monster twin smashes like P1's.
     list.push({ mesh: car2, radius: playerCarRadius, kind: 'player2', playerIndex: 1, steamroller: playerTwoSteamroller });
   }
-  if (!robot.bumperCaptured) list.push({ mesh: bumperCar, radius: aiCarRadius, kind: 'bumper' });
+  // Split-screen has no chase car, so its collider is not in play either.
+  if (!robot.bumperCaptured && !splitActive) list.push({ mesh: bumperCar, radius: aiCarRadius, kind: 'bumper' });
   list.push({ mesh: firetruck.truck, radius: firetruckColliderR, kind: 'firetruck', offDuty: !firetruck.duty() });
   for (const t of traffic) {
     // The steamroller is a ghost — it drives right over the player car (and
@@ -1752,8 +1754,147 @@ function makePlayerTag(parent, label, color) {
   sprite.scale.set(2.8, 1.05, 1);
   sprite.position.set(0.25, 3.1, 0);
   sprite.renderOrder = 10;
+  // Remembered so the split loop can grow the tag with distance (a minimum
+  // on-screen size keeps the rival readable from the far side of the map) and
+  // so the off-screen edge marker knows what to call them and what colour to use.
+  sprite.userData.baseScale = { x: 2.8, y: 1.05 };
+  sprite.userData.label = label;
+  sprite.userData.color = color;
   parent.add(sprite);
   return sprite;
+}
+
+// ===== Off-screen rival indicator (split screen) =====
+// While the other car is on screen its floating tag does the job. Once it
+// leaves your half of the split that tag is hidden and this edge marker takes
+// over: the same coloured bubble parked against the border of YOUR viewport,
+// with a little arrow that keeps pointing the way to turn to find them. The
+// tag also grows with distance (see SPLIT_MARKER_REF_DIST) so it never shrinks
+// below a legible minimum, letting you spot a rival who is still on screen but
+// all the way across the map.
+const SPLIT_MARKER_REF_DIST = 44;     // distance at which a tag is at its base size
+const SPLIT_MARKER_MAX_SCALE = 6;     // sanity cap on the minimum-size growth
+const SPLIT_MARKER_BASE_Y = 2.8;      // world gap between a car and the tag's underside
+const SPLIT_MARKER_EDGE_MARGIN = 0.97;
+const splitOffIndicators = [null, null];
+const splitTagOnScreen = [false, false];   // splitTagOnScreen[n]: P(n+1)'s tag is in view
+const _splitMark = { world: new THREE.Vector3(), cs: new THREE.Vector3(), ndc: new THREE.Vector3() };
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function makeSplitOffIndicator(color) {
+  const el = document.createElement('div');
+  el.className = 'split-off-indicator';
+  el.style.color = color;
+  // A long shaft + sharp head reads as an arrow, not a bare triangle: the tail
+  // makes it obvious which way it is pointing even at a glance. Points right at
+  // 0deg; the split loop rotates it toward the rival.
+  const arrow = document.createElementNS(SVG_NS, 'svg');
+  arrow.setAttribute('class', 'split-off-arrow');
+  arrow.setAttribute('viewBox', '0 0 30 14');
+  arrow.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', 'M0 5.2 H16.5 V1.2 L30 7 L16.5 12.8 V8.8 H0 Z');
+  path.setAttribute('fill', 'currentColor');
+  arrow.appendChild(path);
+  const label = document.createElement('span');
+  label.className = 'split-off-label';
+  el.append(arrow, label);
+  document.body.appendChild(el);
+  return { el, arrow, label };
+}
+
+function removeSplitOffIndicators() {
+  for (let i = 0; i < 2; i++) {
+    const ind = splitOffIndicators[i];
+    if (ind && ind.el.parentNode) ind.el.parentNode.removeChild(ind.el);
+    splitOffIndicators[i] = null;
+  }
+}
+
+// Place each viewport's rival marker: grow the floating tag with distance while
+// the rival is on screen, otherwise park the edge marker on the border of that
+// half and point its arrow at the rival. Updates splitTagOnScreen so the render
+// loop can show/hide the floating tags per viewport.
+function updateSplitMarkers(rects) {
+  for (let i = 0; i < 2; i++) {
+    const viewerCam = i === 0 ? camera : camB;
+    const other = players[1 - i];
+    const tag = other && other.marker;
+    const ind = splitOffIndicators[i];
+    if (!viewerCam || !tag) {
+      splitTagOnScreen[1 - i] = false;
+      if (ind) ind.el.classList.remove('show');
+      continue;
+    }
+    // getWorldPosition refreshes the car's world matrix for us.
+    tag.getWorldPosition(_splitMark.world);
+    viewerCam.updateMatrixWorld();
+    viewerCam.matrixWorldInverse.copy(viewerCam.matrixWorld).invert();
+    _splitMark.cs.copy(_splitMark.world).applyMatrix4(viewerCam.matrixWorldInverse);
+    const behind = _splitMark.cs.z >= 0;
+    _splitMark.ndc.copy(_splitMark.world).project(viewerCam);
+    const onScreen = !behind
+      && Math.abs(_splitMark.ndc.x) <= SPLIT_MARKER_EDGE_MARGIN
+      && Math.abs(_splitMark.ndc.y) <= SPLIT_MARKER_EDGE_MARGIN;
+    splitTagOnScreen[1 - i] = onScreen;
+
+    // Minimum on-screen size: scale grows linearly with distance past
+    // REF_DIST so the tag keeps a roughly constant apparent size far away.
+    const bs = tag.userData.baseScale;
+    if (bs) {
+      const dist = viewerCam.position.distanceTo(_splitMark.world);
+      const grow = Math.min(SPLIT_MARKER_MAX_SCALE, Math.max(1, dist / SPLIT_MARKER_REF_DIST));
+      tag.scale.set(bs.x * grow, bs.y * grow, 1);
+      // Keep the tag's underside a fixed gap above the car: as it grows with
+      // distance its centre lifts, so it floats clear instead of draping over
+      // (or touching) the car from far away.
+      tag.position.y = SPLIT_MARKER_BASE_Y + bs.y * grow * 0.5;
+    }
+
+    if (onScreen || !ind) {
+      if (ind) ind.el.classList.remove('show');
+      continue;
+    }
+    ind.label.textContent = tag.userData.label || '';
+    // Screen-space direction toward the rival, in NDC terms (x right, y UP).
+    let dirX, dirY;
+    if (!behind) {
+      dirX = _splitMark.ndc.x;
+      dirY = _splitMark.ndc.y;
+    } else {
+      // Behind the camera there is no honest screen spot, and a marker at the
+      // TOP pointing down reads ambiguously ("look down / go forward?"). Park
+      // it on the BOTTOM edge instead so it clearly means "they're behind
+      // you", leaning toward the side the rival is actually on.
+      dirX = 0.45 * _splitMark.cs.x;
+      dirY = -1;
+    }
+    if (Math.abs(dirX) < 1e-3 && Math.abs(dirY) < 1e-3) dirX = 1;   // dead centre
+    // Push the ray out to the border of the [-1,1] box.
+    const t = 1 / Math.max(Math.abs(dirX), Math.abs(dirY));
+    const ex = dirX * t * SPLIT_MARKER_EDGE_MARGIN;
+    const ey = dirY * t * SPLIT_MARKER_EDGE_MARGIN;
+    const vp = rects[i];
+    const px = vp.x + (ex * 0.5 + 0.5) * vp.width;
+    const py = window.innerHeight - (vp.y + (ey * 0.5 + 0.5) * vp.height);
+    ind.el.style.left = px + 'px';
+    ind.el.style.top = py + 'px';
+    // Arrow graphic points right at 0deg and CSS rotation is clockwise, so an
+    // NDC direction (y up) maps to atan2(-dirY, dirX).
+    const deg = Math.atan2(-dirY, dirX) * 180 / Math.PI;
+    ind.arrow.style.transform = `rotate(${deg}deg)`;
+    ind.el.classList.add('show');
+  }
+}
+
+// Split-screen has no chase car: the little blue car must not follow either
+// player. Hide it (and any freight consist it drags) and keep the AI from
+// running — see the `!splitActive` guards on its update blocks, its collider and
+// its minimap dot, plus the per-frame re-assert in the frame loop.
+function suppressChaseCar(hidden) {
+  if (bumperCar) bumperCar.visible = !hidden;
+  for (const mesh of chaseTrainCars) mesh.visible = !hidden;
 }
 
 function beginSplit() {
@@ -1814,8 +1955,17 @@ function beginSplit() {
   // in the split render loop. P1's tag on P1's car, P2's on P2's car.
   players[0].marker = makePlayerTag(car, 'P1', SPLIT_P1_COLOR);
   players[1].marker = makePlayerTag(car2, 'P2', SPLIT_P2_COLOR);
+  // Edge markers, one per half: P1's viewport points at P2 (blue) and vice
+  // versa, matching the floating tags each half shows while the rival is in view.
+  removeSplitOffIndicators();
+  splitOffIndicators[0] = makeSplitOffIndicator(SPLIT_P2_COLOR);
+  splitOffIndicators[1] = makeSplitOffIndicator(SPLIT_P1_COLOR);
 
   splitActive = true;
+  express2State = { active: false, s: 0, dir: 1, cooldown: 0, lastDir: 1 };
+  ghostRide2Active = false;
+  ghostRide2T = 0;
+  suppressChaseCar(true);
   document.body.classList.add('split-on');
   // Touch split: show the two on-screen joysticks, one per player.
   if (splitTouch) document.body.classList.add('split-touch');
@@ -1831,10 +1981,20 @@ function endSplit() {
   }
   removePlayerTag(players[1]);
   removePlayerTag(players[0]);
+  removeSplitOffIndicators();
+  splitTagOnScreen[0] = false;
+  splitTagOnScreen[1] = false;
   players[1] = null;
   car2 = null;
   camB = null;
   flatCar2State = createFlatCarState(false);
+  express2State.active = false;
+  express2State.cooldown = 0;
+  ghostRide2Active = false;
+  ghostRide2T = 0;
+  mpSettingsOpen = false;
+  mpReturnFromShared = false;
+  document.body.classList.remove('mp-settings-open');
   // Back to the single-player shared keyboard+pad scheme.
   players[0].device = 'kb-both';
   players[0].padIndex = 0;
@@ -1854,6 +2014,7 @@ function endSplit() {
   renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
   renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
   clearPickStage();
+  suppressChaseCar(false);   // back to single-player: the chase car returns
   document.body.classList.remove('split-on', 'split-touch');
 }
 
@@ -2046,6 +2207,7 @@ function stepTwoPlayer(p, dt) {
   // Ground height by world. These reuse the levels' own height queries so the
   // twin car sits on the same terrain P1 does.
   let groundY2 = groundHeight;
+  let ugTwoStepOff = false;
   let onRamp2 = false;
   let rampDef2 = null;   // the ramp P2 is riding now, for body tilt
   if (worldState === 'ramp') {
@@ -2063,19 +2225,10 @@ function stepTwoPlayer(p, dt) {
     // The course floor is flat, but Player 2 must still ride the obstacle-course
     // ramps (the candy waterfall / grand ramp among them), the staircase, the
     // elevator/rooftop surfaces and the mountain road — the same queries P1 uses.
-    groundY2 = groundHeight;
-    const ride2 = ugRampRideAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
-    if (ride2) {
-      groundY2 = Math.max(groundY2, ride2.baseY + ride2.height * ride2.s);
-      onRamp2 = true;
-      rampDef2 = ride2;
-    }
-    groundY2 = Math.max(groundY2, ugElevatorTopAt(carTwo.position.x, carTwo.position.z, carTwo.position.y));
-    groundY2 = Math.max(groundY2, buildingTopAt(carTwo.position.x, carTwo.position.z));
-    if (undergroundWorld.stairHeightAt) {
-      const sh = undergroundWorld.stairHeightAt(carTwo.position.x, carTwo.position.z);
-      if (Number.isFinite(sh)) groundY2 = Math.max(groundY2, sh);
-    }
+    const sup2 = ugTwoSupportAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
+    groundY2 = sup2.y;
+    if (sup2.ramp) { onRamp2 = true; rampDef2 = sup2.ramp; }
+    ugTwoStepOff = sup2.stepOff;
   } else if (worldState === 'house') {
     // The house has its own walk-based heightfield for the main car; Player 2
     // rides the flat floor in v1. The walls still block (above), so the twin
@@ -2093,6 +2246,15 @@ function stepTwoPlayer(p, dt) {
     }
   }
 
+  // The surface a falling twin lands on: mirror P1's airborne landing, which may
+  // catch a building/rooftop top but only one at or below the car (a ceiling
+  // passing overhead must not reel it in).
+  let airGroundY2 = groundY2;
+  if (worldState === 'underground') {
+    const bTop2 = buildingTopAt(carTwo.position.x, carTwo.position.z);
+    if (bTop2 > 0 && bTop2 <= carTwo.position.y + 0.4) airGroundY2 = Math.max(airGroundY2, bTop2);
+  }
+
   // Airborne physics (P2's own): a trebuchet sling or driving off a ramp crest
   // sends the twin into a ballistic arc; gravity brings it back down. P2 never
   // sat on a ramp last frame and flies off one now, that launches them.
@@ -2102,12 +2264,19 @@ function stepTwoPlayer(p, dt) {
     j2.inAir = true;
     j2.yVelocity = 5 + p.velocity.value * 0.4;
   }
+  // Drove off the edge of a raised underground surface (the checkerboard
+  // ceiling tiles, a stair, or a crumbled-tile hole in it): drop under gravity
+  // instead of teleporting down to the floor.
+  if (!j2.inAir && ugTwoStepOff) {
+    j2.inAir = true;
+    j2.yVelocity = 0;
+  }
   p.wasOnRamp2 = onRamp2;
   if (j2.inAir) {
     j2.yVelocity -= 26 * dt;
     carTwo.position.y += j2.yVelocity * dt;
-    if (carTwo.position.y <= groundY2) {
-      carTwo.position.y = groundY2;
+    if (carTwo.position.y <= airGroundY2) {
+      carTwo.position.y = airGroundY2;
       j2.inAir = false;
       j2.yVelocity = 0;
       carTwo.rotation.z *= 0.5;
@@ -2230,6 +2399,9 @@ let magnetHold = null;                         // { t } while a magnet yanks the
 // remembers which way the last completed ride went so the post-ride montage
 // can watch the right landing.
 let expressState = { active: false, s: 0, dir: 1, cooldown: 0, lastDir: 1 };
+// Split-screen Player 2's own tube ride (no camera montage — each split half has
+// its own chase camera, so a montage would fight the split view).
+let express2State = { active: false, s: 0, dir: 1, cooldown: 0, lastDir: 1 };
 let expressCinT = 0;  // hold time left for the express-tube camera montage AFTER
                       // the ride pops the car out (watches the landing, then a
                       // post-cine ease slides the camera back onto the chase view)
@@ -3104,13 +3276,21 @@ const ugBuildOpts = {
   // A street ghost picked the car up: a low whoosh, a shake, and the car is
   // carried to the foot of the candy waterfall — a long way south and west out
   // of the glass city, which is the whole reward for being caught.
-  onGhostRide: (at) => {
+  onGhostRide: (at, pi = 0) => {
     playCrystalPop();
     shake.intensity = Math.max(shake.intensity, 0.45);
+    void at;
+    if (pi === 1 && splitActive) {
+      GHOST_RIDE2_FROM.x = car2.position.x;
+      GHOST_RIDE2_FROM.y = car2.position.y;
+      GHOST_RIDE2_FROM.z = car2.position.z;
+      ghostRide2Active = true;
+      ghostRide2T = 0;
+      return;
+    }
     GHOST_RIDE_FROM.x = car.position.x;
     GHOST_RIDE_FROM.y = car.position.y;
     GHOST_RIDE_FROM.z = car.position.z;
-    void at;
     ghostRideActive = true;
     ghostRideT = 0;
   },
@@ -4350,6 +4530,35 @@ function ugRampSurfaceY(px, pz) {
   return info ? info.baseY + info.height * info.s : -Infinity;
 }
 
+// Player 2's underground support resolver — a compact mirror of P1's grounded
+// branch. Returns { y, ramp, stepOff }:
+//   y       the surface height to stand on,
+//   ramp    the rideable ramp def (for body pitch) or null,
+//   stepOff true when the body was on a raised surface last frame and the
+//           support has dropped away (a crumbled ceiling tile, the tile edge,
+//           or a pit lip) so the caller should fall instead of teleport.
+// It deliberately does NOT use buildingTopAt: that reports the checkerboard
+// ceiling top over the whole grid with no height gate, which yanked P2 up onto
+// the tiles from the floor and snapped it back up when it drove back under
+// them. ugElevatorTopAt applies the same proximity gate P1 uses.
+function ugTwoSupportAt(px, pz, carY) {
+  const tf = tunnelFloorAt(px, pz, carY);
+  if (tf) return { y: tf.y, ramp: null, stepOff: false };
+  const ride = ugRampRideAt(px, pz, carY);
+  if (ride) return { y: ride.baseY + ride.height * ride.s, ramp: ride, stepOff: false };
+  const eTop = ugElevatorTopAt(px, pz, carY);
+  // Full-speed pit entry into a sunken skate-park bowl: fall to its surface.
+  if (ugSunkHoleAt(px, pz) && carY <= 0.05) {
+    const surf = ugRampSurfaceY(px, pz);
+    const lim = surf === -Infinity ? 0 : surf;
+    return { y: lim, ramp: null, stepOff: carY > lim + 0.02 };
+  }
+  if (eTop > 0.05 && Math.abs(carY - eTop) < 1.4) return { y: eTop, ramp: null, stepOff: false };
+  if (eTop > 0.05) return { y: 0, ramp: null, stepOff: false };   // surface is overhead
+  if (carY > 0.3) return { y: 0, ramp: null, stepOff: true };     // drove off a raised surface
+  return { y: 0, ramp: null, stepOff: false };
+}
+
 // The RIDEABLE underground ramp at (px, pz) for a body at height carY, or
 // null. ugRampInfoAt returns the FIRST footprint match, but overlapping ramps
 // at very different heights can mask the one the car is actually on: the holy
@@ -4528,9 +4737,13 @@ const shake = { intensity: 0 };
 // here is what actually holds the car in the air.
 let ghostRideActive = false;
 let ghostRideT = 0;
+// Split-screen Player 2's own ghost-ride clock; only ticks while splitActive.
+let ghostRide2Active = false;
+let ghostRide2T = 0;
 // Where the ride starts - the car at the moment it was touched, captured by the
 // callback so the arc always departs from wherever the ghost actually caught it.
 const GHOST_RIDE_FROM = { x: 0, y: 0, z: 0 };
+const GHOST_RIDE2_FROM = { x: 0, y: 0, z: 0 };
 // Where the ride ends: the base of the grand ramp, on the cavern floor just
 // south of it, facing back up the slope so you drive straight into the candy.
 const GHOST_RIDE_DROP = { x: 24, z: 82, heading: -Math.PI / 2 };
@@ -4763,6 +4976,11 @@ function respawnPlayer() {
   expressState.active = false;
   expressState.dir = 1;
   expressState.cooldown = 0;
+  express2State.active = false;
+  express2State.dir = 1;
+  express2State.cooldown = 0;
+  ghostRide2Active = false;
+  ghostRide2T = 0;
   stopTubeHum();
   expressCinT = 0;
   bubbleWobble = 0;
@@ -5008,6 +5226,11 @@ function enterUndergroundWorld() {
   expressState.active = false;
   expressState.dir = 1;
   expressState.cooldown = 0;
+  express2State.active = false;
+  express2State.dir = 1;
+  express2State.cooldown = 0;
+  ghostRide2Active = false;
+  ghostRide2T = 0;
   stopTubeHum();
   expressCinT = 0;
   bubbleWobble = 0;
@@ -5881,10 +6104,12 @@ function drawMinimap(mmCtxArg, opts) {
     }
     // The mega launch ramp is intentionally NOT drawn on the minimap (it sits
     // at the north edge of the map, in the grass field that isn't shown either).
-    ctx.fillStyle = '#3aa0ff';   // bumper car
-    ctx.beginPath();
-    ctx.arc(mmCenter + bumperCar.position.x * mmScale, mmCenter + bumperCar.position.z * mmScale, 2.6, 0, Math.PI * 2);
-    ctx.fill();
+    if (!splitActive) {   // no chase car on the map during a split session
+      ctx.fillStyle = '#3aa0ff';   // bumper car
+      ctx.beginPath();
+      ctx.arc(mmCenter + bumperCar.position.x * mmScale, mmCenter + bumperCar.position.z * mmScale, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
     // Only while it is on the road: a stood-down engine is parked in its bay and
   // would otherwise put an orange dot on the map for a truck you cannot see.
   if (firetruck.duty()) {
@@ -6159,14 +6384,17 @@ function drawMinimap(mmCtxArg, opts) {
   // along the car's true screen motion after the rotate. Split-screen draws
   // the dimmed other player first, then this map's own bright arrow on top.
   const drawPlayerArrow = (pc, pcolor) => {
+    // Multiplayer draws TWO cars, so both arrows go 3x bigger to stay obvious
+    // at a glance; single-player keeps the original little triangle.
+    const s = mark.other ? 3 : 1;
     ctx.fillStyle = pcolor;
     ctx.save();
     ctx.translate(mmCenter + pc.position.x * mmScale, mmCenter + pc.position.z * mmScale);
     ctx.rotate(Math.atan2(Math.sin(pc.rotation.y), -Math.cos(pc.rotation.y)));
     ctx.beginPath();
-    ctx.moveTo(5.5, 0);    // nose
-    ctx.lineTo(-3.5, 3);   // left rear
-    ctx.lineTo(-3.5, -3);  // right rear
+    ctx.moveTo(5.5 * s, 0);       // nose
+    ctx.lineTo(-3.5 * s, 3 * s);  // left rear
+    ctx.lineTo(-3.5 * s, -3 * s); // right rear
     ctx.closePath();
     ctx.fill();
     ctx.restore();
@@ -6206,7 +6434,8 @@ function drawMinimap(mmCtxArg, opts) {
   // is undone (like the feature labels above) so the letters read normally; the
   // position is the arrow's mirrored point mapped back to screen pixels.
   if (mark.other) {
-    ctx.font = 'bold 8px sans-serif';
+    // The 3x-arrow needs a bigger tag sitting clear above it.
+    ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const tagArrow = (pc, text, color) => {
@@ -6214,9 +6443,9 @@ function drawMinimap(mmCtxArg, opts) {
       const ax = 160 - (mmCenter + pc.position.x * mmScale);
       const ay = 160 - (mmCenter + pc.position.z * mmScale);
       ctx.fillStyle = 'rgba(0,0,0,0.8)';
-      ctx.fillText(text, ax + 0.7, ay - 7.3);
+      ctx.fillText(text, ax + 0.8, ay - 11.8);
       ctx.fillStyle = color;
-      ctx.fillText(text, ax, ay - 8);
+      ctx.fillText(text, ax, ay - 13);
     };
     tagArrow(mark.self, 'P1', mark.selfColor || '#ff4444');
     tagArrow(mark.other, 'P2', mark.otherColor || '#3b6bb5');
@@ -6324,6 +6553,13 @@ window.addEventListener('keydown', (event) => {
     else if (event.code === 'ArrowRight') { event.preventDefault(); cycleCar(1); }
     else if (event.code === 'Enter') { event.preventDefault(); exitSelectMode(true); }
     else if (event.code === 'Escape') { event.preventDefault(); exitSelectMode(false); }
+  }
+  // Esc backs out of the split-screen settings overlay (resuming the split)
+  // rather than quitting the whole split.
+  if (event.code === 'Escape' && mpSettingsOpen && !selectMode) {
+    event.preventDefault();
+    closeMpSettings();
+    return;
   }
   // Esc leaves a running split-screen: both sides collapse and the Multiplayer
   // settings tab reopens, matching the on-screen Exit button. Handled here so it
@@ -6772,6 +7008,9 @@ const CAR_KINDS = [
   { id: 'city', label: 'City Car', color: '#33415c', scale: 1, build: () => createCar(0x33415c) },
   { id: 'bug', label: 'VW Bug', color: '#2d6a4f', scale: 1, build: () => createVWBug(0x2d6a4f) },
   { id: 'taxi', label: "'57 Taxi", color: '#f5c518', scale: 1, build: () => createChevy57Taxi() },
+  // The shiny fuchsia Jeep — the same open-top off-roader that patrols the city
+  // streets as traffic, here as a ride you can take yourself.
+  { id: 'jeep', label: 'Jeep', color: '#d400c8', scale: 1, build: () => createJeep() },
   { id: 'little', label: 'Rampy', color: '#1e7ea6', scale: 0.55, build: () => createLittleCar(0x1e7ea6) },
   // A purple lifted monster truck — huge knobby tires. Drives over traffic and
   // squashes it flat exactly like the steamroller (it shares the same heavy
@@ -7254,6 +7493,7 @@ function reparentChaseTrainConsist() {
 
 function updateChaseTrainCars(delta) {
   if (chaseTrainCars.length === 0) return;
+  if (splitActive) return;   // the chase consist is parked while split-screen runs
   stepConsist(chaseTrainCars, bumperCar.position.x, bumperCar.position.z, bumperCar.position.y, delta);
   bumpConsistWith(CONSIST_THREAT, chaseTrainCars);
   for (const mesh of chaseTrainCars) tickConsistWobble(mesh, delta);
@@ -7611,6 +7851,14 @@ function exitSelectMode(apply) {
     }
   }
   setPaused(selectWasPaused);
+  // A shared-settings panel opened from the split overlay returns to that
+  // overlay rather than dropping straight back into the game.
+  if (mpReturnFromShared && splitActive) {
+    mpReturnFromShared = false;
+    openMpSettings();
+  } else {
+    mpReturnFromShared = false;
+  }
 }
 
 function cycleCar(dir) {
@@ -7866,6 +8114,86 @@ if (mpTouchBtn) {
 }
 const mpExitBtn = document.getElementById('mp-exit');
 if (mpExitBtn) mpExitBtn.addEventListener('click', () => exitSplitToSettings());
+
+// ===== Split-screen settings overlay =====
+// A paused menu opened from the Settings button while two players are live: each
+// side cycles its OWN car (applied to the running split immediately), and every
+// other setting is shared, so it just reuses the normal showroom panels.
+let mpSettingsOpen = false;
+let mpReturnFromShared = false;
+function updateMpSettingsUI() {
+  const p1 = CAR_KINDS.find((k) => k.id === playerCarKind) || CAR_KINDS[0];
+  const p2 = CAR_KINDS.find((k) => k.id === playerTwoCarKind) || CAR_KINDS[0];
+  const n1 = document.getElementById('mps-p1-name');
+  const n2 = document.getElementById('mps-p2-name');
+  if (n1) n1.textContent = p1.label;
+  if (n2) n2.textContent = p2.label;
+}
+// A live body swap rebuilds the car's children and would drop the floating name
+// tag with them; put both tags back on their cars.
+function reattachSplitMarkers() {
+  if (!splitActive) return;
+  if (players[0] && players[0].marker && players[0].marker.parent !== car) car.add(players[0].marker);
+  if (players[1] && players[1].marker && players[1].marker.parent !== car2) car2.add(players[1].marker);
+}
+function mpCycleCar(pi, dir) {
+  if (pi === 0) {
+    const i = CAR_KINDS.findIndex((k) => k.id === playerCarKind);
+    const next = CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id;
+    if (next !== playerCarKind) swapPlayerCar(next);
+  } else if (car2) {
+    const i = CAR_KINDS.findIndex((k) => k.id === playerTwoCarKind);
+    const next = CAR_KINDS[(i + dir + CAR_KINDS.length) % CAR_KINDS.length].id;
+    if (next !== playerTwoCarKind) applyPlayerTwoCar(next);
+  }
+  reattachSplitMarkers();
+  updateMpSettingsUI();
+}
+function openMpSettings() {
+  if (!splitActive) return;
+  mpSettingsOpen = true;
+  document.body.classList.add('mp-settings-open');
+  setPaused(true);
+  updateMpSettingsUI();
+}
+function closeMpSettings() {
+  if (!mpSettingsOpen) return;
+  mpSettingsOpen = false;
+  document.body.classList.remove('mp-settings-open');
+  if (!selectMode) setPaused(false);
+}
+// Shared settings: hand off to the showroom panels (graphics/controls/levels/
+// about). Those are global already, so nothing per-player leaks; on close,
+// exitSelectMode brings the split overlay back.
+function openMpShared(tab) {
+  mpReturnFromShared = true;
+  mpSettingsOpen = false;
+  document.body.classList.remove('mp-settings-open');
+  enterSelectMode();
+  setPickerTab(tab);
+}
+const mpSettingsBtn = document.getElementById('mp-settings');
+if (mpSettingsBtn) mpSettingsBtn.addEventListener('click', () => openMpSettings());
+const mpsClose = document.getElementById('mps-close');
+if (mpsClose) mpsClose.addEventListener('click', () => closeMpSettings());
+const mpsExit = document.getElementById('mps-exit');
+if (mpsExit) mpsExit.addEventListener('click', () => {
+  closeMpSettings();
+  exitSplitToSettings();
+});
+for (const [pi, dir] of [[0, -1], [0, 1], [1, -1], [1, 1]]) {
+  const id = `mps-p${pi + 1}-${dir < 0 ? 'prev' : 'next'}`;
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => mpCycleCar(pi, dir));
+}
+const mpsSharedGraphics = document.getElementById('mps-shared-graphics');
+if (mpsSharedGraphics) mpsSharedGraphics.addEventListener('click', () => openMpShared('graphics'));
+const mpsSharedControls = document.getElementById('mps-shared-controls');
+if (mpsSharedControls) mpsSharedControls.addEventListener('click', () => openMpShared('controls'));
+const mpsSharedLevels = document.getElementById('mps-shared-levels');
+if (mpsSharedLevels) mpsSharedLevels.addEventListener('click', () => openMpShared('levels'));
+const mpsSharedAbout = document.getElementById('mps-shared-about');
+if (mpsSharedAbout) mpsSharedAbout.addEventListener('click', () => openMpShared('about'));
 
 // Car-pick screen: the arrow buttons beside each player's ride cycle the roster
 // (the mouse/touch equivalent of the keyboard and pad picking above), the Lock
@@ -8982,6 +9310,7 @@ function knockBumperAside(nx, nz, power, spin) {
 
 function updateRampWorldBumper(delta) {
   if (worldState !== 'ramp') return;
+  if (splitActive) return;   // no chase car in split-screen
   // Count down before the blue car shows up.
   if (!bumperInRamp) {
     bumperRampTimer -= delta;
@@ -11253,6 +11582,60 @@ function animate() {
       }
     }
 
+    // ---- 5c. Express tube for Player 2 (split-screen mirror of block 5) ----
+    if (splitActive && car2) {
+      const j2 = players[1].jump || (players[1].jump = { inAir: false, yVelocity: 0 });
+      const v2 = players[1].velocity;
+      if (express2State.active) {
+        const len = expressTubeLength();
+        express2State.s += express2State.dir * (EXPRESS_TUBE.RIDE_SPEED / len) * delta;
+        const done = express2State.dir > 0 ? express2State.s >= 1 : express2State.s <= 0;
+        if (done) {
+          express2State.active = false;
+          express2State.lastDir = express2State.dir;
+          express2State.cooldown = 2.5;
+          const ex = expressTubePoint(express2State.dir > 0 ? 1 : 0);
+          const et = expressTubeTangent(express2State.dir > 0 ? 1 : 0);
+          car2.position.set(
+            ex.x + (express2State.dir > 0 ? 0 : 2.8),
+            Math.max(0.4, ex.y),
+            ex.z + (express2State.dir > 0 ? 0 : 0.4)
+          );
+          car2.rotation.set(0, express2State.dir > 0
+            ? Math.atan2(et.tz, -et.tx)
+            : Math.atan2(-et.tz, et.tx), 0);
+          j2.inAir = true;
+          j2.yVelocity = 4;
+          v2.value = 6;
+        } else {
+          const p = expressTubePoint(express2State.s);
+          const t = expressTubeTangent(express2State.s);
+          car2.position.set(p.x, p.y, p.z);
+          const tx = express2State.dir > 0 ? t.tx : -t.tx;
+          const tz = express2State.dir > 0 ? t.tz : -t.tz;
+          const ty = express2State.dir > 0 ? t.ty : -t.ty;
+          car2.rotation.set(0, Math.atan2(tz, -tx), -Math.atan2(ty, Math.hypot(t.tx, t.tz)));
+        }
+      } else {
+        if (express2State.cooldown > 0) express2State.cooldown -= delta;
+        const nn = expressTubeNearest(car2.position.x, car2.position.z);
+        const groundedTube = !j2.inAir && car2.position.y < 2;
+        const atInlet = nn.s < EXPRESS_TUBE.GRAB_S_MAX;
+        const atOutlet = nn.s > 1 - EXPRESS_TUBE.GRAB_S_MAX;
+        if (express2State.cooldown <= 0
+          && groundedTube
+          && (atInlet || atOutlet)
+          && nn.horizDist < EXPRESS_TUBE.GRAB_R
+          && Math.abs(nn.y - car2.position.y) < 1.2
+          && Math.abs(v2.value) > 2) {
+          express2State.active = true;
+          express2State.dir = atInlet ? 1 : -1;
+          express2State.s = nn.s;
+          shake.intensity = Math.max(shake.intensity, 0.25);
+        }
+      }
+    }
+
     // ---- 3. Magnet hold (owns the car while the field is on) ----
     const mag = ug.magnet;
     if (mag) {
@@ -11436,7 +11819,7 @@ function animate() {
   // Bumper car AI: chases the NEAREST copy of you across the wrap seam, stops
   // ~1 foot from you, and only follows once you drive away. Skipped entirely
   // while the robot is holding the blue car in its claw — or in the ramp world.
-  if (worldState === 'city' && !robot.bumperCaptured) {
+  if (worldState === 'city' && !robot.bumperCaptured && !splitActive) {
   if (bumperKnock) {
     // Just got smashed by the player: tumble away with a spin, then resume
     // chasing once the knock settles.
@@ -11774,8 +12157,9 @@ function animate() {
 
   // Split-screen: step and frame Player 2 for this frame. Their twin physics
   // and chase camera are isolated from P1's block above, so the single-player
-  // path is untouched.
-  if (splitActive && players[1]) {
+  // path is untouched. While the express tube owns P2, skip the twin physics so
+  // it can't fight the ride pose.
+  if (splitActive && players[1] && !express2State.active) {
     stepTwoPlayer(players[1], delta);
     // Outside the city the AI collision pass above never ran, so bump the two
     // players apart here; inside the city resolveCarCollisions already did it.
@@ -11869,7 +12253,8 @@ function animate() {
       delta,
       car.position,
       littleCar.mesh && littleCar.mesh.visible ? littleCar.mesh.position : null,
-      playerTrain && trainCars.length ? trainCars.map((m) => m.position) : null
+      playerTrain && trainCars.length ? trainCars.map((m) => m.position) : null,
+      splitActive ? car2.position : null
     );
     // The underground's steam press flattens the car when it's under the head
     // while it's slammed down (same flatten/bounce as the boulder/steamroller).
@@ -11915,6 +12300,39 @@ function animate() {
         car.position.set(GHOST_RIDE_DROP.x, 0, GHOST_RIDE_DROP.z);
         car.rotation.set(0, GHOST_RIDE_DROP.heading, 0);
         shake.intensity = Math.max(shake.intensity, 0.3);
+      }
+    }
+    // Split-screen twin held by a ghost: the same arc, driven on car2.
+    if (ghostRide2Active) {
+      if (!splitActive) {
+        ghostRide2Active = false;
+      } else {
+        ghostRide2T += delta;
+        const t = Math.min(1, ghostRide2T / GHOST_RIDE_TIME);
+        const e = t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) * (-2 * t + 2)) / 2;
+        const from = GHOST_RIDE2_FROM;
+        const dx = GHOST_RIDE_DROP.x - from.x;
+        const dz = GHOST_RIDE_DROP.z - from.z;
+        const arc = Math.sin(e * Math.PI) * 26;
+        car2.position.set(
+          from.x + dx * e,
+          from.y + (0 - from.y) * e + arc,
+          from.z + dz * e
+        );
+        const travel = Math.atan2(dx, dz);
+        car2.rotation.set(0, t < 0.85 ? travel : GHOST_RIDE_DROP.heading, 0);
+        players[1].velocity.value = 0;
+        players[1].steering.value = 0;
+        if (players[1].jump) {
+          players[1].jump.inAir = false;
+          players[1].jump.yVelocity = 0;
+        }
+        players[1].knock = null;
+        if (t >= 1) {
+          ghostRide2Active = false;
+          car2.position.set(GHOST_RIDE_DROP.x, 0, GHOST_RIDE_DROP.z);
+          car2.rotation.set(0, GHOST_RIDE_DROP.heading, 0);
+        }
       }
     }
     // Record the player's path so the little car can follow it up the ramps
@@ -11994,6 +12412,9 @@ function animate() {
   updateTrainCars(delta);
   // A train chosen as the CHASE ride drags its own consist after the bumper.
   updateChaseTrainCars(delta);
+  // Split-screen has no chase car: re-assert it every frame so a robot drop or a
+  // ramp-world summon that flips `visible` back on cannot show it mid-split.
+  suppressChaseCar(splitActive);
 
   // ===== Portal triggers: driving under the ramp-world vortex swaps worlds =====
   // under the ramp-world vortex swaps worlds =====
@@ -12407,17 +12828,19 @@ function animate() {
     // maps are updated once for the frame, not once per viewport.
     const activeScene = activeWorldScene();
     const rects = splitViewports(window.innerWidth, window.innerHeight);
+    // Size/clamp the floating tags and drive the off-screen edge markers first:
+    // each half shows ONLY the other player's bubble while the rival is in
+    // view, and swaps it for an arrow at the border once they leave the half.
+    updateSplitMarkers(rects);
     renderer.shadowMap.autoUpdate = false;
     renderer.shadowMap.needsUpdate = true;
     renderer.setScissorTest(true);
     for (let i = 0; i < 2; i++) {
       const vp = rects[i];
-      // Each half shows ONLY the other player's bubble: in P1's viewport (i=0)
-      // you see a tag floating over P2's car, and P2's viewport (i=1) floats one
-      // over P1's — never a tag over your own hat. Both cars stay distinguishable
-      // because each player is told which car the OTHER one is.
-      if (players[0].marker) players[0].marker.visible = (i !== 0);
-      if (players[1].marker) players[1].marker.visible = (i === 0);
+      // Each half shows ONLY the other player's bubble, and only while that
+      // rival is actually on screen (off screen the edge marker takes over).
+      if (players[0].marker) players[0].marker.visible = (i !== 0) && splitTagOnScreen[0];
+      if (players[1].marker) players[1].marker.visible = (i === 0) && splitTagOnScreen[1];
       renderer.setViewport(vp.x, vp.y, vp.width, vp.height);
       renderer.setScissor(vp.x, vp.y, vp.width, vp.height);
       renderer.render(activeScene, i === 0 ? camera : camB);

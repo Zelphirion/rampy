@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addGlassCity } from '../../glasscity.js?v=1791396329761';
+import { addGlassCity } from '../../glasscity.js?v=1799999999999';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.
@@ -4125,7 +4125,7 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   // The goat herd never hangs together as one unit: each goat keeps its own
   // wide orbit around the follower (7..13 units out), its own gate, its own
   // wandering drift, and its own walk cadence.
-  const goatEvent = { timer: -1 };
+  const goatEvent = { timer: -1, target: 0 };   // target: which player (0/1) the herd chases in split
   const goatCrew = [];
   const goatColliders = [];
   for (let k = 0; k < GOAT_HERD; k++) {
@@ -4757,6 +4757,7 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
   // follower, trainLastTiles for the trailing train cars) so one car crossing a
   // tile boundary can't eat the other's trigger.
   const carLastTile = { value: -1 };
+  const car2LastTile = { value: -1 };   // split-screen Player 2's own edge state
   const followerLastTile = { value: -1 };
   const trainLastTiles = [];
 
@@ -4937,8 +4938,8 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
     spiralTubeMat: tubeMat, // arrival cinematic fades the tube translucent so the orbiting camera can see the car inside
     // Free a stale build's GPU resources before main.js swaps in a rebuilt world.
     dispose,
-    update(delta, player, follower, consist) {
-      glassCity.update(delta, player);
+    update(delta, player, follower, consist, player2) {
+      glassCity.update(delta, player, player2);
       elapsed += delta;
       sky.update(delta, elapsed, player);
       // Checkerboard ceiling: when a car drives over a tile, advance it one
@@ -5024,7 +5025,7 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
         trainLastTiles.length = 0;
         consist = null;
       }
-      if (player || follower || (consist && consist.length)) {
+      if (player || player2 || follower || (consist && consist.length)) {
         checker.tick++;
         // Tick down tile advance cooldowns so a tile can be re-triggered
         // once a car has driven away and come back.
@@ -5033,6 +5034,7 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
         }
       }
       if (player) advanceTilesFor(player, carLastTile, 'standard');
+      if (player2) advanceTilesFor(player2, car2LastTile, 'standard');
       if (follower) advanceTilesFor(follower, followerLastTile, 'standard');
       if (consist) {
         while (trainLastTiles.length < consist.length) trainLastTiles.push({ value: -1, guardT: 0 });
@@ -5047,12 +5049,13 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
       // passes over the same x/z and must not trigger the floor dots). The dot
       // is MOVED between two InstancedMeshes because the neon look is
       // emissive, which per-instance colors can't touch.
-      if (player && player.y < 8) {
-        const guideHitR2 = GUIDE_HIT * GUIDE_HIT;
+      const guideHitR2 = GUIDE_HIT * GUIDE_HIT;
+      for (const pl of [player, player2]) {
+        if (!pl || pl.y >= 8) continue;
         for (let i = 0; i < guideCount; i++) {
           if (guideLit[i]) continue;
-          const gdx = player.x - guideX[i];
-          const gdz = player.z - guideZ[i];
+          const gdx = pl.x - guideX[i];
+          const gdz = pl.z - guideZ[i];
           if (gdx * gdx + gdz * gdz < guideHitR2) {
             guideLit[i] = 1;
             _guideZero.compose(_guideHide, _guideQuat, _guideOne);
@@ -5775,8 +5778,15 @@ const finishGate = makeFinishGate(-5.6, -40, -5.6, -20, 0);
       // (or the player when the little car is parked/hidden).
       if (holy.ejectFlag) { holy.ejectFlag = false; goatEvent.timer = 30; }
       if (goatEvent.timer > 0) goatEvent.timer -= delta;
-      const goatFollow = (follower && follower.x !== undefined) ? follower : (player || null);
+      // The herd follows the little car when it's out; otherwise (and in
+      // split-screen, where there is no follower) it picks ONE of the players
+      // to chase, chosen when the pilgrimage launches so both players aren't
+      // swarmed at once.
+      const goatFollow = (follower && follower.x !== undefined)
+        ? follower
+        : (player2 && goatEvent.target === 1 ? player2 : (player || player2 || null));
       if (goatEvent.timer > -1 && goatEvent.timer <= 0) {
+        goatEvent.target = (player2 && Math.random() < 0.5) ? 1 : 0;
         for (const c of goatCrew) if (c.state === 'wait') c.state = 'fly';
         goatEvent.timer = -1;
       }
