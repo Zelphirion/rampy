@@ -12,6 +12,7 @@
 // Run: node --test src/gfxQualityWalk.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   gfxQualCreate,
   gfxQualTick,
@@ -62,6 +63,31 @@ test('the ladder and the arming threshold match the promised shape', () => {
   assert.equal(GFX_AUTO_FLOOR, 5, 'the walk must only arm below 5fps');
   assert.equal(GFX_AUTO_SUSTAIN, 5000, 'the walk must hold the dip for 5s');
   assert.equal(GFX_AUTO_RISE, 40, 'the walk restores at 40fps');
+});
+
+test('the resolution floor is a fifth of native, not a tenth', () => {
+  // The blocky end was 0.1x; it is deliberately twice that now. Pin the number
+  // so a future tuning pass has to be a conscious choice.
+  assert.equal(GFX_SCALE_MIN, 0.2, 'the walk floor should be 0.2x');
+  // And no rung may reach BELOW the floor (the fold takes the min over rungs,
+  // so a stray low rung would drag the real bottom past GFX_SCALE_MIN).
+  for (const rung of GFX_AUTO_LADDER) {
+    if (rung.scale !== undefined) {
+      assert.ok(rung.scale >= GFX_SCALE_MIN,
+        `a rung is ${rung.scale}x, below the ${GFX_SCALE_MIN}x floor`);
+    }
+  }
+});
+
+test('the resolution slider bottoms out at exactly the walk floor', () => {
+  // The Graphics tab's slider and the automatic walk must agree on how low the
+  // picture may go, or the slider would offer a resolution the walk then refuses
+  // to honour (or vice versa).
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const m = html.match(/id="gfx-scale"[^>]*\bmin="([\d.]+)"/);
+  assert.ok(m, 'index.html has no #gfx-scale slider with a min — the Graphics tab changed shape');
+  assert.equal(Number(m[1]), GFX_SCALE_MIN,
+    `the slider's min (${m[1]}x) must equal the lowest resolution the walk sets (${GFX_SCALE_MIN}x)`);
 });
 
 test('a deep sustained dip walks quality DOWN one rung per cooldown', () => {

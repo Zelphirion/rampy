@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
   BEACH_SANDCASTLE, SAND_PILE_R, sandPileProfileAt, setSandPile, beachGroundOffsetAt,
-} from './layout.js?v=1791600000000';
+} from './layout.js?v=1800000000000';
 
 // ===== The sand castle =====
 //
@@ -167,7 +167,10 @@ function curtainWall(g, mat, dark, axis, fixed, gate) {
   }
 }
 
-function buildStanding(mat, dark, inner) {
+// The standing castle geometry, built from whatever three materials are handed
+// in. Exported so the mermaids' undersea castle can be the SAME model in a
+// different palette instead of a second, drifting copy of these dimensions.
+export function buildStanding(mat, dark, inner) {
   const g = new THREE.Group();
 
   // The ring of curtain wall. Gates on the east (the car's approach) and west,
@@ -225,7 +228,9 @@ function buildStanding(mat, dark, inner) {
   // piece inward on its own instead of swapping the whole thing for a heap.
   const pieces = [];
   g.traverse((o) => { if (o.isMesh) pieces.push(o); });
-  return { group: g, pieces };
+  // The pole and its pennant are handed back separately so a caller that wants
+  // the castle WITHOUT a flag (the mermaids' drowned copy) can drop them both.
+  return { group: g, pieces, flagParts: [pole, flag] };
 }
 
 // A dome mesh walked from the SAME profile the car will ride, so the visible

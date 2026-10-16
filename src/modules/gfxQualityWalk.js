@@ -19,7 +19,7 @@
 //    wholesale restore of the player's original picture, not a slow climb.
 //  - "Max" (gfx.max) disables the walk entirely: the user has asked for the
 //    picture whatever the frame rate.
-export const GFX_SCALE_MIN = 0.1;
+export const GFX_SCALE_MIN = 0.2;
 
 export const GFX_AUTO_FLOOR = 5;           // the dip that arms the walk (fps)
 export const GFX_AUTO_TARGET = 30;         // what it cuts to reach
@@ -30,7 +30,8 @@ export const GFX_AUTO_COOLDOWN = 1500;     // ms between steps (going down)
 
 // Only scale and aa: the walk must never move shadows, fog tie or draw
 // distance. Most-aggressive-of-the-two is applied cumulatively, so the rungs
-// only ever reduce. The bottom rung is the blocky end: a tenth-res buffer.
+// only ever reduce. The bottom rung is the blocky end: a fifth-res buffer, and
+// the same floor the resolution slider bottoms out at (index.html).
 export const GFX_AUTO_LADDER = [
   { scale: 1.0, aa: false },
   { scale: 0.8, aa: false },
@@ -39,9 +40,6 @@ export const GFX_AUTO_LADDER = [
   { scale: 0.4, aa: false },
   { scale: 0.32, aa: false },
   { scale: 0.25, aa: false },
-  { scale: 0.2, aa: false },
-  { scale: 0.16, aa: false },
-  { scale: 0.13, aa: false },
   { scale: GFX_SCALE_MIN, aa: false },
 ];
 

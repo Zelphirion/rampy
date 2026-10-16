@@ -273,8 +273,8 @@ export function makeLocomotive() {
   return g;
 }
 
-// Simple boxcar.
-function makeBoxcar(color) {
+// Simple boxcar. Exported so the playroom's toy train can pull one.
+export function makeBoxcar(color) {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.7 });
   const trim = new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.8 });
@@ -300,7 +300,7 @@ function makeBoxcar(color) {
 }
 
 // Proper caboose: red body with a cupola lookout and end platforms.
-function makeCaboose() {
+export function makeCaboose() {
   const g = new THREE.Group();
   const red = new THREE.MeshStandardMaterial({ color: 0xb8342f, roughness: 0.7 });
   const trim = new THREE.MeshStandardMaterial({ color: 0x2c2f36, roughness: 0.8 });

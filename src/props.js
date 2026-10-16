@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable, setKnockableWorldGroup } from './physics.js';
+import { addKnockable, setKnockableWorldGroup } from './physics.js?v=1800000000002';
 import {
   SHELL_X, SHELL_Z, SHELL_GRASS, SHELL_RIBS, SHELL_SPAN, SHELL_SQUASH,
   SHELL_RIBIAMP, SHELL_THICK, T_GRASS_HOLE, clamFanOutline, PARK_CLAM,
@@ -1368,53 +1368,6 @@ export function makeClamShell(scene, site = PARK_CLAM) {
   return shell;
 }
 
-// ===== Parking lot (southwest) =====
-// The one shared car park in town: the block between the residential street and
-// the west edge, which the layout reserves as a lot rather than more frontage.
-// It is deliberately a single wide apron off one throat, not a ribbon per
-// building - a row of near-identical private drives off the same street reads as
-// four lanes of a car park rather than as front gardens, and it is what makes a
-// block look like it was paved by machine.
-function addParkingLot(scene) {
-  const lot = new THREE.Mesh(
-    new THREE.BoxGeometry(26, 0.16, 20),
-    new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 1 })
-  );
-  lot.position.set(-58, 0.08, -61);
-  lot.receiveShadow = true;
-  scene.add(lot);
-
-  // The throat: the lot's north edge is z -51 and the residential street's south
-  // kerb is z -48, so without this 3-unit apron the car park is an island you
-  // cannot drive onto. 10 wide, so it reads as a single entrance rather than a
-  // kerb full of separate ways in.
-  const throat = new THREE.Mesh(
-    new THREE.BoxGeometry(10, 0.16, 6),
-    new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 1 })
-  );
-  throat.position.set(-58, 0.08, -49);
-  throat.receiveShadow = true;
-  scene.add(throat);
-
-  const lotLineMat = new THREE.MeshStandardMaterial({ color: 0xdfe3e8, roughness: 0.8 });
-  for (let i = -2; i <= 2; i++) {
-    for (const z of [-63.5, -58.5]) {
-      const line = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 4), lotLineMat);
-      line.position.set(-58 + i * 5, 0.16, z);
-      line.receiveShadow = true;
-      scene.add(line);
-    }
-  }
-  // Bay noses facing the throat, so the stalls read as parking either side of the
-  // aisle rather than as loose stripes.
-  for (let i = -2; i <= 2; i++) {
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 4), lotLineMat);
-    nose.position.set(-58 + i * 5, 0.16, -55.5);
-    nose.receiveShadow = true;
-    scene.add(nose);
-  }
-}
-
 // ===== Market stalls (little fruit stands on the shops-row sidewalk) =====
 const stallWoodMat = new THREE.MeshStandardMaterial({ color: 0x8a6b43, roughness: 0.85 });
 const umbrellaPoleMat = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 0.8 });
@@ -1907,7 +1860,6 @@ export function addProps(scene) {
   makeFenceLine(scene, 30, 64, 30, 44, 10);
 
   const clamShell = addPark(scene);
-  addParkingLot(scene);
   addMarketStalls(scene);
   addVillageCharm(scene, fountains);
   addStreetFurniture(scene);

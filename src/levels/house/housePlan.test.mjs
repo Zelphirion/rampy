@@ -20,11 +20,14 @@ const NAMES = Object.keys(ROOMS);
 // the place read as a house instead of a corridor:
 //
 //   kitchen | dining    the cased opening you cook across
+//   kitchen | living    the wall was taken out: the cooking band now opens onto
+//                       the living room
 //   dining  | foyer     no wall between them at all
 //   living  | hall      one long room with the front rooms off it
+//   dining  | hall      the north band flows into the middle band here too
 //
 // The bathroom used to be open to the hall too; it now has a wall with a
-// doorway, because that is what a bathroom is.
+// bi-swing push door, because that is what a bathroom is.
 //
 // Spelled out here rather than inferred, because "there is no wall covering this
 // boundary" is not the same claim as "these two rooms are meant to be one
@@ -33,8 +36,10 @@ const NAMES = Object.keys(ROOMS);
 // walled boundary into open plan.
 const OPEN_PLAN = [
   ['kitchen', 'dining'],
+  ['kitchen', 'living'],
   ['dining', 'foyer'],
   ['living', 'hall'],
+  ['dining', 'hall'],
 ];
 const isOpenPlan = (a, b) => OPEN_PLAN.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
 
@@ -164,11 +169,15 @@ test('every doorway is wider than the car', () => {
   }
 });
 
-test('doorway lintels are below the ceiling, so every opening is a real opening', () => {
+test('doorway lintels never rise above the ceiling', () => {
+  // A lintel may sit AT the ceiling (a deliberate full-height opening — the
+  // bathroom's door has no wall over it, so there is nothing to read as a gap),
+  // but none may poke up past it, which would be a doorway that is not an
+  // opening at all but a slot through the roof.
   for (const w of HOUSE_WALLS) {
     if (!w.gap) continue;
-    assert.ok(w.gap.top < HOUSE.ceil,
-      `doorway lintel at ${w.axis}=${w.at} is at ${w.gap.top}, not below the ceiling ${HOUSE.ceil}`);
+    assert.ok(w.gap.top <= HOUSE.ceil,
+      `doorway lintel at ${w.axis}=${w.at} is at ${w.gap.top}, above the ceiling ${HOUSE.ceil}`);
   }
 });
 
@@ -245,20 +254,23 @@ test('the dark garage is reachable ONLY through the kitchen', () => {
     return w.gap.a1 > lo && w.gap.a0 < hi;
   });
   assert.equal(doors.length, 1, `the dark garage has ${doors.length} doorways, expected exactly 1`);
-  // ...and that one is on the east wall, which is the kitchen's side.
+  // ...and that one is on the EAST wall, which is the kitchen's side.
+  assert.equal(doors[0].axis, 'z', 'the dark garage door is not in a constant-x wall');
   assert.equal(doors[0].at, gar.x1, 'the dark garage door is not on the kitchen side');
-  assert.equal(ROOMS[gar === ROOMS.darkGarage ? 'kitchen' : ''].x0, gar.x1,
+  assert.equal(ROOMS.kitchen.x0, gar.x1,
     'the kitchen does not sit against the dark garage door');
 });
 
-test('the front door is in the foyer, on the east wall, and there is no way out of it', () => {
+test('the front door is on the west shell wall, on the living room, and there is no way out of it', () => {
   // The locked door is a detail, but the DETAIL is the point: it must be in a
   // room the player can actually reach, or the locked door is decoration in
-  // somewhere they never go.
+  // somewhere they never go. It hangs on the west wall right beside the roller
+  // door, so both openings share the street elevation.
   const f = FRONT_DOOR;
-  assert.equal(f.at, HOUSE.maxX + HOUSE.wall / 2, 'the front door is not in the east shell wall');
-  assert.ok(f.z0 > ROOMS.foyer.z0 && f.z1 < ROOMS.foyer.z1,
-    'the front door is not in the foyer');
+  assert.equal(f.at, HOUSE.minX - HOUSE.wall / 2, 'the front door is not in the west shell wall');
+  assert.equal(f.wallAxis, 'z', 'the front door should live in a constant-x wall');
+  assert.ok(f.z0 > ROOMS.living.z0 && f.z1 < ROOMS.living.z1,
+    'the front door is not on the living room wall');
   assert.ok(f.z1 - f.z0 >= CAR_DIAMETER, 'the front door is too narrow to be a door');
   assert.ok(f.h < HOUSE.ceil, 'the front door is taller than the house');
   // No doorway anywhere in the shell: every gap in the plan is an interior
@@ -271,13 +283,14 @@ test('the front door is in the foyer, on the east wall, and there is no way out 
 });
 
 test('the locked front door is not itself an exit trigger', () => {
-  // The exit box is in the dark garage, far away in the north-west. If the front
+  // The exit box is in the dark garage, at the far end of it. If the front
   // door's rectangle ever became the trigger, the locked door would quietly be
-  // the way out after all.
+  // the way out after all. The door is a vertical bar at FRONT_DOOR.at spanning
+  // z0..z1, so that is what gets tested against the exit box.
   const f = FRONT_DOOR;
-  const overlapX = Math.min(HOUSE_EXIT.x1, HOUSE.maxX) - Math.max(HOUSE_EXIT.x0, f.at);
+  const inExitX = f.at >= HOUSE_EXIT.x0 && f.at <= HOUSE_EXIT.x1;
   const overlapZ = Math.min(HOUSE_EXIT.z1, f.z1) - Math.max(HOUSE_EXIT.z0, f.z0);
-  assert.ok(overlapX <= 0 || overlapZ <= 0,
+  assert.ok(!inExitX || overlapZ <= 0,
     'the exit trigger overlaps the locked front door');
 });
 
@@ -411,12 +424,12 @@ test('the locked front door bar is drawn on the shell wall it lives in', () => {
   assert.match(body, /fillRect\(px\(FRONT_DOOR\.at\) - 2, pz\(FRONT_DOOR\.z0\), 4,\s*\(FRONT_DOOR\.z1 - FRONT_DOOR\.z0\) \* mmScale\)/,
     'the front door bar is not drawn as a vertical bar at FRONT_DOOR.at spanning z0..z1');
 
-  // And the bar has to land on the east shell wall, inside it, no wider than the
-  // door opening is tall.
+  // And the bar has to land on the west shell wall, inside it, no wider than the
+  // door opening.
   assert.equal(FRONT_DOOR.wallAxis, 'z', 'the front door should live in a constant-x wall');
-  assert.ok(Math.abs(FRONT_DOOR.at - (HOUSE.maxX + HOUSE.wall / 2)) < EPS,
-    `FRONT_DOOR.at is ${FRONT_DOOR.at}, not the centre of the east shell wall`);
+  assert.ok(Math.abs(FRONT_DOOR.at - (HOUSE.minX - HOUSE.wall / 2)) < EPS,
+    `FRONT_DOOR.at is ${FRONT_DOOR.at}, not the centre of the west shell wall`);
   assert.ok(FRONT_DOOR.z1 > FRONT_DOOR.z0, 'the front door has no z extent to draw');
   assert.ok(FRONT_DOOR.z0 >= HOUSE.minZ && FRONT_DOOR.z1 <= HOUSE.maxZ,
-    'the front door opening runs off the end of the east wall');
+    'the front door opening runs off the end of the west wall');
 });

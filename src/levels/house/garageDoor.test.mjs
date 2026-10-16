@@ -5,7 +5,8 @@
 // This is the exact inverse of what this file used to assert. It used to prove
 // the garage door was wound OPEN, because a beckoning light you cannot reach is
 // an invitation to nowhere. The dark garage is now inside the house, and the
-// front door — the one the player is put down facing away from — is dead.
+// front door — on the west wall beside the roller door, the one whose back you
+// see when you roll out — is dead.
 //
 // The checks walk the BUILT scene graph rather than reading the source. The bug
 // this exists for is the one that is invisible in the source and fatal in play:
@@ -173,20 +174,20 @@ test('the roller door is the only opening, and it is on the west wall', async ()
   }
 });
 
-test('the front door has no hole behind it, anywhere on the east wall', async () => {
-  // The specific thing the player will try. The east wall is where they are put
-  // down and where the door is, and it has to be solid from the skirting to the
-  // ceiling across the whole width of the door.
+test('the front door has no hole behind it, anywhere on the west wall', async () => {
+  // The specific thing the player will try. The west wall is where the front
+  // door hangs, right beside the roller door, and its stretch has to be solid
+  // from the skirting to the ceiling across the whole width of the door.
   const { colliders } = await house();
-  const east = SHELL[0];
-  const onEast = colliders.filter((c) => Math.abs(c.x - east.at) < 0.6 && !c.ceiling && !c.soft);
-  assert.ok(onEast.length > 0, 'the east shell has no colliders at all');
-  for (const c of onEast) {
+  const west = SHELL[1];
+  const onWest = colliders.filter((c) => Math.abs(c.x - west.at) < 0.6 && !c.ceiling && !c.soft);
+  assert.ok(onWest.length > 0, 'the west shell has no colliders at all');
+  for (const c of onWest) {
     const z0 = c.z - c.halfD, z1 = c.z + c.halfD;
     const overlap = Math.min(z1, DOOR_Z1) - Math.max(z0, DOOR_Z0);
     if (overlap > 0.5) {
       assert.ok(c.h >= FRONT_DOOR.h - 0.5,
-        `the east shell is only ${c.h} tall across z ${z0.toFixed(1)}..${z1.toFixed(1)}, ` +
+        `the west shell is only ${c.h} tall across z ${z0.toFixed(1)}..${z1.toFixed(1)}, ` +
         'which leaves a gap over the front door');
     }
   }
@@ -212,7 +213,7 @@ test('every room boundary is on that wall, so the covered run is the whole house
 // ---------------------------------------------------------------------------
 
 // The door's own span in z, and the x it is drawn at. It hangs on the room side
-// of the east shell, so it is INBOARD of the plaster rather than in the wall.
+// of the west shell, so it is INBOARD of the plaster rather than in the wall.
 const DOOR_Z0 = FRONT_DOOR.z0, DOOR_Z1 = FRONT_DOOR.z1;
 const DOOR_W = DOOR_Z1 - DOOR_Z0;
 const DOOR_Z = (DOOR_Z0 + DOOR_Z1) / 2;
@@ -222,11 +223,12 @@ test('the front door is a solid slab across the whole opening', async () => {
   // width of the opening and the full height of it, and it has to sit inboard
   // of the shell so it is the thing you see, with masonry behind it.
   const boxes = await houseBoxes();
+  const leafX = FRONT_DOOR.at + FRONT_DOOR.inward * (HOUSE.wall / 2 + 0.35);
   const leaf = boxes.filter((b) =>
-    Math.abs(b.x1 - (FRONT_DOOR.at - HOUSE.wall / 2 - 0.35)) < 0.6   // the authored leaf plane
-    && (b.z1 - b.z0) >= DOOR_W - 1                                        // the whole width
-    && b.y0 <= 0.5                                                       // down to the floor
-    && b.y1 >= FRONT_DOOR.h - 0.5);                                      // up to the head
+    Math.abs((b.x0 + b.x1) / 2 - leafX) < 0.6        // the authored leaf plane
+    && (b.z1 - b.z0) >= DOOR_W - 1                   // the whole width
+    && b.y0 <= 0.5                                   // down to the floor
+    && b.y1 >= FRONT_DOOR.h - 0.5);                  // up to the head
   assert.ok(leaf.length > 0, 'nothing is drawn as a door leaf across the opening');
 });
 
@@ -235,9 +237,11 @@ test('the front door is locked, not merely shut', async () => {
   // a padlock through it, and a chain on, so every one of the things you would
   // try answers no.
   const boxes = await houseBoxes();
+  const face = FRONT_DOOR.at + FRONT_DOOR.inward * HOUSE.wall / 2;
   const onDoor = boxes.filter((b) =>
-    b.x1 < FRONT_DOOR.at - HOUSE.wall / 2
-    && b.x0 > FRONT_DOOR.at - HOUSE.wall / 2 - 4      // hanging on the door, not the room
+    (FRONT_DOOR.inward > 0
+      ? b.x0 > face && b.x1 < face + 5           // hanging on the door, not the room
+      : b.x1 < face && b.x0 > face - 5)
     && b.z0 >= DOOR_Z0 - 3 && b.z1 <= DOOR_Z1 + 3);
   // Deadbolt, padlock body, chain links, letterbox, knocker: six separate
   // pieces of hardware is the floor here.
@@ -268,33 +272,42 @@ test('the front door is not a way out, and not a trigger', async () => {
 // 3. The dark garage is the way out, and it is dark.
 // ---------------------------------------------------------------------------
 
-// The lane the car actually drives: in through the kitchen doorway, west down
-// the middle of the garage, and out through the west wall. The doorway span is
-// the source of truth for where the lane is, and the strip is one car wide down
-// its centre, because a bench tucked against the north wall is not an obstacle.
+// The lane the car actually drives. The doorway is on the garage's EAST wall
+// (into the kitchen) and the roller door is on the WEST, so the way in and the
+// way out are the same straight run: the car arrives on it facing east, drives
+// straight through the kitchen doorway, and — to leave — comes back and rolls
+// west through the roller door. It is one car wide and it has to be clear end
+// to end.
 //
-// The lane starts at the shell's INNER face, not its centre line. The wall at the
-// far end is supposed to be there — it is the sealed west wall, and HOUSE_EXIT
-// fires when the car reaches its inside face, so the drive ends there rather
-// than passing through. Starting the lane at `minX - wall` instead would count
-// that wall as an obstruction, and the wall is the one thing in here that must
-// never move.
-const GARAGE_DOORWAY = HOUSE_WALLS.find((w) => w.axis === 'z'
-  && Math.abs(w.at - ROOMS.darkGarage.x1) < 0.01 && w.gap);
-const LANE_Z = (GARAGE_DOORWAY.gap.a0 + GARAGE_DOORWAY.gap.a1) / 2;
+// The doorway span and the roller opening are the sources of truth for where it
+// is. A bench tucked against the shell is not an obstruction; a counter standing
+// in the lane is.
 const CAR_HALF_W = 3;
-const LANE_Z0 = LANE_Z - CAR_HALF_W, LANE_Z1 = LANE_Z + CAR_HALF_W;
-const LANE_X0 = HOUSE.minX, LANE_X1 = ROOMS.darkGarage.x1 + 1;
 
-test('the drive lane from the kitchen doorway to the exit is clear', async () => {
-  // The whole design rests on this: you must be able to drive the length of the
-  // garage into the exit. Anything standing in a one-car-wide strip down the
-  // middle of the doorway, from the doorway wall to the shell, stops it.
+// The doorway in the garage's EAST wall: the way into the house (its mirror,
+// the roller opening, is the way out).
+const GARAGE_DOORWAY = HOUSE_WALLS.find((w) => w.axis === 'z'
+  && Math.abs(w.at - ROOMS.darkGarage.x1) < 0.01 && w.gap
+  && w.run0 <= ROOMS.darkGarage.z0 + 0.01 && w.run1 >= ROOMS.darkGarage.z1 - 0.01);
+const DOORWAY_Z = (GARAGE_DOORWAY.gap.a0 + GARAGE_DOORWAY.gap.a1) / 2;
+const OUT_LANE_Z = (HOUSE_EXIT.z0 + HOUSE_EXIT.z1) / 2;
+// The single straight lane, from the doorway (east) out through the roller
+// opening's mouth in the west shell.
+const DRIVE_LANE = {
+  x0: HOUSE_EXIT.mouthX, x1: ROOMS.darkGarage.x1,
+  z0: Math.min(DOORWAY_Z, OUT_LANE_Z) - CAR_HALF_W,
+  z1: Math.max(DOORWAY_Z, OUT_LANE_Z) + CAR_HALF_W,
+};
+
+test('the drive lane in and out of the dark garage is clear', async () => {
+  // The whole design rests on this: you must be able to reach the way-out trigger
+  // from the arrival spot, and to reach the way-in doorway from it. Anything
+  // standing in this one-car-wide run stops it.
   const boxes = await houseBoxes();
   const inLane = boxes.filter((b) => {
-    if (b.z1 <= LANE_Z0 || b.z0 >= LANE_Z1) return false; // beside the lane
-    if (b.y0 >= CLEAR_TOP || b.y1 <= 0.4) return false;  // overhead / on the floor
-    return b.x1 > LANE_X0 && b.x0 < LANE_X1;             // anywhere along the run
+    if (b.y0 >= CLEAR_TOP || b.y1 <= 0.4) return false;   // overhead / on the floor
+    return b.x1 > DRIVE_LANE.x0 && b.x0 < DRIVE_LANE.x1
+      && b.z1 > DRIVE_LANE.z0 && b.z0 < DRIVE_LANE.z1;
   });
   assert.equal(inLane.length, 0,
     `${inLane.length} object(s) sit in the drive lane, e.g. ` +
@@ -304,7 +317,7 @@ test('the drive lane from the kitchen doorway to the exit is clear', async () =>
 test('the whole width of the kitchen/garage doorway is clear', async () => {
   // Stricter than the lane: the full 20-wide opening, so you cannot enter
   // off-centre either. The wall's own jamb trim is excluded by requiring the
-  // obstruction to be clear of the wall plane.
+  // obstruction to straddle the wall plane and clear the door edges.
   const boxes = await houseBoxes();
   const { a0, a1 } = GARAGE_DOORWAY.gap;
   const blocked = boxes.filter((b) =>
@@ -317,12 +330,10 @@ test('the whole width of the kitchen/garage doorway is clear', async () => {
 });
 
 test('the dark garage is reachable from the kitchen and from nowhere else', async () => {
-  // Its walls: north and west are the shell, south is the hall, east is the
-  // kitchen. Exactly one of the four may have a doorway in it. A wall is only
-  // this room's boundary if it sits on one of its edges AND runs across the
-  // span of that edge — otherwise every wall on the same line counts, and the
-  // kitchen/hall and living/hall doorways (which share z = 46 with the
-  // garage/hall wall) are counted as if they opened into the garage.
+  // Its walls: north and west are the shell, east is the kitchen, south is the
+  // living room. Exactly one of the four may have a doorway in it. A wall is
+  // only this room's boundary if it sits on one of its edges AND runs across the
+  // span of that edge — otherwise every wall on the same line counts.
   const g = ROOMS.darkGarage;
   const bounds = [
     { axis: 'z', at: g.x0, from: g.z0, to: g.z1, name: 'west' },
@@ -338,6 +349,7 @@ test('the dark garage is reachable from the kitchen and from nowhere else', asyn
   // matching walls is not the count of boundaries. Judge by what can be entered.
   const open = walls.filter((w) => w.gap);
   assert.equal(open.length, 1, `the dark garage has ${open.length} doorway(s); it should have exactly one`);
+  assert.equal(open[0].axis, 'z', 'the dark garage doorway is not in a constant-x wall');
   assert.equal(open[0].at, g.x1, 'the dark garage doorway is not on the kitchen side');
   // ...and the shell sides have to be on the shell, not drawn as interior walls
   // with a gap in them.
@@ -384,8 +396,9 @@ function g0z(r) { return r.z0; }
 
 // How far the car actually gets before the cut. main.js holds the shot for a
 // derived time, but the speed and the target are both fixed there; this is the
-// same arithmetic, kept honest by reading it back off the geometry.
-const EXIT_ROLL = { x0: HOUSE_EXIT.x0, x1: HOUSE_EXIT.mouthX - 14, z: LANE_Z, halfW: CAR_HALF_W };
+// same arithmetic, kept honest by reading it back off the geometry. The roll is
+// west, along the roller door's own centre line.
+const EXIT_ROLL = { x0: HOUSE_EXIT.x0, x1: HOUSE_EXIT.mouthX - 14, z: OUT_LANE_Z, halfW: CAR_HALF_W };
 
 test('there is a real surface to drive out onto, all the way to the cut', async () => {
   // Without this the car drives out of the door and over the sky, which reads as

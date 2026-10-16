@@ -11,12 +11,19 @@
 // ============================================================================
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { HOUSE, ROOMS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, MAP_ITEMS, DRIVE, FIREPLACE } from './layout.js';
-import { addKnockable } from '../../physics.js';
+import { HOUSE, ROOMS, ROOM_LABELS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, BACK_DOOR, MAP_ITEMS, DRIVE, FIREPLACE, CAR_RADIUS } from './layout.js?v=1800000000001';
+import { addKnockable } from '../../physics.js?v=1800000000002';
 import { pad, bowl, wedge } from './surfaces.js';
+import { makeGalley, HOUSE_KITCHEN } from '../../kitchen.js?v=1799900000000';
+import {
+  makePlayTrain, makeRedHorse, makeLegoBox, makeHangingRocket,
+  makeXylophone, makeBlockCastle, makeMagnetCity, makeHotWheels, makeJackInTheBox,
+  makeTerrarium,
+} from './playroom.js';
+import { playTrainPoints } from './playtrain.mjs';
 
 // Re-exported so main.js (and anyone poking at the level) has one import site.
-export { HOUSE, ROOMS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, MAP_ITEMS, DRIVE, FIREPLACE };
+export { HOUSE, ROOMS, ROOM_LABELS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, BACK_DOOR, MAP_ITEMS, DRIVE, FIREPLACE };
 
 // ============================================================================
 // Materials
@@ -26,7 +33,12 @@ const MAT = {
   plasterHi: new THREE.MeshStandardMaterial({ color: 0xfbf5ea, roughness: 0.9 }),
   trim:      new THREE.MeshStandardMaterial({ color: 0xfdfcf7, roughness: 0.6 }),
   wainscot:  new THREE.MeshStandardMaterial({ color: 0xe4dccb, roughness: 0.7 }),
-  ceil:      new THREE.MeshStandardMaterial({ color: 0xf7f2e8, roughness: 0.95 }),
+  // The ceiling plane is built by `flat()`, whose normal points straight up so
+  // it reads as a roof from above. That leaves its underside as a back face and
+  // a single-sided material would CULL it from inside the house — looking up
+  // from the elevated playroom track showed bare sky through the missing roof.
+  // Double-sided keeps it a real roof above AND a real ceiling below.
+  ceil:      new THREE.MeshStandardMaterial({ color: 0xf7f2e8, roughness: 0.95, side: THREE.DoubleSide }),
 
   // Floors. Planks run along the room's long axis, which is why each is a
   // separate material rather than one tiled texture.
@@ -205,13 +217,15 @@ function wall(g, C, axis, at, a0, a1, y0, y1, thick, mat, gap, meshOnly = false)
   // and does not consider height, so a collider here would wall the doorway
   // shut and the car could never reach the rooms beyond.
   if (gap.top < y1) put(gap.a0, gap.a1, gap.top, y1, false);
-  // Architrave round the opening, purely decorative.
+  // Architrave round the opening, purely decorative. The head trim is skipped
+  // when the opening is full height (gap.top === y1): there is no head to case,
+  // and a bar at y1 + t/2 would hang in the roof void above the ceiling.
   const t = 0.5;
   if (axis === 'x') {
-    box(g, gap.a1 - gap.a0 + t * 2, t, thick + 0.3, (gap.a0 + gap.a1) / 2, gap.top + t / 2, at, MAT.trim);
+    if (gap.top < y1) box(g, gap.a1 - gap.a0 + t * 2, t, thick + 0.3, (gap.a0 + gap.a1) / 2, gap.top + t / 2, at, MAT.trim);
     for (const a of [gap.a0, gap.a1]) box(g, t, gap.top, thick + 0.3, a, gap.top / 2, at, MAT.trim);
   } else {
-    box(g, thick + 0.3, t, gap.a1 - gap.a0 + t * 2, at, gap.top + t / 2, (gap.a0 + gap.a1) / 2, MAT.trim);
+    if (gap.top < y1) box(g, thick + 0.3, t, gap.a1 - gap.a0 + t * 2, at, gap.top + t / 2, (gap.a0 + gap.a1) / 2, MAT.trim);
     for (const a of [gap.a0, gap.a1]) box(g, thick + 0.3, gap.top, t, at, gap.top / 2, a, MAT.trim);
   }
 }
@@ -529,7 +543,12 @@ function sinkUnit(g, x, z, ry) {
   box(b, 6.4, 0.5, 2.4, 0, 4.2, 0, MAT.counterTop);
   box(b, 4, 0.6, 1.6, 0, 4.4, 0, MAT.porcelain, false);
   cyl(b, 0.22, 0.22, 1.6, 0, 5.2, -0.6, MAT.chrome, 8);
-  box(b, 7, 12, 0.4, 0, 6, -1.1, MAT.mirror, false);
+  // A small ROUND mirror on the wall above the basin (its centre sits clear of
+  // the counter, so it never reaches the floor). A chrome ring frames the glass.
+  const frame = cyl(b, 3.4, 3.4, 0.24, 0, 10, -1.02, MAT.chrome, 26, false);
+  frame.rotation.x = Math.PI / 2;
+  const glass = cyl(b, 3.05, 3.05, 0.3, 0, 10, -1.0, MAT.mirror, 26, false);
+  glass.rotation.x = Math.PI / 2;
   g.add(b);
   return b;
 }
@@ -576,7 +595,10 @@ function tvUnit(g, x, z, ry) {
 }
 
 function rug(g, x, z, w, d, mat) {
-  return flat(g, w, d, x, 0.12, z, mat);
+  // Rugs are THIN: kept under the play train's sleepers (whose underside sits at
+  // y ~0.055) so the track reads as resting ON the carpet rather than sinking
+  // into it and losing its cross planks.
+  return flat(g, w, d, x, 0.04, z, mat);
 }
 
 // A lozenge: a square lying on the floor with one corner turned to the room.
@@ -598,13 +620,29 @@ function orientalRug(g, x, z, w, d) {
   const r = unit(g, 'orientalRug', x, z);
   const m = Math.min(w, d);
   const b1 = m * 0.10, b2 = m * 0.055, b3 = m * 0.05;
-  flat(r, w, d, 0, 0.10, 0, MAT.rugOrient);
-  flat(r, w - b1 * 2, d - b1 * 2, 0, 0.13, 0, MAT.rugGold);
-  flat(r, w - (b1 + b2) * 2, d - (b1 + b2) * 2, 0, 0.16, 0, MAT.rugGuard);
-  flat(r, w - (b1 + b2 + b3) * 2, d - (b1 + b2 + b3) * 2, 0, 0.19, 0, MAT.rugGold);
-  lozenge(r, m * 0.16, 0, 0.22, 0, MAT.rugOrient);
+  // The whole stack is kept under y=0.05 (the play train's sleepers start at
+  // ~0.055) so the train's cross planks stay visible where it crosses the rug.
+  //
+  // A stack of planes this big (74x50) is only ~0.01 apart in y, which is below
+  // the depth buffer's precision at camera distance, so the layers z-fight. Each
+  // layer gets a progressively larger negative polygonOffset to bias it toward
+  // the camera, which keeps the stacking stable however far away it is viewed.
+  const edge = (base, layer) => {
+    const mtl = base.clone();
+    mtl.polygonOffset = true;
+    mtl.polygonOffsetFactor = -layer;
+    mtl.polygonOffsetUnits = -layer;
+    return mtl;
+  };
+  flat(r, w, d, 0, 0.010, 0, edge(MAT.rugOrient, 1));
+  flat(r, w - b1 * 2, d - b1 * 2, 0, 0.020, 0, edge(MAT.rugGold, 2));
+  flat(r, w - (b1 + b2) * 2, d - (b1 + b2) * 2, 0, 0.030, 0, edge(MAT.rugGuard, 3));
+  flat(r, w - (b1 + b2 + b3) * 2, d - (b1 + b2 + b3) * 2, 0, 0.040, 0, edge(MAT.rugGold, 4));
+  lozenge(r, m * 0.16, 0, 0.050, 0, edge(MAT.rugOrient, 6));
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    lozenge(r, b1 * 0.9, sx * (w / 2 - b1), 0.16, sz * (d / 2 - b1), MAT.rugGuard);
+    // The corner motifs sit on the gold band, not on the guard band they share a
+    // y with, so they get their own offset to stay on top of it.
+    lozenge(r, b1 * 0.9, sx * (w / 2 - b1), 0.045, sz * (d / 2 - b1), edge(MAT.rugGold, 5));
   }
   return r;
 }
@@ -627,12 +665,18 @@ function pottedPlant(g, x, z, s = 1) {
 
 // A ceiling fitting with a real light under it. `h` is the drop from the
 // ceiling; the shade is emissive so the fitting itself reads as the source.
+// The fittings ride the ceiling (see HOUSE.ceil), so when the roof was raised
+// the bulbs went up with it and every pool of light grew fainter against the
+// floor. Scale the point light's reach and power to the taller room so the
+// rooms keep roughly the brightness the values were tuned for.
+const CEIL_LIGHT_REF = 30;                 // the ceiling those values were tuned at
+const CEIL_LIGHT_K = HOUSE.ceil / CEIL_LIGHT_REF;
 function ceilingLight(g, lights, x, z, h, intensity = 26, dist = 46) {
   cyl(g, 0.3, 0.3, h, x, HOUSE.ceil - h / 2, z, MAT.metalDark, 8, false);
   const s = cone(g, 2.6, 2.2, x, HOUSE.ceil - h - 1.1, z, MAT.shade, 14, false);
   s.rotation.x = Math.PI;   // shade opening downward, over the bulb
   sph(g, 1.0, x, HOUSE.ceil - h - 1.9, z, MAT.bulb, false);
-  const L = new THREE.PointLight(0xffe6bb, intensity, dist, 2);
+  const L = new THREE.PointLight(0xffe6bb, intensity * CEIL_LIGHT_K * CEIL_LIGHT_K, dist * CEIL_LIGHT_K, 2);
   L.position.set(x, HOUSE.ceil - h - 3.2, z);
   g.add(L);
   lights.push(L);
@@ -676,8 +720,17 @@ function buildFireplace(g, lights) {
   box(fp, 7, 1.4, 26, 0.5, 19, 0, MAT.woodDark);     // the mantel
   // Soot up the back of the recess, so the firebox reads as a firebox.
   box(fp, 0.2, 8, 11, 0.95, 4.5, 0, MAT.rubber, false);
-  // The stone apron on the floor in front of it — the bit you park on.
-  flat(g, H.x1 - H.x0, H.z1 - H.z0, (H.x0 + H.x1) / 2, 0.06, (H.z0 + H.z1) / 2, MAT.counter);
+  // The stone apron on the floor in front of it — the bit you park on. The
+  // living room's oriental rug runs UNDER the whole hearth, and its top band
+  // sits at y=0.05 with a negative polygon offset; an apron only a hair above
+  // that z-fights the rug at any distance. So the apron is lifted a clear
+  // 0.06 above the rug AND given its own stronger negative offset, which keeps
+  // it drawn on top of every rug band however far away it is viewed.
+  const apronMat = MAT.counter.clone();
+  apronMat.polygonOffset = true;
+  apronMat.polygonOffsetFactor = -10;
+  apronMat.polygonOffsetUnits = -10;
+  flat(g, H.x1 - H.x0, H.z1 - H.z0, (H.x0 + H.x1) / 2, 0.115, (H.z0 + H.z1) / 2, apronMat);
   // A log basket beside it, because a fire that eats nothing is a hologram.
   cyl(g, 2.1, 1.7, 3.2, H.x1 - 1.6, 1.6, H.z1 + 3.4, MAT.pot, 12);
   for (let i = 0; i < 3; i++) {
@@ -728,6 +781,98 @@ function buildFireplace(g, lights) {
   };
 }
 
+// The hall's grandfather clock. Returns { group, update(elapsed) }: `update`
+// sets the three hands to the ACTUAL time of day (read off a live Date) and
+// swings the heavy GOLDEN pendulum, so the clock reads as a running clock
+// rather than a frozen prop. It is built with its dial on local +Z and the
+// caller turns it to face into the hall.
+function buildGrandfatherClock(parent, x, z) {
+  const clk = unit(parent, 'grandfatherClock', x, z);
+  clk.rotation.y = -Math.PI / 2;
+  const W = 4.6, D = 3.2;              // case footprint, local (x, z)
+  const zFace = D / 2;                 // the front face plane
+
+  // Plinth and its mouldings.
+  box(clk, W + 0.4, 1.8, D + 0.4, 0, 0.9, 0, MAT.wood);
+  box(clk, W, 0.9, D, 0, 2.2, 0, MAT.woodDark);
+
+  // The waist: a narrower case carrying the long glazed door.
+  box(clk, W - 1.0, 11.4, D - 0.6, 0, 8.4, 0, MAT.woodDark);
+  for (const s of [-1, 1]) {
+    box(clk, 0.5, 11.0, 0.5, s * (W / 2 - 0.7), 8.4, zFace - 0.5, MAT.wood, false);
+  }
+  box(clk, W - 2.2, 9.6, 0.18, 0, 8.4, zFace - 0.32, MAT.glass, false);   // waist door glass
+
+  // The pendulum: a pivot near the top of the waist, a slim rod and a heavy
+  // GOLDEN bob — the swinging ballast. `update` rocks it on the clock.
+  const pend = new THREE.Group();
+  pend.position.set(0, 13.2, -0.2);
+  clk.add(pend);
+  cyl(pend, 0.11, 0.11, 8.0, 0, -4.0, 0, MAT.metal, 8, false);           // rod
+  cyl(pend, 0.34, 0.34, 0.5, 0, -0.2, 0, MAT.metalDark, 10, false);      // suspension block
+  const bob = sph(pend, 0.85, 0, -8.1, 0, MAT.rugGold);
+  bob.scale.set(1, 1.12, 1);                                             // gold bob
+  sph(pend, 0.22, 0, -8.1, 0.72, MAT.metalDark, false);                  // boss on the face
+
+  // The hood: a wider trunk over the waist, cornice and a shallow arch.
+  box(clk, W, 0.7, D, 0, 14.35, 0, MAT.wood);
+  box(clk, W + 0.3, 6.4, D + 0.2, 0, 17.6, 0, MAT.woodDark);
+  box(clk, W + 0.7, 0.8, D + 0.6, 0, 21.0, 0, MAT.wood);
+  box(clk, W - 1.4, 1.4, D - 0.4, 0, 21.9, 0.3, MAT.wood);
+  sph(clk, 0.55, 0, 22.9, 0.3, MAT.rugGold);
+
+  // The dial: face, roman-style marks, seconds subdial, over glass.
+  const face = cyl(clk, 2.0, 2.0, 0.24, 0, 17.6, zFace + 0.02, MAT.paper, 28);
+  face.rotation.x = Math.PI / 2;
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    box(clk, 0.16, 0.5, 0.14, Math.sin(a) * 1.65, 17.6 + Math.cos(a) * 1.65, zFace + 0.16, MAT.metalDark, false);
+  }
+  const sec = cyl(clk, 0.42, 0.42, 0.14, 0, 17.0, zFace + 0.15, MAT.paper, 16);
+  sec.rotation.x = Math.PI / 2;
+
+  // The hands on their own pivots, so `update` can turn them. Each hand is a
+  // slim bar built OUT along +Y from a pivot at the dial centre, which puts it
+  // at 12 o'clock at rest; the update rotates it clockwise from there.
+  const handMat = MAT.metalDark;
+  const hourPivot = new THREE.Group();
+  hourPivot.position.set(0, 17.6, zFace + 0.26);
+  clk.add(hourPivot);
+  box(hourPivot, 0.20, 1.05, 0.12, 0, 0.50, 0, handMat, false);
+  const minPivot = new THREE.Group();
+  minPivot.position.set(0, 17.6, zFace + 0.32);
+  clk.add(minPivot);
+  box(minPivot, 0.14, 1.55, 0.12, 0, 0.72, 0, handMat, false);
+  const secPivot = new THREE.Group();
+  secPivot.position.set(0, 17.6, zFace + 0.38);
+  clk.add(secPivot);
+  box(secPivot, 0.06, 1.35, 0.10, 0, 0.58, 0, MAT.lockRed, false);
+  cyl(clk, 0.12, 0.12, 0.2, 0, 17.6, zFace + 0.34, MAT.metal, 10, false);   // centre boss
+
+  box(clk, W - 1.2, 5.6, 0.16, 0, 17.6, zFace + 0.06, MAT.glass, false);    // dial glass
+  for (const s of [-1, 1]) {
+    cyl(clk, 0.22, 0.22, 5.8, s * (W / 2 - 0.5), 17.6, zFace - 0.2, MAT.wood, 10, false);
+  }
+
+  const TAU = Math.PI * 2;
+  return {
+    group: clk,
+    update(elapsed) {
+      // The real time of day, so the clock is always right.
+      const now = new Date();
+      const secs = now.getSeconds() + now.getMilliseconds() / 1000;
+      const mins = now.getMinutes() + secs / 60;
+      const hrs = (now.getHours() % 12) + mins / 60;
+      // Clockwise on the dial is a NEGATIVE rotation about the +Z face normal.
+      hourPivot.rotation.z = -(hrs / 12) * TAU;
+      minPivot.rotation.z = -(mins / 60) * TAU;
+      secPivot.rotation.z = -(secs / 60) * TAU;
+      // The pendulum swings on the clock, eased so it reads as a running beat.
+      pend.rotation.z = Math.sin(elapsed * 2.0) * 0.12;
+    },
+  };
+}
+
 // The living room's big bookcase. 22 wide fits the gap between the two
 // bookcase-side doorways, and it stands against the wall's face rather than
 // its centre line, so its back edge is not inside the plaster.
@@ -769,51 +914,95 @@ function buildSideboard(g, x, z) {
 function buildFrontDoor(g, shellT) {
   const f = FRONT_DOOR;
   const dw = f.z1 - f.z0, dc = (f.z0 + f.z1) / 2;
+  // The door faces INTO the house. `inw` is +1 for a west wall (room side faces
+  // +X) and -1 for an east one; every offset off the wall face is multiplied by
+  // it, so the leaf, the hardware and the porch all flip together.
+  const inw = f.inward;
   // `face` is the room-side plane of the wall; everything hangs off that.
-  const face = f.at - shellT / 2;          // the inner face, at maxX
-  const leaf = face - 0.35;               // the door itself, proud of the plaster
+  const face = f.at + inw * shellT / 2;
+  const leaf = face + inw * 0.35;          // the door itself, proud of the plaster
+  const out = f.at - inw * shellT / 2;     // the outer face, for the porch outside
   // Architrave round the opening, then the panelled leaf. Four panels, which
   // at this scale is what makes it read as a front door rather than a hatch.
-  box(g, 0.7, f.h + 1.6, dw + 2.4, face - 0.2, (f.h + 1.6) / 2, dc, MAT.trim);
+  box(g, 0.7, f.h + 1.6, dw + 2.4, face + inw * 0.2, (f.h + 1.6) / 2, dc, MAT.trim);
   box(g, 0.9, f.h, dw, leaf, f.h / 2, dc, MAT.door);
   for (const s of [-1, 1]) {
-    box(g, 0.5, f.h + 1.2, 1.1, face - 0.3, (f.h + 1.2) / 2, dc + s * (dw / 2 + 0.4), MAT.trim, false);
+    box(g, 0.5, f.h + 1.2, 1.1, face + inw * 0.3, (f.h + 1.2) / 2, dc + s * (dw / 2 + 0.4), MAT.trim, false);
   }
   for (let r = 0; r < 2; r++) {
     for (let c2 = 0; c2 < 2; c2++) {
-      box(g, 0.4, f.h * 0.3, dw * 0.34, leaf - 0.35, f.h * (0.2 + r * 0.42), dc + (c2 - 0.5) * dw * 0.42,
+      box(g, 0.4, f.h * 0.3, dw * 0.34, leaf + inw * 0.35, f.h * (0.2 + r * 0.42), dc + (c2 - 0.5) * dw * 0.42,
         MAT.doorDark, false);
     }
   }
   // Fanlight over the door, glazed, so the light from outside stops there.
   box(g, 0.5, 5, dw * 0.8, leaf, f.h + 2.6, dc, MAT.glass, false);
   for (let i = 0; i < 4; i++) {
-    box(g, 0.55, 5, 0.45, leaf - 0.1, f.h + 2.6, dc - dw * 0.3 + i * (dw * 0.2), MAT.trim, false);
+    box(g, 0.55, 5, 0.45, leaf + inw * 0.1, f.h + 2.6, dc - dw * 0.3 + i * (dw * 0.2), MAT.trim, false);
   }
   // ---- The hardware, which is the whole point ---------------------------
   // A ring knocker high up, a letterbox, a knob, and then a row of things
   // that all say the same message in different ways: this door does not open.
-  const knobX = leaf - 1.1;
+  const knobX = leaf + inw * 1.1;
   sph(g, 0.9, knobX, 9, dc - dw / 2 + 2.6, MAT.metal);
   box(g, 1.2, 2.4, 5.5, knobX, 9, dc + 2, MAT.metalDark, false);      // letterbox
-  box(g, 0.5, 0.5, 5.5, knobX - 0.5, 11.4, dc + 2, MAT.metal, false);
+  box(g, 0.5, 0.5, 5.5, knobX + inw * 0.5, 11.4, dc + 2, MAT.metal, false);
   // Deadbolt: a big sliding bolt, thrown.
-  box(g, 0.9, 1.6, 2.6, knobX - 0.3, 6, dc - dw / 2 + 2.6, MAT.metal, false);
-  box(g, 0.6, 1.2, 1.4, knobX - 0.9, 6, dc - dw / 2 + 2.6, MAT.chrome, false);
+  box(g, 0.9, 1.6, 2.6, knobX + inw * 0.3, 6, dc - dw / 2 + 2.6, MAT.metal, false);
+  box(g, 0.6, 1.2, 1.4, knobX + inw * 0.9, 6, dc - dw / 2 + 2.6, MAT.chrome, false);
   // Hasp and staple with a padlock hanging shut through them.
-  box(g, 0.8, 1.2, 3.2, knobX - 0.3, 3.4, dc + dw / 2 - 2.6, MAT.metal, false);
-  box(g, 1.1, 3.2, 1.1, knobX - 0.7, 2.4, dc + dw / 2 - 2.6, MAT.lockRed, false);
+  box(g, 0.8, 1.2, 3.2, knobX + inw * 0.3, 3.4, dc + dw / 2 - 2.6, MAT.metal, false);
+  box(g, 1.1, 3.2, 1.1, knobX + inw * 0.7, 2.4, dc + dw / 2 - 2.6, MAT.lockRed, false);
   // A security chain, drawn across the opening, permanently on.
   for (let i = 0; i < 7; i++) {
-    box(g, 0.5, 0.5, 2.2, knobX - 0.4 - i * 0.35, 17.5 - i * 0.55,
+    box(g, 0.5, 0.5, 2.2, knobX + inw * (0.4 + i * 0.35), 17.5 - i * 0.55,
       dc - dw / 2 + 2.6 + i * 2.4, MAT.metal, false);
   }
   // Outside face: a porch light over the door and a step, so the door has an
   // outside to be a door to.
-  box(g, 2.2, 2.2, 2.2, f.at + shellT / 2 + 1.1, f.h + 3, dc, MAT.metalDark, false);
-  sph(g, 0.7, f.at + shellT / 2 + 1.1, f.h + 1.7, dc, MAT.bulb, false);
-  box(g, 4, 1.2, dw + 5, f.at + shellT / 2 + 2, 0.6, dc, MAT.counter, false);
-  box(g, 6, 0.6, dw + 9, f.at + shellT / 2 + 4.5, 0.3, dc, MAT.concrete, false);
+  box(g, 2.2, 2.2, 2.2, out - inw * 1.1, f.h + 3, dc, MAT.metalDark, false);
+  sph(g, 0.7, out - inw * 1.1, f.h + 1.7, dc, MAT.bulb, false);
+  box(g, 4, 1.2, dw + 5, out - inw * 2, 0.6, dc, MAT.counter, false);
+  box(g, 6, 0.6, dw + 9, out - inw * 4.5, 0.3, dc, MAT.concrete, false);
+}
+
+// The back door: SHUT, and locked, with a glazed panel in its top. The same
+// trick as the front door, one room over — all decoration on the room side of a
+// shell wall that is already solid, with no trigger and no opening cut in it.
+// It hangs on the foyer's NORTH wall, which is the only plain exterior wall the
+// foyer has (the east one carries its window), so the glass reads as a real
+// window you can see the sky through while the leaf stays shut.
+function buildBackDoor(g, shellT) {
+  const b = BACK_DOOR;
+  const dw = b.x1 - b.x0, dc = (b.x0 + b.x1) / 2;
+  // +1 for a west wall, -1 for an east one; -1 here, so the room side faces -Z.
+  const inw = b.inward;
+  const face = b.at + inw * shellT / 2;    // the room-side plane of the wall
+  const leaf = face + inw * 0.35;          // the door itself, proud of the plaster
+  const out = b.at - inw * shellT / 2;     // the outer face, for the step outside
+  // Architrave round the opening, then the panelled leaf.
+  box(g, dw + 2.4, b.h + 1.6, 0.7, dc, (b.h + 1.6) / 2, face + inw * 0.2, MAT.trim);
+  box(g, dw, b.h, 0.9, dc, b.h / 2, leaf, MAT.door);
+  for (const s of [-1, 1]) {
+    box(g, dw * 0.34, b.h * 0.3, 0.4, dc + s * dw * 0.2, b.h * 0.22, leaf + inw * 0.35, MAT.doorDark, false);
+  }
+  // ---- The glazed top: a window set in the upper third of the leaf --------
+  const gy = b.h * 0.78, gh = b.h * 0.34;
+  box(g, dw * 0.88, gh, 0.3, dc, gy, leaf + inw * 0.25, MAT.glass, false);
+  box(g, dw * 0.94, 0.6, 0.5, dc, gy + gh / 2, leaf + inw * 0.22, MAT.trim, false);  // head rail
+  box(g, dw * 0.94, 0.6, 0.5, dc, gy - gh / 2, leaf + inw * 0.22, MAT.trim, false);  // sill rail
+  box(g, dw * 0.94, 0.5, 0.5, dc, gy, leaf + inw * 0.22, MAT.trim, false);          // cross rail
+  box(g, 0.5, gh + 1.2, 0.5, dc, gy, leaf + inw * 0.22, MAT.trim, false);           // centre mullion
+  // ---- The hardware: it does not open -------------------------------------
+  const knobZ = leaf + inw * 1.1;
+  sph(g, 0.9, dc - dw * 0.36, 9, knobZ, MAT.metal);
+  box(g, 2.6, 1.6, 0.9, dc + dw * 0.28, 8, knobZ + inw * 0.3, MAT.metal, false);     // deadbolt, thrown
+  box(g, 1.4, 1.2, 0.6, dc + dw * 0.34, 8, knobZ + inw * 0.9, MAT.chrome, false);
+  box(g, 3.2, 1.2, 0.8, dc + dw * 0.28, 3.4, knobZ + inw * 0.3, MAT.metal, false);  // hasp
+  box(g, 1.1, 3.2, 1.1, dc + dw * 0.34, 2.4, knobZ + inw * 0.7, MAT.lockRed, false);// padlock
+  // A step outside, so the door has an outside to be a door to.
+  box(g, dw + 5, 1.2, 4, dc, 0.6, out - inw * 2, MAT.counter, false);
+  box(g, dw + 9, 0.6, 6, dc, 0.3, out - inw * 4.5, MAT.concrete, false);
 }
 
 // The foyer's boot bench with the coat hooks on the wall above it and the
@@ -850,16 +1039,22 @@ function buildTyreStack(g, x, z) {
   for (let i = 0; i < 3; i++) cyl(g, 3.6, 3.6, 1.7, x, 0.9 + i * 1.7, z, MAT.rubber, 16, false);
 }
 
-// The garage's south workbench, with the shelf of tools above it and the tyre
-// stack and drum standing against it.
-function buildWorkbench(g, x, z) {
-  box(g, 20, 3, 5, x, 1.5, z, MAT.woodDark);
-  box(g, 21, 0.6, 6, x, 3.3, z, MAT.woodPale, false);
+// The garage's workbench, with the shelf of tools above it and the tyre stack
+// and drum standing against it. `ry` turns the whole piece: the dark garage's is
+// rotated a quarter turn onto its EAST wall so it runs north-south and leaves the
+// way-in lane down the middle clear. Built into a `unit` group so the furniture
+// audit measures it as one piece instead of four loose boxes.
+function buildWorkbench(g, x, z, ry = 0) {
+  const wb = unit(g, 'workbench', x, z);
+  wb.rotation.y = ry;
+  box(wb, 20, 3, 5, 0, 1.5, 0, MAT.woodDark);
+  box(wb, 21, 0.6, 6, 0, 3.3, 0, MAT.woodPale, false);
   for (let i = 0; i < 4; i++) {
-    box(g, 3, 2, 3, x - 7 + i * 5, 4.6, z, i % 2 ? MAT.paper : MAT.woodDark, false);
+    box(wb, 3, 2, 3, -7 + i * 5, 4.6, 0, i % 2 ? MAT.paper : MAT.woodDark, false);
   }
-  buildTyreStack(g, x + 12, z + 1);
-  cyl(g, 2.6, 2.6, 6, x - 10, 3, z - 2, MAT.signAmber, 14, false);
+  buildTyreStack(wb, 12, 1);
+  cyl(wb, 2.6, 2.6, 6, -10, 3, -2, MAT.signAmber, 14, false);
+  return wb;
 }
 
 // A wall mirror: the framed reflecting pane the house hangs on walls. The
@@ -867,6 +1062,88 @@ function buildWorkbench(g, x, z) {
 function buildWallMirror(g, x, z) {
   vert(g, 16, 12, x - 0.6, 15, z, -Math.PI / 2, MAT.mirror);
   return g;
+}
+
+// A single push door in a doorway that runs along Z (a constant-x wall). ONE
+// opaque leaf hangs on the `a0` jamb and spans the whole opening when shut, so
+// it blocks the view into the room. There is no collider — the car drives
+// straight through — and the leaf is pushed by contact: it swings AWAY from
+// whichever side the car is on, opening further the closer the car gets and
+// falling shut behind it. Which way it swings is latched while it is open and
+// only re-chosen once it is nearly shut again, so it does not flip back and
+// forth as the car drives past. The whole rig is one `structure` group, so the
+// furniture audit steps over it.
+//
+// `f` is { at, a0, a1, h }: the doorway's constant x, its z span, and its head
+// height — the same shape the wall() gap uses.
+function buildPushDoor(g, f) {
+  const root = new THREE.Group();
+  root.userData.structure = true;
+  g.add(root);
+  const width = f.a1 - f.a0;          // the one leaf spans the whole opening
+  const H = f.h;                      // head height — for the bathroom, the ceiling
+  const hinge = new THREE.Group();
+  hinge.position.set(f.at, 0, f.a0);  // hung on the a0 jamb
+  root.add(hinge);
+
+  // A panelled interior door, not a slab: a frame of stiles (the two vertical
+  // edges) and rails (top, bottom and a mid rail) standing proud, with recessed
+  // panels set back between them on BOTH faces. The frame is the full leaf
+  // thickness; the panels are thinner and centred, so each face reads as a pair
+  // of inset sections — which is what makes it look like a real door head-on.
+  const DOOR_T = 1.0;                 // the frame's thickness (proud of the panel)
+  const PANEL_T = 0.4;                // the recessed panel stock
+  const SW = Math.min(1.7, width * 0.16);   // stile width
+  const RAIL_BOT = 2.6, RAIL_TOP = 1.6, RAIL_MID = 1.5;
+  const innerW = width - 2 * SW;      // the panel field between the stiles
+  const midY = H * 0.5;               // centre line of the mid rail
+  const lower0 = RAIL_BOT, lower1 = midY - RAIL_MID / 2;
+  const upper0 = midY + RAIL_MID / 2, upper1 = H - RAIL_TOP;
+  const face = (w, h, d, y, z, mat) => box(hinge, w, h, d, 0, y, z, mat);
+
+  // Stiles: full height, one at each edge.
+  for (const z of [SW / 2, width - SW / 2]) face(DOOR_T, H, SW, H / 2, z, MAT.door);
+  // Rails: top, bottom, and the mid rail that splits the two panels.
+  face(DOOR_T, RAIL_TOP, innerW, H - RAIL_TOP / 2, width / 2, MAT.door);
+  face(DOOR_T, RAIL_BOT, innerW, RAIL_BOT / 2, width / 2, MAT.door);
+  face(DOOR_T, RAIL_MID, innerW, midY, width / 2, MAT.door);
+  // Recessed panels, set back to PANEL_T, darker so the relief is visible.
+  face(PANEL_T, lower1 - lower0, innerW, (lower0 + lower1) / 2, width / 2, MAT.doorDark);
+  face(PANEL_T, upper1 - upper0, innerW, (upper0 + upper1) / 2, width / 2, MAT.doorDark);
+
+  // A doorknob on the leading (free) stile, both faces. A chrome rose and ball;
+  // the cylinders lie along X (across the door) so they read as a knob, not a pin.
+  const knobY = H * 0.42;
+  for (const s of [1, -1]) {
+    const rose = cyl(hinge, 0.7, 0.7, 0.5, s * (DOOR_T / 2 + 0.25), knobY, width - SW / 2, MAT.chrome, 12, false);
+    rose.rotation.z = Math.PI / 2;
+    sph(hinge, 0.62, s * (DOOR_T / 2 + 0.85), knobY, width - SW / 2, MAT.chrome, false);
+  }
+
+  // Proportional, position-driven push: `press` ramps 0->1 as the car closes on
+  // the doorway plane, reaching full as it crosses. REACH is about a car radius
+  // so the swing starts at contact, not from across the room.
+  const REACH = CAR_RADIUS + 0.8;
+  const OPEN_ANGLE = 1.25;            // how far a full press swings the leaf
+  let angle = 0;                      // current hinge rotation
+  let swing = 0;                      // latched -1/+1 push direction
+  const update = (carPos, delta) => {
+    const dx = carPos.x - f.at;
+    const inZ = carPos.z > f.a0 - 4 && carPos.z < f.a1 + 4;
+    const press = inZ ? Math.max(0, Math.min(1, (REACH - Math.abs(dx)) / REACH)) : 0;
+    let goal;
+    if (press > 0.02) {
+      // Away from the car: a car on +x pushes the leaf toward -x.
+      if (swing === 0 || Math.abs(angle) < 0.04) swing = dx >= 0 ? -1 : 1;
+      goal = swing * OPEN_ANGLE * press;
+    } else {
+      goal = 0;
+      if (Math.abs(angle) < 0.04) swing = 0;   // free to re-latch once shut
+    }
+    angle += (goal - angle) * Math.min(1, 8 * delta);
+    hinge.rotation.y = angle;
+  };
+  return { group: root, update };
 }
 
 // ============================================================================
@@ -908,12 +1185,10 @@ function buildOutside(g) {
   // place the grass apron does not show.
   const driveW = DRIVE.x1 - DRIVE.x0, driveD = DRIVE.z1 - DRIVE.z0;
   const driveCx = (DRIVE.x0 + DRIVE.x1) / 2, driveCz = (DRIVE.z0 + DRIVE.z1) / 2;
+  // One unmarked slab of the same cement as the garage floor, so the drive and
+  // the floor read as a single surface running out from the roller door rather
+  // than a marked-up apron butted onto a plainer interior.
   flat(g, driveW, driveD, driveCx, -0.2, driveCz, MAT.concrete);
-  // Tyre-worn tracks either side of the centreline, which is what stops a big
-  // grey rectangle from reading as a big grey rectangle.
-  for (const s of [-1, 1]) {
-    flat(g, driveW - 3, 4.5, driveCx, -0.12, driveCz + s * 5.4, MAT.concreteDark);
-  }
   // A kerb along each side, so the drive has edges and the grass sits behind it.
   for (const s of [-1, 1]) {
     const kz = driveCz + s * (driveD / 2 - 0.6);
@@ -944,6 +1219,22 @@ function buildOutside(g) {
 }
 
 // ============================================================================
+// The playroom Hot Wheels track
+// ============================================================================
+// The geometry is the SAME shared builder the object explorer shows
+// (playroom.js `makeHotWheels`), so the two can never drift. It is ONE group
+// tagged `userData.structure`, so the furniture audit skips it — a loop-the-loop
+// is not a wardrobe, and the rails would otherwise be measured as furniture.
+// It carries no colliders: the drive is main.js's job, and a collider here would
+// wall the playroom off.
+function buildHotwheels(g) {
+  const hw = makeHotWheels();
+  hw.group.userData.structure = true;
+  g.add(hw.group);
+  return hw;
+}
+
+// ============================================================================
 // The level
 // ============================================================================
 export async function addHouse(parent, opts = {}) {
@@ -958,6 +1249,22 @@ export async function addHouse(parent, opts = {}) {
   // from the return, so it is declared here and filled in down there. main.js
   // drives its flicker off the clock every frame.
   let fireplace = null;
+  // The hall grandfather clock: { group, update(elapsed) }. main.js advances it
+  // every house frame so its hands read the real time and its pendulum swings.
+  let clock = null;
+  // The playroom Lego box's spill controller: { tub, bricks, done }. main.js
+  // watches `tub` topple and aims the bricks out in the tub's fall direction.
+  let legoSpill = null;
+  // The playroom Hot Wheels track: filled in by the playroom block, returned so
+  // main.js can drive the car along it. See buildHotwheels above.
+  let hotwheels = null;
+  let playTrain = null;
+  let playXylophone = null;
+  let jackInTheBox = null;
+  let terrarium = null;
+  // The bathroom's push door (built with the interior walls, below).
+  // main.js advances it each house frame; see buildPushDoor.
+  let bathroomDoor = null;
   // NB: the shell thickness is `shellT`, not `wall`. There is a module-level
   // `function wall(...)` that builds the wall meshes, and destructuring it in
   // as `wall` would shadow that with a number — every wall() call below would
@@ -967,8 +1274,8 @@ export async function addHouse(parent, opts = {}) {
   const T = shellT;            // interior wall thickness (same as the shell)
   // No window sill sits below a grown-up's waist. The house's people stand 7-8
   // tall and their waist is around 4, so the sills start at 13 — high on the
-  // wall, where a window belongs — and the glass runs up to 24, leaving 6 of
-  // plaster under the 30 ceiling for the header.
+  // wall, where a window belongs — and the glass runs up to 24, leaving plaster
+  // under the ceiling for the header.
   const WIN_Y0 = 13, WIN_Y1 = 24;
 
   const phase = async (frac, label) => {
@@ -1022,11 +1329,11 @@ export async function addHouse(parent, opts = {}) {
   //
   // There is exactly ONE opening in the entire shell, and it is the dark
   // garage's roller door on the west wall. The house used to have its only hole
-  // in the east wall, right where the front door is, which meant a cat swat
-  // could fire you through it onto the grass and a "closed" front door was
-  // really a hole with a door drawn over it. The east wall is now continuous
-  // masonry with a locked door drawn on the room side of it, and the only way
-  // out of this building is 90 metres of dark garage away.
+  // right where the front door is, which meant a cat swat could fire you through
+  // it onto the grass and a "closed" front door was really a hole with a door
+  // drawn over it. The shell is now continuous masonry with a locked door drawn
+  // on the room side of it, and the only way out of this building is 90 metres
+  // of dark garage away.
   const OPEN_TOP = 20;    // clear height under the dark garage's roller door
   // `inward` is which way the room side faces, so the skirting can be pushed
   // onto the wall's inner face instead of being buried inside it.
@@ -1036,18 +1343,21 @@ export async function addHouse(parent, opts = {}) {
   // a row of windows along the north and west would light it like a room and
   // take the whole effect away. The west side has the roller door instead.
   const shellWalls = [
-    // East: bathroom, then the foyer with the locked front door. The door is
-    // NOT an opening - see above - so this side is one unbroken wall.
+    // East: bathroom, then the foyer. No opening at all - the whole east side
+    // is one unbroken wall.
     { axis: 'z', at: maxX + shellT / 2, a0: minZ - shellT, a1: maxZ + shellT, inward: -1,
-      wins: [[-12, 2], [26, 40], [86, 95]] },
+      wins: [[-12, 2], [26, 40], [63, 77], [86, 95]] },
     // West: bedrooms and the living room, then the dark garage (z 46..94) with
-    // no windows and the roller door in it.
+    // no windows and the roller door in it. The window that used to sit at z
+    // 30..44 is gone: the locked front door hangs there now, in solid masonry.
     { axis: 'z', at: minX - shellT / 2, a0: minZ - shellT, a1: maxZ + shellT, inward: 1,
-      wins: [[-78, -62], [-44, -28], [0, 16], [30, 44]],
+      wins: [[-78, -62], [-44, -28], [0, 16]],
       opening: { a0: HOUSE_EXIT.z0, a1: HOUSE_EXIT.z1 } },
-    // North: dark garage (blank), kitchen, dining, foyer.
+    // North: dark garage (blank), kitchen, dining, foyer. The foyer stretch is
+    // plain masonry — its daylight comes from the back door's glazed top and
+    // the east window, not from a window punched through behind the door.
     { axis: 'x', at: maxZ + shellT / 2, a0: minX - shellT, a1: maxX + shellT, inward: -1,
-      wins: [[-40, -24], [-8, 8], [22, 38], [62, 78]] },
+      wins: [[-40, -24], [-8, 8], [22, 38]] },
     // South: both bedrooms, the walk-in and the main closet.
     { axis: 'x', at: minZ - shellT / 2, a0: minX - shellT, a1: maxX + shellT, inward: 1,
       wins: [[-80, -64], [-36, -20], [16, 32], [62, 78]] },
@@ -1131,20 +1441,38 @@ export async function addHouse(parent, opts = {}) {
   }
 
   // ---- The front door: SHUT, and locked ------------------------------------
-  // This used to be a roller door wound open, with a hole cut in the east shell
-  // and a trigger box in it. There is no hole and no trigger any more — the
-  // house is a closed box, and this door is the visible proof of it. You can
-  // stand in the foyer and look at a front door that is very obviously a front
-  // door, with the deadbolt thrown, and there is nothing on the other side of
-  // it but solid plaster.
+  // This used to be a roller door wound open, with a hole cut in the shell and a
+  // trigger box in it. There is no hole and no trigger any more — the house is a
+  // closed box, and this door is the visible proof of it. It hangs on the WEST
+  // shell wall beside the roller door, so you can see a front door that is very
+  // obviously a front door, with the deadbolt thrown, and there is nothing on
+  // the other side of it but solid plaster.
   //
   // Everything here is decoration drawn on the room side of a wall that is
   // already solid. `box()`'s last argument is `cast`, not a collider flag, so
   // none of it blocks anything, and the shell panel behind it is one continuous
   // collider from the skirting to the ceiling. The only way out of this house
-  // is the dark garage off the kitchen.
+  // is the dark garage's roller door.
   {
     buildFrontDoor(g, shellT);
+  }
+
+  // ---- The back door: SHUT, locked, and glazed -----------------------------
+  // The front door's twin, in the foyer: another locked door drawn on solid
+  // masonry, this one with a clear glass panel in its top third so the sky shows
+  // through while the leaf stays shut. Hangs on the foyer's north wall.
+  {
+    buildBackDoor(g, shellT);
+  }
+
+  // ---- The bathroom's push door --------------------------------------------
+  // The bathroom has exactly one entrance, the doorway off the hall, and this is
+  // the door in it: one opaque leaf that is pushed open by contact as the car
+  // goes through, and falls shut to block the view into the room. main.js
+  // advances it each house frame, the way it does the fireplace.
+  {
+    const w = HOUSE_WALLS.find((q) => q.axis === 'z' && q.at === 52 && q.gap);
+    bathroomDoor = buildPushDoor(g, { at: w.at, a0: w.gap.a0, a1: w.gap.a1, h: w.gap.top });
   }
 
   await phase(0.5, 'the kitchen');
@@ -1216,11 +1544,11 @@ export async function addHouse(parent, opts = {}) {
     // hutch ended up inside the plaster and the stove straddled the kitchen|living
     // opening instead of standing beside it.
     //
-    // The kitchen's four walls and what is left of each:
+    // The kitchen's remaining walls and what is left of each:
     //   north shell  x -46..6     all of it, which is where the appliances go
     //   west  x=-46 z 47.5..62 and 82..94   (the garage doorway is z 62..82)
     //   east  x=6   z 47.5..54 and 84..94   (the dining opening is z 54..84)
-    //   south z=46  x -44.5..-36 and -10..4.5 (the living opening is x -36..-10)
+    //   south z=46  OPEN: the whole kitchen|living boundary is gone (open plan)
     //
     // The north face is the shell, whose inner face IS the room's z1, so there
     // is no half-thickness to allow for on that side — only on the interior
@@ -1230,8 +1558,16 @@ export async function addHouse(parent, opts = {}) {
     // The fridge is 7.2 wide, so its west edge has to be clear of the west
     // wall's inner face at x=-44.5 — at -42 it was 1.1 inside the plaster.
     jiggle(fridge(g, -40.5, 90.5, Math.PI), 4.6);
-    jiggle(counterRun(g, -22, 92.45, 20, 0, 'x', true), 10.5);
-    jiggle(stove(g, -4, 91.4, 0), 4);
+    // The whole working run is built as ONE piece by the shared kitchen kit: a
+    // counter with a sink, a range with a real oven, the countertop clutter and
+    // the wall tools. It is turned 180 so its back faces the north shell, and set
+    // so the deepest fitting just reaches the shell's inner face at z=94. Built
+    // as one group because the audit reads overlapping groups as intersecting
+    // furniture, and a toaster standing on a counter overlaps it by definition.
+    const galley = makeGalley({ pal: HOUSE_KITCHEN, s: 2.5 });
+    galley.rotation.y = Math.PI;
+    galley.position.set(-17.5, 0, 92.28);
+    g.add(galley);
     // Add dark mouse hole in kitchen floor
     try {
       if (typeof window !== 'undefined') {
@@ -1244,8 +1580,9 @@ export async function addHouse(parent, opts = {}) {
     mouseHole.receiveShadow = true;
     // ---- West wall: a short run, stopping short of the garage doorway -----
     jiggle(counterRun(g, r.x0 + 3.1, 54, 12, 0, 'z', false), 7);
-    // ---- South wall: the hutch, east of the living-room opening ------------
-    // Measured off the wall's FACE at z=47.5, not its centre line at 46.
+    // ---- South side: the hutch, now freestanding on the open plan ------------
+    // The kitchen|living wall is gone, so this stands as a low divider between
+    // the two rooms rather than a cabinet against a wall.
     {
       const hutch = unit(g, 'hutch', -3, 49.2);
       box(hutch, 13, 14, 2, 0, 7, 0, MAT.woodPale);
@@ -1253,19 +1590,9 @@ export async function addHouse(parent, opts = {}) {
       for (let i = 0; i < 4; i++) box(hutch, 3, 2.6, 0.3, -4.5 + i * 3, 9, 1.2, MAT.metal, false);
       jiggle(hutch, 6);
     }
-    // ---- The island, with stools down the kitchen side of it -------------
-    // The stools sit clear of the island's edge rather than tucked under it —
-    // tucked-under seating is intentional, a stool half inside the worktop it
-    // belongs to is not.
-    const kt = table(g, -19, 64, 20, 16, 4.6, 0, MAT.woodPale);
-    jiggle(kt, 4.6);
-    for (let i = 0; i < 3; i++) {
-      const kc = chair(g, -26 + i * 7, 53, 0);
-      jiggle(kc, 2);
-    }
-    const kb = sph(g, 2.4, -19, 5.8, 64, MAT.quilt);
-    kb.scale.y = 0.5;
-    jiggle(kb, 1.3);     // fruit bowl
+    // The island (and the stools and fruit bowl that went with it) has been
+    // taken out: the kitchen keeps its wall runs, the hutch and the dresser, and
+    // the middle of the floor is left open.
     // ---- East wall: a dresser in the solid stretch below the dining opening -
     // x=4.5 is that wall's inner face; the dresser is 3.1 wide with its handles
     // on the left, so it has to start at 9.6 to clear it.
@@ -1276,11 +1603,6 @@ export async function addHouse(parent, opts = {}) {
       for (let i = 0; i < 2; i++) box(dr, 1, 1, 5, -1.3, 4 + i * 4, 0, MAT.metalDark, false);
       jiggle(dr, 3.5);
     }
-    jiggle(pottedPlant(g, r.x0 + 7, r.z0 + 8, 1.2), 1.6);
-    jiggle(pottedPlant(g, -14, r.z1 - 7, 1.0), 1.4);
-    ceilingLight(g, lights, -19, 84, 8, 34, 70);
-    ceilingLight(g, lights, -19, 62, 8, 30, 64);
-    ceilingLight(g, lights, -30, 76, 7, 24, 48);
   }
 
   await phase(0.58, 'the dining room');
@@ -1309,14 +1631,15 @@ export async function addHouse(parent, opts = {}) {
     sph(g, 2.6, 27, 5.8, 70, MAT.quilt2).scale.y = 0.5;
     cyl(g, 0.5, 0.5, 3, 27, 6.2, 70, MAT.porcelain, 10, false);
     sph(g, 0.6, 27, 8.2, 70, MAT.bulb, false);
-    // Sideboard on the east wall, with a mirror over it. It has to sit north of
-    // z=80: the dining|foyer opening is z 60..80, and a 22-long sideboard
-    // centred on z=60 stood straight across the middle of it. It also has to
-    // clear that wall's inner face at x=50.5 — it is 9.8 wide with the doors on
-    // the left, so x=45.5 is as far east as it goes.
+    // Sideboard on the east wall. It has to sit north of z=80: the dining|foyer
+    // opening is z 60..80, and a 22-long sideboard centred on z=60 stood
+    // straight across the middle of it. It also has to clear that wall's inner
+    // face at x=50.5 — it is 9.8 wide with the doors on the left, so x=45.5 is
+    // as far east as it goes. (There is deliberately NO mirror hung here: the
+    // dining|foyer boundary is an open cased opening with no wall above z=80, so
+    // a mirror at r.x1 floated in mid-air between the two rooms.)
     const sb = buildSideboard(g, 45.5, 87);
     jiggle(sb, 3.6);
-    vert(g, 16, 12, r.x1 - 0.6, 15, 86, -Math.PI / 2, MAT.mirror);
     // A dresser/hutch on the west side, facing the cased opening — and clear of
     // it. The kitchen|dining opening is z 54..84, so this has to start at z=84.
     // It is 2.8 wide with the handles on the right, and that wall's inner face
@@ -1335,8 +1658,6 @@ export async function addHouse(parent, opts = {}) {
     }
     const dp = pottedPlant(g, 14, 52, 1.1);
     jiggle(dp, 1.6);
-    ceilingLight(g, lights, 27, 70, 9, 30, 60);
-    ceilingLight(g, lights, 27, 54, 7, 22, 42);
   }
 
   await phase(0.64, 'the foyer');
@@ -1355,15 +1676,16 @@ export async function addHouse(parent, opts = {}) {
       const orb = sph(g, 0.7, 83, 5, 60 + i * 10, MAT.quilt2, false);
       jiggle(orb, 0.9);
     }
-    vert(g, 14, 12, r.x1 - 0.6, 16, 70, -Math.PI / 2, MAT.mirror);
+    // A real window in the east shell wall over the console table, where a
+    // decorative mirror used to be pasted on the plaster (see the east wall's
+    // `wins` list). It is a genuine opening with a frame and glass, so the foyer
+    // gets daylight instead of a reflected panel.
     buildCoatRack(g, 68, 53);
     const fp = pottedPlant(g, 60, 87, 1.3);
     jiggle(fp, 1.6);
     // A mat inside the door, and the house number on the wall.
     rug(g, 70, 66, 22, 18, MAT.rugHall);
     box(g, 0.4, 3, 5, r.x1 - 0.5, 8, 88, MAT.lockRed, false);
-    ceilingLight(g, lights, 72, 70, 8, 28, 56);
-    ceilingLight(g, lights, 72, 52, 6, 22, 42);
   }
 
   await phase(0.7, 'the living room');
@@ -1374,12 +1696,11 @@ export async function addHouse(parent, opts = {}) {
   // were fighting each other for floor.
   {
     const r = ROOMS.living;
-    // The TV is on the EAST wall's solid stretch, not on the north one: the
-    // north wall (z=46) is cut through by the open-plan kitchen/living divide at
-    // x -36..-10, and a 20-wide TV unit standing against it was sitting in that
-    // opening. Turned 90 degrees it is a 3.6-wide, 20-deep cabinet running down
-    // the wall from z=22 to z=42, which also puts it clear of the hall doorway
-    // at z -6..18.
+    // The TV is on the EAST wall's solid stretch, not on the north one. The
+    // north side (z=46) is fully open to the kitchen now, so a TV unit standing
+    // against it would float in the opening.  Turned 90 degrees it is a
+    // 3.6-wide, 20-deep cabinet running down the wall from z=22 to z=42, which
+    // also puts it clear of the hall doorway at z -6..18.
     // Two couches facing each other across the coffee table, on the north and
     // south sides of it, so the fireplace on the west wall stays open and both
     // seats look across the table (and, off to the side, at the fire).
@@ -1412,7 +1733,7 @@ export async function addHouse(parent, opts = {}) {
     // A grand piano in the corner nobody sits in. Pulled in off both the solid
     // darkGarage|living wall at z=46 and the sofa to its east.
     {
-      const pi = unit(g, 'piano', -82, 34);
+      const pi = unit(g, 'piano', -82, 31);
       box(pi, 12, 4, 18, 0, 3, 0, MAT.woodDark);
       box(pi, 12.6, 0.5, 18.6, 0, 5.2, 0, MAT.paper, false);
       for (let i = 0; i < 5; i++) box(pi, 0.5, 0.4, 3, -5 + i * 2.4, 5.6, -8, MAT.trim, false);
@@ -1424,9 +1745,6 @@ export async function addHouse(parent, opts = {}) {
     jiggle(pp2, 1.5);
     const pp3 = pottedPlant(g, 0, 40, 1.0);
     jiggle(pp3, 1.4);
-    ceilingLight(g, lights, -50, 20, 9, 34, 76);
-    ceilingLight(g, lights, -24, 34, 7, 26, 52);
-    ceilingLight(g, lights, -70, -6, 7, 24, 48);
     tableLamp(g, lights, -84, 4, -10, 18);
   }
 
@@ -1456,71 +1774,8 @@ export async function addHouse(parent, opts = {}) {
     jiggle(nt, 3.6);
     tableLamp(g, lights, -70, 3.2, -34, 14);
     pottedPlant(g, -52, -30, 1.1);
-    ceilingLight(g, lights, -68, -54, 7, 26, 56);
-    ceilingLight(g, lights, -68, -76, 6, 20, 42);
-    // Piano mat in child's room
-    try {
-      if (typeof window !== 'undefined') {
-        if (!window.__HOUSE_SURFACES) window.__HOUSE_SURFACES = [];
-        // Create 8 piano keys as pads at slightly different heights/colors conceptually
-        const keyMat = new THREE.Group();
-        keyMat.name = 'pianoMat';
-        // On the floor at the foot of the piano, flush to its south face. On top
-        // of the case they would read fine but share its footprint, and the
-        // audit holds furniture to the same rule as everything else: two pieces
-        // of furniture never intersect, in plan or out of it.
-        keyMat.position.set(-65.85, 0.01, -44.5);
-        const whiteKeys = 8;
-        const keyWidth = 1.2, keyDepth = 4, spacing = 0.1;
-        for (let i = 0; i < whiteKeys; i++) {
-          const key = box(keyMat, keyWidth, 0.1, keyDepth, -((whiteKeys-1)/2) + i*(keyWidth+spacing), 0.05, 0, MAT.trim, false);
-        }
-        g.add(keyMat);
-        window.__HOUSE_SURFACES.push(pad(-55, -50, (keyWidth+spacing)*8, keyDepth, 0.05));
-      }
-    } catch (e) {}
-    // Children's room: add toys, castle, giant balls, train set
-    try {
-      // Giant balls
-      const ball1 = sph(g, 3, -60, 1, -40, MAT.quilt, false);
-      const ball2 = sph(g, 3.5, -50, 1, -45, MAT.quilt2, false);
-      addKnockable(ball1, 3, { fallTime: 0.4, mode: 'slide', slideDistance: 8 });
-      addKnockable(ball2, 3.5, { fallTime: 0.4, mode: 'slide', slideDistance: 10 });
-      // Toys scattered
-      for (let i = 0; i < 6; i++) {
-        const toy = box(g, 0.8, 0.8, 1.2, -75 + i*3, 0.4, -45 + i*2, [MAT.wood, MAT.paper, MAT.plaster][i%3], false);
-        addKnockable(toy, 0.8, { fallTime: 0.25 });
-      }
-      // Block castle - thin blocks stacked
-      const castleX = -80, castleZ = -70;
-      for (let level = 0; level < 3; level++) {
-        box(g, 4, 0.4, 0.8, castleX, 0.2 + level*1.5, castleZ-2, MAT.woodPale, false);
-        box(g, 0.8, 0.4, 4, castleX, 0.2 + level*1.5, castleZ, MAT.woodPale, false);
-      }
-      box(g, 2, 0.8, 2, castleX, 0.2 + 4.5, castleZ, MAT.woodPale, false); // cupola
-      // Make castle blocks knockable
-      for (let level = 0; level < 3; level++) {
-        const b1 = box(g, 4, 0.4, 0.8, castleX, 0.2 + level*1.5, castleZ-2, MAT.woodPale, false);
-        const b2 = box(g, 0.8, 0.4, 4, castleX, 0.2 + level*1.5, castleZ, MAT.woodPale, false);
-        addKnockable(b1, 2.5, { fallTime: 0.3 });
-        addKnockable(b2, 2.5, { fallTime: 0.3 });
-      }
-      const cup = box(g, 2, 0.8, 2, castleX, 0.2 + 4.5, castleZ, MAT.woodPale, false);
-      addKnockable(cup, 1.5, { fallTime: 0.3 });
-      // Train set - simple circular track. south of the bed1|walkin doorway,
-      // because at -50 it sat half across the x=-46 wall and inside the opening.
-      const trackGroup = new THREE.Group();
-      trackGroup.position.set(-55, 0.01, -75);
-      g.add(trackGroup);
-      for (let i = 0; i < 8; i++) {
-        const ang = i*Math.PI/4;
-        const tr = box(trackGroup, 1.5, 0.05, 0.8, Math.cos(ang)*4, 0.02, Math.sin(ang)*4, MAT.woodDark, false);
-        tr.rotation.y = ang;
-      }
-      // Red switch
-      box(trackGroup, 0.5, 0.1, 0.5, 0, 0.05, 0, MAT.lockRed, false);
-    } catch (e) {}
-  }
+    // (The toys live in the walk-in playroom next door. See that room below.)
+    }
 
   // ---- Bedroom 2 ----------------------------------------------------------
   {
@@ -1597,60 +1852,154 @@ export async function addHouse(parent, opts = {}) {
     jiggle(dt2, 3.6);
     const dc3 = chair(g, 30, -35, Math.PI);
     jiggle(dc3, 2.2);
-    // Guitar ramp leaning against the dresser to reach the top - create surface for ramp
-    try {
-      if (typeof window !== 'undefined') {
-        if (!window.__HOUSE_SURFACES) window.__HOUSE_SURFACES = [];
-        // Ramp from floor up to dresser top along the guitar
-        window.__HOUSE_SURFACES.push(wedge(46.5, -34, 0, 8, 4, 7, 0));
-      }
-    } catch (e) {}
     // Shortened, and moved in off the south wall, which it was crossing.
     const sr2 = shelfRack(g, 32, -82, 20, 0, 'x');
     jiggle(sr2, 5.2);
     pottedPlant(g, 12, -28, 1.0);
-    ceilingLight(g, lights, 28, -54, 7, 26, 56);
-    ceilingLight(g, lights, 28, -78, 6, 20, 42);
   }
 
-  // ---- The walk-in closet: the room that joins the two bedrooms ----------
-  // 52 x 66, and the two long runs of wardrobes either side of the aisle are
-  // the whole point of it. The aisle is wide enough to drive down.
+  // ---- Children's playroom: reworked walk-in between the two bedrooms ---
   {
     const r = ROOMS.walkin;
-    // The room's two centres, kept separate. `mid` used to be the X centre and
-    // was passed as the Z coordinate, which put both runs of wardrobes outside
-    // the room — one of them ended up in the living room, across the wall.
     const mx = (r.x0 + r.x1) / 2, mz = (r.z0 + r.z1) / 2;
-    // `axis` already decides which way the rail runs, so `ry` stays 0 — passing
-    // both rotates the rack a second time and it ends up across the room.
+    // The toys are the SAME real models the object explorer shows: each one is a
+    // builder from ./playroom.js, placed in a `unit()` group here so it is named
+    // for the furniture audit. Nothing ad-hoc.
     //
-    // Both rails are in the NORTH half of the room, and 22 long rather than 26.
-    // At 26 they cannot fit: the bed1|walkin and walkin|bed2 doorways are z
-    // -70..-50, and the car needs 3.7 of clear floor each side of the z=-20 wall
-    // to get through into the living room, which leaves a 25-deep slot. 22 fits
-    // it with room to spare, and 3.5 in from the side wall so it counts as being
-    // against one.
-    const wr1 = shelfRack(g, r.x0 + 3.5, -36.7, 22, 0, 'z');
-    jiggle(wr1, 5);
-    const wr2 = shelfRack(g, r.x1 - 3.5, -36.7, 22, 0, 'z');
-    jiggle(wr2, 5);
-    // Island: a low table with folded piles and a couple of open boxes.
-    box(g, 24, 4, 9, mx, 2, mz, MAT.woodPale);
-    box(g, 25, 0.5, 10, mx, 4.2, mz, MAT.wood);
-    for (let i = 0; i < 4; i++) {
-      const pile = box(g, 5, 2, 5, mx - 9 + i * 6, 5.4, mz, [MAT.quilt, MAT.sheet, MAT.quilt2, MAT.cushion][i], false);
-      jiggle(pile, 2.4);
-    }
-    for (const s of [-1, 1]) {
-      const boxp = box(g, 6, 5, 6, mx + s * 19, 2.5, mz, MAT.paper, false);
-      jiggle(boxp, 2.6);
-    }
-    // Full-length mirrors on the ends, which is what a walk-in closet has.
-    vert(g, 14, 18, r.x0 + 0.6, 9, mz, Math.PI / 2, MAT.mirror);
-    vert(g, 14, 18, r.x1 - 0.6, 9, mz, -Math.PI / 2, MAT.mirror);
-    ceilingLight(g, lights, mx, -50, 7, 24, 54);
-    ceilingLight(g, lights, mx, -74, 6, 22, 46);
+    // Scatter toys (lego, castle, magnet) register every loose piece as its own
+    // knockable in 'scatter' mode and cross-link them, so ONE hit bursts the whole
+    // pile apart (like the town's fruit stalls). None of them push a collider:
+    // they are toys you smash through, not walls.
+
+    // The toy train: the real locomotive + the whole town consist, running ON
+    // THE FLOOR all the way round a wall-hugging loop that threads EVERY room of
+    // the house except the bathroom. The route itself lives in ./playtrain.mjs
+    // (pure geometry, checked headless by ./playtrain.test.mjs); here we just
+    // hand its dense point list to the track builder. It is one structure group,
+    // so the furniture audit skips it, and it is NOT the Hot Wheels line.
+    try {
+      const pt = makePlayTrain({
+        scale: 0.75,
+        trestle: false,
+        points: playTrainPoints(),
+      });
+      pt.group.userData.structure = true;
+      const trainUnit = unit(g, 'play_train', 0, 0);
+      trainUnit.userData.structure = true;
+      trainUnit.add(pt.group);
+      playTrain = pt;
+    } catch (e) {}
+
+    // ONE big bright-red rocking horse, on its own rocker rails.
+    try {
+      const horse = unit(g, 'play_horse', -30, -27);
+      horse.add(makeRedHorse());
+      // A rocking horse ROCKS on its rails when hit and springs back upright —
+      // it never topples over, so it uses the wobble mode rather than a fall.
+      addKnockable(horse, 1.6, {
+        mode: 'wobble', wobbleAmp: 0.5, wobbleFreq: 5.5, wobbleDamping: 2.2,
+      });
+    } catch (e) {}
+
+    // One clear Lego tub BURSTING with bricks. The tub is a wide, top-heavy box,
+    // so it TOPPLES onto its side when hit (mode 'topple': it pivots about its
+    // base edge and lies flat, never sinking into the floor). The bricks are
+    // reparented OUT of the tub to the house group — same world spot, but no
+    // longer riding the box — and registered as DORMANT scatter pieces: the car
+    // cannot scatter them on its own. main.js watches the tub topple and then
+    // releases the whole pile in the tub's fall direction (triggerKnockable), so
+    // the box goes over FIRST and only then do the bricks come pouring out.
+    try {
+      const lego = unit(g, 'play_legobox', -3, -46);
+      const lb = makeLegoBox();
+      lego.add(lb.group);
+      const legoTub = addKnockable(lego, 2.6, {
+        mode: 'topple', toppleRadius: 2.0, fallTime: 0.55,
+      });
+      const bricks = [];
+      for (const b of lb.bricks) {
+        // Preserve the brick's world transform as it leaves the tub group, so
+        // it still reads as sitting in the box until the box tips away.
+        g.attach(b);
+        bricks.push(addKnockable(b, 0.7, {
+          mode: 'scatter', slideDistance: 3.0, flyHeight: 0.7, dormant: true,
+        }));
+      }
+      legoSpill = { tub: legoTub, bricks, done: false };
+    } catch (e) {}
+
+    // The rocket: the actual spaceport lander, hung from the ceiling.
+    try {
+      const rocket = unit(g, 'play_rocket', 2, -64);
+      rocket.add(makeHangingRocket({ scale: 0.62, hang: 14 }));
+      rocket.position.y = 12;
+    } catch (e) {}
+
+    // The xylophone: rainbow metal bars, low enough to drive over.
+    try {
+      const xy = unit(g, 'play_xylophone', -12, -41);
+      const xyl = makeXylophone();
+      xy.add(xyl.group);
+      // World positions + pitches of each bar, so main.js can ring a note as the
+      // car rolls over it.
+      playXylophone = {
+        bars: xyl.bars.map((b) => ({ x: -12 + b.mesh.position.x, z: -41, freq: b.freq, len: b.len, w: b.w })),
+      };
+    } catch (e) {}
+
+    // The block castle: a real little castle built block by block on a grass
+    // mat. The grass is a mat (drive over it); every block is a linked scatter
+    // piece, so ramming the castle brings the whole thing down in a heap.
+    try {
+      const castle = unit(g, 'play_castle', -1, -30);
+      const cc = makeBlockCastle();
+      castle.add(cc.group);
+      const cs = [];
+      for (const p of cc.pieces) cs.push(addKnockable(p, 1.0, { mode: 'scatter', slideDistance: 4, flyHeight: 0.5 }));
+      for (const p of cs) p.linked = cs;
+    } catch (e) {}
+
+    // The magnet-tile parking structure. Every tile is a linked scatter piece.
+    try {
+      const mag = unit(g, 'play_magnettiles', -33, -66);
+      const mc = makeMagnetCity();
+      mag.add(mc.group);
+      const ms = [];
+      for (const p of mc.pieces) ms.push(addKnockable(p, 1.0, { mode: 'scatter', slideDistance: 3.5, flyHeight: 0.5 }));
+      for (const p of ms) p.linked = ms;
+    } catch (e) {}
+
+    // The Hot Wheels track.
+    try { hotwheels = buildHotwheels(g); } catch (e) {}
+
+    // The pet lizard's glass terrarium, standing on its own cabinet on the
+    // playroom floor at the north wall. The lizard turns to watch the car;
+    // main.js advances it each house frame.
+    try {
+      const TX = -34.5, TZ = -80;
+      const tj = makeTerrarium({ x: TX, z: TZ });
+      const terrUnit = unit(g, 'play_terrarium', TX, TZ);
+      terrUnit.position.y = 0.0;
+      terrUnit.add(tj.group);
+      terrarium = tj;
+    } catch (e) {}
+
+    // The Jack-in-the-box. Touch it and it winds itself up on the side, then a
+    // clown on a giant spring flies out to surprise you before it is drawn
+    // slowly back in. It is a toy you smash through, not a wall, so it carries
+    // no collider - only a wobble, so it shrugs when the car hits it. main.js
+    // reads the handle each frame to look for the touch and to run the gag.
+    try {
+      const JX = -38, JZ = -40;
+      const jb = makeJackInTheBox({ x: JX, z: JZ });
+      const jackUnit = unit(g, 'play_jackinthebox', JX, JZ);
+      jackUnit.add(jb.group);
+      addKnockable(jackUnit, 4.2, {
+        mode: 'wobble', wobbleAmp: 0.16, wobbleFreq: 15, wobbleDamping: 4.5,
+      });
+      jackInTheBox = jb;
+    } catch (e) {}
+
   }
 
   await phase(0.82, 'the bathroom');
@@ -1694,8 +2043,6 @@ export async function addHouse(parent, opts = {}) {
     box(g, 0.6, 0.6, 18, r.x0 + 0.6, 9, 12, MAT.chrome, false);
     // A bath mat on the open deck, because someone uses it.
     rug(g, 68, 42, 14, 8, MAT.rugHall);
-    ceilingLight(g, lights, 72, 28, 7, 28, 58);
-    ceilingLight(g, lights, 72, -6, 6, 22, 44);
     // The tiled surround, raised a low kerb so it reads as a deck: three flat
     // boxes, plus the driveable surfaces that match them. Keyed off house
     // bounds so the deck only exists where the car can actually reach it.
@@ -1754,7 +2101,6 @@ export async function addHouse(parent, opts = {}) {
       for (let i = 0; i < 4; i++) box(chest, 12.4, 1.2, 4.4, 0, 1.5 + i * 2, 0, MAT.woodDark, false);
       jiggle(chest, 5.2);
     }
-    ceilingLight(g, lights, mx, mz, 7, 24, 48);
   }
 
   await phase(0.9, 'the dark garage');
@@ -1766,17 +2112,18 @@ export async function addHouse(parent, opts = {}) {
   // the last place you want to be.
   {
     const r = ROOMS.darkGarage;
-    // The floor is bare, oil-stained concrete, and the whole room is kept
-    // clear down the middle so the car can run the length of it into the exit.
+    // The floor is one bare, unbroken slab of concrete: no stains, no patches,
+    // nothing on it to catch the eye, and the whole room is kept clear down the
+    // middle so the car can run the length of it into the exit. It is the same
+    // cement the city's garage floor is, so both worlds' garages read alike.
     flat(g, r.x1 - r.x0 - 2, r.z1 - r.z0 - 2, (r.x0 + r.x1) / 2, 0.02, (r.z0 + r.z1) / 2, MAT.concrete);
-    for (let i = 0; i < 5; i++) {
-      flat(g, 6 + i * 3, 4 + (i % 2) * 3, -78 + i * 5, 0.04, 62 + (i % 3) * 9, MAT.rubber, false);
-    }
     // The workbenches, hard against the north and south walls.
     const g1 = unit(g, 'bench', -58, 88.5);
     box(g1, 14, 3, 4, 0, 1.5, 0, MAT.woodDark);
     box(g1, 15, 0.6, 5, 0, 3.3, 0, MAT.woodPale, false);
     jiggle(g1, 4);
+    // The workbench runs along the SOUTH wall, so the straight lane west along
+    // z=72 from the kitchen doorway to the roller door stays clear.
     buildWorkbench(g, -66, 52);
     // ---- The beckoning light ------------------------------------------------
     // A clamp lamp on a tripod at the BACK of the garage, aimed at the wall. It
@@ -1833,27 +2180,14 @@ export async function addHouse(parent, opts = {}) {
   // bedrooms, and the room you are in for a good part of any run to the door.
   {
     const r = ROOMS.hall;
-    // Coat hooks and a bench in the mudroom at the north end.
+    // Coat hooks in the mudroom at the north end.
     box(g, 0.6, 0.6, 14, r.x0 + 0.9, 14, 38, MAT.wood, false);
     for (let i = 0; i < 5; i++) {
       const hk = box(g, 1.4, 11, 3, r.x0 + 1.8, 9, 32 + i * 3, [MAT.quilt, MAT.sofa, MAT.cushion, MAT.quilt2, MAT.paper][i], false);
       jiggle(hk, 2);
     }
-    const ht = table(g, 22, 36, 20, 10, 2.6, 0, MAT.woodPale);
-    jiggle(ht, 4.2);
-    for (const s of [-1, 1]) {
-      const hb = box(g, 3, 4, 1, 22 + s * 7, 2, 36, MAT.wood, false);
-      jiggle(hb, 1.6);
-    }
-    // Shoe rack and a console table further down. The console is authored 7
-    // wide by 26 deep and stands against the hall's east wall at x=52, so ry
-    // stays 0 — rotating it put the 26 straight through that wall. It is at
-    // x=44 rather than 45.5 because that wall's face is at 50.5 and the car
-    // needs 3.7 of clear floor off the centre line to get through the bathroom
-    // doorway beside it.
-    for (let s = 0; s < 2; s++) box(g, 5, 0.5, 20, r.x0 + 2.5, 2 + s * 4.5, 6, MAT.woodPale, false);
-    const hct = table(g, 44, 10, 7, 26, 3.2, 0, MAT.wood);
-    jiggle(hct, 4);
+    // The old shoe rack here was two thin boards floating in mid-air with no
+    // uprights; it read as a glitch, so it is gone.
     const hp1 = pottedPlant(g, 45.5, -4, 1.1);
     jiggle(hp1, 1.5);
     const hp2 = pottedPlant(g, 14, 38, 1.0);
@@ -1861,9 +2195,14 @@ export async function addHouse(parent, opts = {}) {
     // A big painting on the hall's east wall, and a runner rug.
     vert(g, 20, 15, r.x1 - 0.4, 15, 24, -Math.PI / 2, MAT.quilt2);
     rug(g, 22, 6, 26, 20, MAT.rugHall);
-    ceilingLight(g, lights, 28, 38, 7, 26, 52);
-    ceilingLight(g, lights, 28, 12, 7, 24, 50);
-    ceilingLight(g, lights, 28, -12, 6, 22, 44);
+    // A big grandfather clock standing against the hall's east wall, north of the
+    // painting and clear of the bathroom's push door (z 4..16) and the bed2
+    // doorway. Deliberately CHUNKY: a fat moulded plinth, a waist with a glazed
+    // door over the swinging golden pendulum, and a hooded dial whose hands
+    // track the real time of day.
+    const gc = buildGrandfatherClock(g, r.x1 - 3.7, 38);
+    clock = gc;
+    jiggle(gc.group, 2.4);
   }
   await phase(1, 'the house');
 
@@ -1876,8 +2215,19 @@ export async function addHouse(parent, opts = {}) {
   //
   // Only meshes built here are tagged, and only within this group, so the car,
   // the cat and anything else parented to the house root is never a candidate.
+  //
+  // EXCEPT the play train and the Hot Wheels track. Everything else in the
+  // house is allowed to go see-through when the chase cam would otherwise be
+  // behind it, but these two are solid toys the player wants to watch: the
+  // train chugging along the floor, and the orange track threading the whole
+  // route. A track that faded like a wall read as a bug — it looked like it was
+  // going transparent and blinking out of existence mid-run — so its meshes are
+  // collected first and skipped by the tagging sweep, exactly like the train.
+  const fadeExempt = new Set();
+  if (playTrain) playTrain.group.traverse((o) => { if (o.isMesh) fadeExempt.add(o); });
+  if (hotwheels) hotwheels.group.traverse((o) => { if (o.isMesh) fadeExempt.add(o); });
   g.traverse((o) => {
-    if (o.isMesh) o.userData.houseOccluder = true;
+    if (o.isMesh && !fadeExempt.has(o)) o.userData.houseOccluder = true;
   });
   if (typeof window !== 'undefined') window.__HOUSE_SURFACES = window.__HOUSE_SURFACES || [];
 
@@ -1896,6 +2246,28 @@ export async function addHouse(parent, opts = {}) {
     // The fire: the ash trigger box and the flicker, which needs the clock.
     hearth: FIREPLACE.hearth,
     fireplace,
+    // The hall grandfather clock: { group, update(elapsed) }. Its hands read
+    // the real time of day and its golden pendulum swings.
+    clock,
+    // The playroom Lego box's spill controller: { tub, bricks, done }.
+    legoSpill,
+    // The playroom Hot Wheels track: { group, nodes, track } or null. main.js
+    // captures the car onto `track` when it drives at the rails.
+    hotwheels,
+    // The playroom's animated toy train (the real locomotive on its little
+    // circular track). main.js advances it each house frame.
+    playTrain,
+    // The xylophone's bars as world (x, z) + pitch, for the drive-over chime.
+    playXylophone,
+    // The Jack-in-the-box handle: touch() to start its gag, update() each house
+    // frame. See playroom.js makeJackInTheBox / jack.mjs.
+    jackInTheBox,
+    // The playroom terrarium handle: update(delta, x, z) each house frame to idle
+    // the lizard's tail and turn its head toward the car. See makeTerrarium.
+    terrarium,
+    // The bathroom's push door; main.js needs the car's position each frame so
+    // it knows which way the leaf is being pushed.
+    bathroomDoor,
     surfaces: (typeof window !== 'undefined' && window.__HOUSE_SURFACES) || [],
   };
 }

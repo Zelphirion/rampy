@@ -190,7 +190,9 @@ const edgeMat = layeredMaterial({ color: 0xf2f4f7 }, LAYER.roadEdge);
 // Every stripe on every road is the same white paint. No yellow anywhere: a
 // yellow centre line reads as "temporary works" in a town that is finished.
 const laneMat = layeredMaterial({ color: 0xf4f6f8 }, LAYER.lane);
-const driveMat = layeredMaterial({ color: 0x2a2e34 }, LAYER.driveway);
+// Driveways are cement, not tarmac: the same 0x9b9c96 as the garage floors they
+// come off, so a drive reads as part of the house rather than as a stub of road.
+const driveMat = layeredMaterial({ color: 0x9b9c96 }, LAYER.driveway);
 
 export function roadRect(id) {
   const r = ROADS.find((q) => q.id === id);

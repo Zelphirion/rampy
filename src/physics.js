@@ -28,6 +28,11 @@ export function addKnockable(group, radius, opts = {}) {
     radius,
     mode: opts.mode || 'fall',
     smashOnlyBy: opts.smashOnlyBy || null,
+    // Dormant props are skipped by knockAt (the car cannot trip them directly).
+    // They wait for an explicit triggerKnockable() call instead — used to stage
+    // a delayed collapse, e.g. the Lego tub: the box topples first, THEN the
+    // dormant pile inside is released.
+    dormant: opts.dormant || false,
     state: 'standing',           // standing | falling | fallen | wobbling | sliding | rocking | waitingDrop
     dropWait: 0,
     t: 0,
@@ -597,6 +602,21 @@ function startFall(k, d, speedFactor = 1) {
   }
 }
 
+// Release a standing (often dormant) prop on cue, ignoring the proximity test
+// that normally arms it. Used to stage a delayed collapse: the Lego tub topples
+// first, then its pile is released in the tub's fall direction. Anything linked
+// goes with it. `dir` is optional; it defaults to the prop's last pushDir.
+export function triggerKnockable(k, dir) {
+  if (!k || k.state !== 'standing') return false;
+  const d = dir ? dir.clone() : k.pushDir.clone();
+  d.y = 0;
+  if (d.lengthSq() < 1e-4) d.set(1, 0, 0);
+  d.normalize();
+  startFall(k, d, 1);
+  if (k.linked) for (const lk of k.linked) if (lk.state === 'standing') startFall(lk, d, 1);
+  return true;
+}
+
 // Knock over every standing prop whose base is within `radius` of `point`,
 // tipping it away from the impact point. When `worldSizeX` / `worldSizeZ` are
 // given, the map wraps like a torus (with separate spans per axis, since the
@@ -616,6 +636,9 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0
     }
     // A prop that is already down (fallen or sliding) can still be hit ??? it
     // gets shoved along the ground, exactly like knocking a traffic car.
+    // A dormant prop ignores proximity entirely: it is released on cue (see
+    // triggerKnockable) rather than by the car brushing it.
+    if (k.dormant) continue;
     const lying = k.state === 'fallen' || k.state === 'sliding';
     if (k.state !== 'standing' && !lying) continue;
     // Measure from the prop's CURRENT WORLD spot (a shoved prop has moved

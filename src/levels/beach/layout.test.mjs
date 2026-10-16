@@ -6,8 +6,10 @@ import {
   BEACH_START, BEACH_SHELL, BEACH_SAND_Y, BEACH_SEA_Y, BEACH_SHORE_Z,
   BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_CLIFF_Z, BEACH_HALF_W, BEACH_BASIN_Y,
   BEACH_PALMS, BEACH_ROCKS, BEACH_REEFS, clamp01, courseInset, CLIFF_REACH,
-  PERSON_H, ANIMAL_SCALE, animalSize,
-} from './layout.js?v=1791600000000';
+  PERSON_H, ANIMAL_SCALE, animalSize, BEACH_TRENCH_Y, BEACH_DEEP_FLOOR_Z,
+  BEACH_MERMAID_CASTLE, MERMAID_CASTLE_SCALE, BEACH_SHIPWRECK, SHIPWRECK_SCALE,
+  BEACH_DEEP_Z,
+} from './layout.js?v=1800000000000';
 import { rectCircleIntersect } from '../../modules/world.js';
 
 const inRange = (v, lo, hi) => v >= lo && v <= hi;
@@ -28,14 +30,15 @@ test('you are let off between the cliffs and the water, on dry sand, facing the 
 
 test('the sand is continuous under the wheels - no cliff anywhere on a driving line', () => {
   // Walk everywhere the car can actually get to, at a resolution finer than a
-  // wheel, on several lines across the cove, and reject any step big enough to
-  // stop the car dead. The scan stops at the drop-off rim because that is a
-  // collider, not ground: past it the car is never going.
+  // wheel, on several lines across the cove AND down the drop-off into the deep,
+  // and reject any step big enough to stop the car dead. The drop-off is now a
+  // drivable ramp rather than a wall, so the scan runs all the way to the far end
+  // of the deep - the wreck and the mermaids' castle both lie on this line.
   let worst = 0;
   let worstAt = null;
   for (const x of [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50]) {
     let prev = beachGroundOffsetAt(x, BEACH_CLIFF_Z + 6);
-    for (let z = BEACH_CLIFF_Z + 6; z >= BEACH_RIM_Z; z -= 0.25) {
+    for (let z = BEACH_CLIFF_Z + 6; z >= BEACH_DEEP_Z; z -= 0.25) {
       const y = beachGroundOffsetAt(x, z);
       const step = Math.abs(y - prev) / 0.25;
       if (step > worst) { worst = step; worstAt = `x=${x} z=${z.toFixed(2)}`; }
@@ -43,10 +46,6 @@ test('the sand is continuous under the wheels - no cliff anywhere on a driving l
     }
   }
   assert.ok(worst < 1.6, `steepest drivable slope ${worst.toFixed(2)} at ${worstAt}`);
-
-  // ...and the rim itself IS steep, which is the point of it.
-  const lip = Math.abs(beachGroundOffsetAt(0, BEACH_RIM_Z - 1) - beachGroundOffsetAt(0, BEACH_RIM_Z));
-  assert.ok(lip > 3, `the drop-off lip is a real cliff (${lip.toFixed(2)} in one unit)`);
 });
 
 test('the profile runs sand -> sea -> basin -> drop-off -> trench, once and in order', () => {
@@ -64,17 +63,42 @@ test('the profile runs sand -> sea -> basin -> drop-off -> trench, once and in o
   assert.ok(at(BEACH_TRENCH_Z) < at(BEACH_RIM_Z) - 10, 'past the rim it plunges');
 });
 
-test('the drop-off is a wall, not just a slope - the car cannot leave the basin', () => {
+test('the drop-off is a drivable slope, and the deep is closed off around it', () => {
   const cs = beachColliders();
+  // There is NO wall on the drop-off lip any more: the car drives over it.
   const rim = cs.find((c) => c.halfW !== undefined && Math.abs(c.z - BEACH_RIM_Z) < 0.5);
-  assert.ok(rim, 'there is a collider standing on the drop-off rim');
-  assert.ok(rim.noRoof, 'the rim is a barrier, so it must not report a rooftop');
-  // It has to span the whole cove, or you could squeeze out beside it.
-  assert.ok(rim.halfW >= BEACH_HALF_W, `the rim spans the cove (halfW ${rim.halfW})`);
-  // And the sand outside the rim really is far below the rim, so the wall is
-  // not hiding a ramp that could be driven around.
-  assert.ok(beachGroundOffsetAt(0, BEACH_RIM_Z - 3) < beachGroundOffsetAt(0, BEACH_RIM_Z) - 3,
-    'the ground falls away immediately past the rim');
+  assert.equal(rim, undefined, 'nothing walls off the drop-off lip');
+  // ...and the grade over the drop-off is gentle enough to drive.
+  const grade = Math.abs(beachGroundOffsetAt(0, BEACH_RIM_Z) - beachGroundOffsetAt(0, BEACH_TRENCH_Z)) /
+    (BEACH_RIM_Z - BEACH_TRENCH_Z);
+  assert.ok(grade < 1.2, `the drop-off grade is drivable (${grade.toFixed(2)})`);
+  // The deep run is closed at its far end, past the wreck and the castle.
+  const far = cs.find((c) => c.halfW !== undefined && Math.abs(c.z - BEACH_DEEP_Z) < 0.5);
+  assert.ok(far, 'there is a wall at the far end of the deep');
+  assert.ok(far.halfW >= BEACH_HALF_W, 'it spans the deep channel');
+  assert.ok(far.noRoof, 'the far wall is a barrier');
+  // ...and along both flanks, so the car cannot drive off the edge of the sand.
+  for (const sx of [1, -1]) {
+    const flank = cs.find((c) => c.halfW !== undefined && Math.sign(c.x) === sx &&
+      Math.abs(Math.abs(c.x) - (BEACH_HALF_W + 8)) < 0.5);
+    assert.ok(flank, `there is a wall down the ${sx > 0 ? 'east' : 'west'} flank of the deep`);
+    assert.ok(flank.noRoof, 'the flank wall is a barrier');
+  }
+});
+
+test('the car can drive from the basin out to the wreck and the mermaids\' castle', () => {
+  const cs = beachColliders();
+  const CAR = 2.2;
+  const sx = 6, sz = BEACH_RIM_Z + 10;   // a spot in the basin, past the reefs
+  for (const target of [BEACH_SHIPWRECK, BEACH_MERMAID_CASTLE]) {
+    const label = target === BEACH_SHIPWRECK ? 'the wreck' : 'the castle';
+    for (let t = 0.1; t <= 1; t += 0.01) {
+      const x = sx + (target.x - sx) * t;
+      const z = sz + (target.z - sz) * t;
+      const hit = cs.find((c) => rectCircleIntersect(x, z, c, CAR));
+      assert.ok(!hit, `the drive out to ${label} is clear (blocked at ${x.toFixed(0)}, ${z.toFixed(0)})`);
+    }
+  }
 });
 
 test('every wall is noRoof, so none of them can be driven along the top of', () => {
@@ -351,4 +375,55 @@ test('every size animalSize is asked for resolves to a finite length', () => {
       assert.ok(Number.isFinite(animalSize(kind, i)), `${kind}[${i}] resolves`);
     }
   }
+});
+
+test('the mermaids\' castle is out past the mermaids, off to the side, and unreachable', () => {
+  const C = BEACH_MERMAID_CASTLE;
+  // Off to the side: well clear of the mermaids' patrol, which never leaves
+  // x = +-15, so a large |x| is the whole point.
+  assert.ok(Math.abs(C.x) > 20, `the castle is off to the side (x=${C.x})`);
+  // Out PAST them: seaward of the drop-off's lip, in water the rim collider
+  // keeps the car out of.
+  assert.ok(C.z < BEACH_RIM_Z, 'the castle is seaward of the drop-off lip');
+  assert.ok(C.z < BEACH_TRENCH_Z, 'the castle is out on the trench floor, past the drop-off face');
+  // It stands on the sea floor, not in mid-water: at the trench depth.
+  const floor = beachGroundOffsetAt(C.x, C.z);
+  assert.ok(floor <= BEACH_TRENCH_Y + 0.5, `the castle sits on the trench floor (got ${floor.toFixed(2)})`);
+  assert.ok(floor < BEACH_SEA_Y, 'the castle is underwater');
+  // Giant: taller than the whole drivable sand castle.
+  assert.ok(MERMAID_CASTLE_SCALE > 1.2, 'the mermaid castle is giant');
+});
+
+test('the seafloor is built out under and past the mermaids\' castle', () => {
+  // The floor has to extend at least to the castle (so it does not float over
+  // the abyss) and past it, all the way out to BEACH_DEEP_FLOOR_Z.
+  assert.ok(BEACH_DEEP_FLOOR_Z < BEACH_TRENCH_Z, 'the deep floor is seaward of the trench lip');
+  assert.ok(BEACH_DEEP_FLOOR_Z < BEACH_MERMAID_CASTLE.z, 'the deep floor runs out past the castle');
+  // Walk the whole span the floor now covers and check it is real, flat ground
+  // (never NaN, never above the trench datum) rather than a hole.
+  for (let z = BEACH_TRENCH_Z; z >= BEACH_DEEP_FLOOR_Z; z -= 2) {
+    const y = beachGroundOffsetAt(BEACH_MERMAID_CASTLE.x, z);
+    assert.ok(Number.isFinite(y), `the floor at z=${z} is real`);
+    assert.ok(y <= BEACH_TRENCH_Y + 1, `the floor at z=${z} stays at trench depth`);
+  }
+});
+
+test('the wreck is a huge broken ship, out past the drop-off, beside the castle', () => {
+  const W = BEACH_SHIPWRECK;
+  // Out PAST the drop-off, in water the rim collider keeps the car out of.
+  assert.ok(W.z < BEACH_RIM_Z, 'the wreck is seaward of the drop-off lip');
+  assert.ok(W.z < BEACH_TRENCH_Z, 'the wreck is out on the trench floor, past the drop-off face');
+  // It rests on the sea floor, not floating in mid-water.
+  const floor = beachGroundOffsetAt(W.x, W.z);
+  assert.ok(floor <= BEACH_TRENCH_Y + 0.5, `the wreck sits on the trench floor (got ${floor.toFixed(2)})`);
+  assert.ok(floor < BEACH_SEA_Y, 'the wreck is underwater');
+  // Near the mermaids' castle, so the two drowned landmarks read together.
+  const d = Math.hypot(W.x - BEACH_MERMAID_CASTLE.x, W.z - BEACH_MERMAID_CASTLE.z);
+  assert.ok(d < 120, `the wreck is near the pink castle (got ${d.toFixed(1)})`);
+  // Heeled right over, not standing up like a moored ship.
+  assert.ok(Math.abs(W.heel) > 0.5 && Math.abs(W.heel) < 1.4, `the wreck is heeled over (${W.heel})`);
+  assert.ok(SHIPWRECK_SCALE > 0, 'the wreck has a real size');
+  // Its footprint stays inside the built sea floor in x, so it does not float off
+  // the edge of the sand.
+  assert.ok(Math.abs(W.x) < BEACH_HALF_W, 'the wreck is within the sand grid');
 });

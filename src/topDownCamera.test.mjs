@@ -382,6 +382,7 @@ test('cutscenes still win over the plan view', () => {
   assert.ok(topdown > 0, 'cannot find the top-down camera branch in updateCamera');
   for (const marker of [
     'if (expressState.active || expressCinT > 0) {',
+    'if (rocketRide.active) {',
     'if (chamberCine.active) {',
     'if (spiralCine.active) {',
     'if (tunnelAscentCine.active) {',
@@ -399,3 +400,123 @@ test('cutscenes still win over the plan view', () => {
   assert.match(branch, /return;\s+\/\/ the plan view owns the frame/,
     'the top-down branch does not return — the chase cam will fight it');
 });
+
+test('C cycles through three views: chase, plan, cinematic', () => {
+  // The cycle lives in the same C-key entry point the tests above anchor on.
+  const fn = src.slice(src.indexOf('function toggleTopDownCamera()'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /cineCam\.active = true/,
+    'the cycle never enters the cinematic tripod');
+  assert.match(body, /cineCam\.active = false/,
+    'the cycle never leaves the cinematic tripod');
+  assert.match(body, /cinePickSpot\(\)/,
+    'entering the tripod never picks a vantage');
+
+  // The cinematic branch belongs to updateCamera, placed after the plan view so
+  // the plan view (and every cutscene before it) still wins the frame.
+  const upCam = src.indexOf('function updateCamera');
+  const cineAt = src.indexOf('// ===== Cinematic camera (the C key\'s third view) =====', upCam);
+  assert.ok(cineAt > 0, 'cannot find the cinematic camera branch in updateCamera');
+  const planAt = src.indexOf('===== Top-down camera (C key) =====', upCam);
+  assert.ok(cineAt > planAt,
+    'the cinematic branch is not after the plan view, so the plan view cannot win');
+  const cineBranch = src.slice(cineAt, src.indexOf('// ===== Chase-cam handoff', cineAt));
+  assert.match(cineBranch, /return;\s+\/\/ the tripod owns the frame/,
+    'the tripod branch does not return — the chase cam will fight it');
+  assert.match(cineBranch, /CINE_REPICK_AFTER/,
+    'an occluded car never re-picks a fresh vantage');
+
+  // In the wheel station the race rig must stand down for the plan / tripod
+  // views, or both would be dead keys up there (they ARE the reason C exists).
+  assert.match(src, /if \(worldState === 'space' && !topDown\.active && !cineCam\.active\) \{/,
+    'the space chase rig still runs over the plan view or the tripod');
+});
+
+test('the wheel allows a deeper space zoom-out than the chase cap', () => {
+  const camMax = Number(src.match(/const CAM_ZOOM_MAX = ([\d.]+)/)[1]);
+  const spaceMax = Number(src.match(/const SPACE_CAM_ZOOM_MAX = ([\d.]+)/)[1]);
+  assert.ok(spaceMax > camMax,
+    `space max (${spaceMax}) is not past the chase cap (${camMax}) — ` +
+    'the whole station cannot come into frame');
+  // The scroll wheel and the two-finger pinch share the chase clamp; both need
+  // the wider ceiling in space.
+  const wheelAt3 = src.indexOf("addEventListener('wheel'");
+  const wheel3 = src.slice(wheelAt3, src.indexOf('});', wheelAt3));
+  assert.match(wheel3, /worldState === 'space' \? SPACE_CAM_ZOOM_MAX : CAM_ZOOM_MAX/,
+    'the scroll wheel does not use the wider space zoom cap');
+  const pinchAt2 = src.indexOf('pinchStartRadius * factor, TOPDOWN_ZOOM_MIN, TOPDOWN_ZOOM_MAX');
+  assert.match(src.slice(pinchAt2), /SPACE_CAM_ZOOM_MAX/,
+    'pinch-to-zoom does not use the wider space zoom cap');
+  // The pad twin of the wheel must agree.
+  assert.match(src, /worldState === 'space' \? SPACE_CAM_ZOOM_MAX : CAM_ZOOM_MAX/);
+});
+
+test('the cinematic tripod is kept inside the level, except in space', () => {
+  // The tripod must not plant itself outside the playable world: in the city
+  // and ramp worlds the scenery simply stops at the map edge, so an unbounded
+  // spot reads as a shot out over the void. Space is the one exception — the
+  // wheel floats alone in it, so the lens may roam freely out there.
+  const start = src.indexOf('function cinePickSpot()');
+  assert.ok(start > 0, 'cannot find cinePickSpot');
+  const body = src.slice(start, src.indexOf('// Hole-fall cinematic:', start));
+  assert.match(body, /cineBounds\(/,
+    'cinePickSpot never consults the level bounds');
+  assert.match(body, /continue;/,
+    'an out-of-bounds candidate is not skipped');
+  // The bounds themselves: null in space, HOUSE for the house, SLAB_BOUNDS for
+  // the underground, and the wrapping world rect for city / ramp / beach.
+  const bf = src.slice(src.indexOf('function cineBounds('));
+  const gb = bf.slice(0, bf.indexOf('\n}'));
+  assert.match(gb, /worldState === 'space'\) return null/,
+    'space is not left unbounded — the lens must stay free to roam the void');
+  assert.match(gb, /HOUSE\.minX/, 'the house bounds are not used');
+  assert.match(gb, /SLAB_BOUNDS\.minX/, 'the underground bounds are not used');
+  assert.match(gb, /out\.x0 = worldXLo; out\.x1 = worldXHi/,
+    'the wrapping worlds do not fall back to the world rect');
+  // The high-and-back fallback must also stay in bounds.
+  assert.match(body, /MathUtils\.clamp\(cx, b\.x0, b\.x1\)/,
+    'the fallback tripod can still land outside the level');
+});
+
+test('the arrival rocket holds one steady speed the whole flyby', () => {
+  // The pass used to ease: it CRAWLED through the stretch beside the camera and
+  // then sprinted into the dock. The ship now advances linearly with the transit
+  // clock, so it never slows (or speeds) anywhere — the pass reads exactly like
+  // the rest of the run.
+  const fn = src.slice(src.indexOf('function spaceArrivalU('));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /return spaceClamp\(s, 0, 1\)/,
+    'the arrival still eases the rocket instead of running at one speed');
+  assert.doesNotMatch(src, /SPACE_ARRIVAL_EASE/,
+    'the old eased time -> path table is still present');
+});
+
+test('the cinematic tripod counts terrain as a blocker, and gives up after a second', () => {
+  // Ground is not in activeColliders(): the ramp hills, the city's portal hill
+  // and the beach banks are meshes. A sight test that only swept colliders would
+  // stare straight through a hillside, so it has to sweep BOTH.
+  const los = src.slice(src.indexOf('function cineHasLineOfSight('));
+  const losBody = los.slice(0, los.indexOf('\n}'));
+  assert.match(losBody, /cineColliderBlocks\(/,
+    'the sight test no longer sweeps solid props');
+  assert.match(losBody, /cineTerrainBlocks\(/,
+    'the sight test does not sweep the terrain, so hills can hide the car');
+  // The terrain sweep samples the real ground function, and stands down in space.
+  const tb = src.slice(src.indexOf('function cineTerrainBlocks('));
+  const tbBody = tb.slice(0, tb.indexOf('\n}'));
+  assert.match(tbBody, /worldFloorAt\(/, 'the terrain sweep never samples the ground');
+  assert.match(tbBody, /worldState === 'space'\) return false/,
+    'the terrain sweep runs in space, where there is nothing to duck behind');
+
+  // The first placement must have a clear view, so the pick uses the same test.
+  const pick = src.slice(src.indexOf('function cinePickSpot()'));
+  const pickBody = pick.slice(0, pick.indexOf('\nfunction fallbackCineSpot'));
+  assert.match(pickBody, /cineHasLineOfSight\(/,
+    'cinePickSpot can place a tripod with the car already hidden');
+
+  // A brief duck-behind is fine; more than a second of not seeing the car hops.
+  const repick = Number(src.match(/CINE_REPICK_AFTER = ([\d.]+)/)[1]);
+  assert.ok(repick >= 1.0, `hidden tolerance is ${repick}s, under the asked-for second`);
+});
+
+

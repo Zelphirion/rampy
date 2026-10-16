@@ -1,12 +1,13 @@
 // Loads the REAL house builder headless, with the CDN three swapped for the
 // local stub.
 //
-// Two files have to be rewritten, not one. `index.js` pulls three off the CDN
-// itself, but it also imports `addKnockable` from `../../physics.js`, and
-// physics.js pulls three off the CDN too. Patching only the builder therefore
-// got as far as Node's ESM loader rejecting the `https:` specifier inside
-// physics.js - ERR_UNSUPPORTED_ESM_URL_SCHEME - and all three build tests died on
-// an import error rather than on anything about the house.
+// Several files have to be rewritten, not one. `index.js` pulls three off the
+// CDN itself, but it also imports `addKnockable` from `../../physics.js` and the
+// shared kit from `../../kitchen.js`, both of which pull three off the CDN too.
+// Patching only the builder therefore got as far as Node's ESM loader rejecting
+// the `https:` specifier inside physics.js - ERR_UNSUPPORTED_ESM_URL_SCHEME - and
+// all three build tests died on an import error rather than on anything about
+// the house.
 //
 // So this rewrites physics.js first, into a scratch file sitting in ITS OWN
 // directory (its `./modules/...` imports only resolve from there), and then
@@ -24,6 +25,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { register } from 'node:module';
+
+// Point every CDN three.js import at the house stub before anything is loaded.
+// The playroom reuses the real locomotive (train.js) and ship (spaceport.js),
+// whose own imports reach for the CDN; the hook catches all of them, so the
+// builder's transitive graph loads headless.
+register('./threeShim.mjs', import.meta.url);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(here, '..', '..');   // src/
@@ -45,13 +53,20 @@ assert.ok(!/https:\/\/cdn/.test(physicsSrc), 'the CDN three import was not swapp
 // physics needs to climb back out of src/ and back down into levels/house/.
 const physicsHere = scratch(SRC, 'physics', physicsSrc.replace(STUB, "import * as THREE from './levels/house/three-stub.mjs';"));
 
-// 2. the builder, in its own directory so ./layout.js still resolves. The import
+// 2. the shared kitchen kit, in its own directory so ./three-stub.mjs resolves.
+const kitchenSrc = fs.readFileSync(path.join(SRC, 'kitchen.js'), 'utf8').replace(CDN_THREE, STUB);
+assert.ok(!/https:\/\/cdn/.test(kitchenSrc), 'the CDN three import was not swapped out of kitchen.js');
+const kitchenHere = scratch(here, 'kitchen', kitchenSrc);
+const kitchenUrl = pathToFileURL(kitchenHere).href;
+
+// 3. the builder, in its own directory so ./layout.js still resolves. The import
 // specifier has to be a URL, not a Windows path - "C:/..." parses as a URL with
 // the scheme "c:" and the loader rejects it.
 const physicsUrl = pathToFileURL(physicsHere).href;
 const builderSrc = fs.readFileSync(path.join(here, 'index.js'), 'utf8')
   .replace(CDN_THREE, STUB)
-  .replace(/(['"])\.\.\/\.\.\/physics\.js\1/, `'${physicsUrl}'`);
+  .replace(/(['"])\.\.\/\.\.\/kitchen\.js[^'"]*\1/, `'${kitchenUrl}'`)
+  .replace(/(['"])\.\.\/\.\.\/physics\.js[^'"]*\1/, `'${physicsUrl}'`);
 assert.ok(!/https:\/\/cdn/.test(builderSrc), 'the CDN three import was not swapped out of index.js');
 assert.ok(!/\.\.\/\.\.\/physics\.js/.test(builderSrc),
   'the builder still imports the real physics.js, which reaches the CDN');

@@ -2,9 +2,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import {
   BEACH_HALF_W, BEACH_SEA_Y, BEACH_SHORE_Z, BEACH_RIM_Z, BEACH_BASIN_Y,
   BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_SHELF_Z0, BEACH_SHELF_Z1,
-  BEACH_ROCKS, beachGroundOffsetAt, clamp01, cliffHash,
+  BEACH_ROCKS, BEACH_MERMAID_CASTLE, beachGroundOffsetAt, clamp01, cliffHash,
   PERSON_H, animalSize,
-} from './layout.js?v=1791600000000';
+} from './layout.js?v=1800000000000';
 
 // ===== The wildlife =====
 //
@@ -826,6 +826,95 @@ export function makeMermaid(tailHex, finHex, hairHex) {
   return { group: g, tail, roll, pitch };
 }
 
+// ===== The mermaid who visits the castle =====
+//
+// One of the two mermaids keeps her patrol. The other, every so often, leaves
+// the loop and swims the whole way out to the mermaids' castle, circles it for
+// a while and then swims back to the exact point she left - so there is always
+// one mermaid somewhere on patrol and, now and then, one down at the castle.
+//
+// The trip is three phases off one timer: in (a straight swim to the point on
+// the circle she will orbit through), linger (circling the castle) and out
+// (home again). She is handed back to her patrol point at the end rather than
+// to the loop's live angle, so the loop resumes with no visible jump.
+// The corner turrets stand (WALL_HALF * sqrt(2) + TOWER_R) * MERMAID_CASTLE_SCALE
+// from the centre - about 21 - so the circle has to be wider than that or she
+// sweeps straight through a tower.
+const CASTLE_VISIT_R = 24;    // radius she circles the castle on; clears the turrets
+const CASTLE_LINGER_T = 8;    // seconds circling the castle
+// Her swim out and back is timed from the real distance at a steady speed, so
+// the long crossing to the castle (now far out in the deep) is a long, calm
+// swim rather than a streak. Clamped so it never becomes a wait or a blink.
+const CASTLE_SWIM_SPEED = 5;  // units per second
+const CASTLE_TRAVEL_MIN = 6;
+const CASTLE_TRAVEL_MAX = 70;
+const CASTLE_COOLDOWN = 42;   // seconds of patrol between visits
+const smooth01 = (u) => {
+  const x = Math.max(0, Math.min(1, u));
+  return x * x * (3 - 2 * x);
+};
+
+// The point she circles AROUND the castle, kept well above the walls so a
+// 7.5-tall mermaid never sweeps through the masonry: the walls top out at
+// BEACH_TRENCH_Y + (WALL_H * MERMAID_CASTLE_SCALE) and the keep is taller still,
+// so she rides just over the curtain wall, in the gap under the turret crowns.
+function beginCastleExcursion(s) {
+  const pos = s.m.group.position;
+  const cx = BEACH_MERMAID_CASTLE.x;
+  const cz = BEACH_MERMAID_CASTLE.z;
+  const hoverY = BEACH_TRENCH_Y + 14;
+  const orbit = Math.atan2(pos.z - cz, pos.x - cx);
+  const start = {
+    x: cx + Math.cos(orbit) * CASTLE_VISIT_R,
+    y: hoverY,
+    z: cz + Math.sin(orbit) * CASTLE_VISIT_R,
+  };
+  const dist = Math.hypot(start.x - pos.x, start.z - pos.z);
+  const travel = Math.min(CASTLE_TRAVEL_MAX, Math.max(CASTLE_TRAVEL_MIN, dist / CASTLE_SWIM_SPEED));
+  s.excursion = {
+    phase: 'in',
+    t: 0,
+    orbit,
+    travel,
+    home: { x: pos.x, y: pos.y, z: pos.z },
+    start,
+    exit: null,
+  };
+}
+
+function updateCastleExcursion(s, delta, t) {
+  const ex = s.excursion;
+  ex.t += delta;
+  const pos = s.m.group.position;
+  if (ex.phase === 'in') {
+    const k = smooth01(ex.t / ex.travel);
+    pos.x = lerp(ex.home.x, ex.start.x, k);
+    pos.y = lerp(ex.home.y, ex.start.y, k);
+    pos.z = lerp(ex.home.z, ex.start.z, k);
+    if (ex.t >= ex.travel) { ex.phase = 'linger'; ex.t = 0; }
+  } else if (ex.phase === 'linger') {
+    ex.orbit += delta * 0.5;
+    pos.x = BEACH_MERMAID_CASTLE.x + Math.cos(ex.orbit) * CASTLE_VISIT_R;
+    pos.z = BEACH_MERMAID_CASTLE.z + Math.sin(ex.orbit) * CASTLE_VISIT_R;
+    pos.y = ex.start.y + Math.sin(t * 0.5) * 0.8;
+    if (ex.t >= CASTLE_LINGER_T) {
+      ex.phase = 'out';
+      ex.t = 0;
+      ex.exit = { x: pos.x, y: pos.y, z: pos.z };
+    }
+  } else {
+    const k = smooth01(ex.t / ex.travel);
+    pos.x = lerp(ex.exit.x, ex.home.x, k);
+    pos.y = lerp(ex.exit.y, ex.home.y, k);
+    pos.z = lerp(ex.exit.z, ex.home.z, k);
+    if (ex.t >= ex.travel) {
+      pos.set(ex.home.x, ex.home.y, ex.home.z);
+      s.excursion = null;
+      s.cooldown = CASTLE_COOLDOWN;
+    }
+  }
+}
+
 // =====================================================================
 // Assembly
 // =====================================================================
@@ -950,6 +1039,12 @@ export function addBeachLife(parent, baseY = 0) {
       halfZ,
       y,
       speed: 0.1 + i * 0.045,
+      // One of the two is the explorer who leaves to visit the castle; the
+      // other keeps her loop. She starts on a short cooldown so the first visit
+      // happens soon enough to be seen, then a long one so the trip stays rare.
+      explorer: i === 0,
+      excursion: null,
+      cooldown: i === 0 ? 10 : Infinity,
     };
   });
 
@@ -985,14 +1080,23 @@ export function addBeachLife(parent, baseY = 0) {
       }
 
       // Each mermaid swims her long slow ellipse, rolling a little with each turn
-      // of the tail.
+      // of the tail - unless she is the explorer and her timer is up, in which
+      // case the excursion above is driving her position instead.
       for (const s of mermaidStates) {
-        s.angle += delta * s.speed;
         const prevX = s.m.group.position.x;
         const prevZ = s.m.group.position.z;
-        s.m.group.position.x = Math.cos(s.angle) * s.r;
-        s.m.group.position.z = s.zc + Math.sin(s.angle) * s.halfZ;
-        s.m.group.position.y = s.y + Math.sin(t * 0.5) * 0.7;
+        if (s.explorer && !s.excursion) {
+          s.cooldown -= delta;
+          if (s.cooldown <= 0) beginCastleExcursion(s);
+        }
+        if (s.excursion) {
+          updateCastleExcursion(s, delta, t);
+        } else {
+          s.angle += delta * s.speed;
+          s.m.group.position.x = Math.cos(s.angle) * s.r;
+          s.m.group.position.z = s.zc + Math.sin(s.angle) * s.halfZ;
+          s.m.group.position.y = s.y + Math.sin(t * 0.5) * 0.7;
+        }
         // Face along the direction she is ACTUALLY travelling, which is not the
         // direction of the loop - on an ellipse those differ most at the ends of
         // the short axis, and using the loop's own angle points her sideways

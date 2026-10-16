@@ -158,5 +158,5 @@ test('no mojibake or lost characters anywhere in the source tree', () => {
 test('the module is valid ESM syntax', async () => {
   // Cheap guard that the file has not been left half-edited.
   assert.match(SRC, /^import \* as THREE from 'https:/m, 'the THREE import is missing');
-  assert.match(SRC, /^import \{[^}]+\} from '\.\/layout\.js';$/m, 'the layout import is missing');
+  assert.match(SRC, /^import \{[^}]+\} from '\.\/layout\.js(?:\?[^']*)?';$/m, 'the layout import is missing');
 });

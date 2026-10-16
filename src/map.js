@@ -7,7 +7,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // runs whichever copy this unstamped URL happens to have cached. That is how the
 // brown bay kept refusing to send you into the house: the trigger was still the
 // grey garage's, from before the roles were swapped, and that door is now shut.
-import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1791700000000';
+import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000003';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
 import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
 

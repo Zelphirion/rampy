@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from '../../physics.js';
+import { addKnockable } from '../../physics.js?v=1800000000002';
 import { tirePyramidSlots, tirePyramidSupports } from '../../modules/tireStack.js';
 
 // Ramp-world safe playable band: extend a little beyond the visible edge so

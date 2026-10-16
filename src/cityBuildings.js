@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { nearestRoadDistance } from './cityRoads.js';
 import { outwardYaw } from './modules/heading.js';
-import { addKnockable } from './physics.js';
+import { addKnockable } from './physics.js?v=1800000000002';
 
 // ===== The City Buildings =====
 // The twelve landmark buildings that give the city its character, in place of
@@ -1757,9 +1757,9 @@ function houseWithGarage() {
   box(g, 0.5, 0.16, 0.3, gx, gDoorTop + 0.75, gFrontZ + 0.2, M.metalDark, false);
   sph(g, 0.13, gx, gDoorTop + 0.62, gFrontZ + 0.24, lampMatOf(), false);
 
-  // Painted apron and parking bay in front of the open door.
-  flatPanel(g, GW - 0.4, 4.2, gx, 0.03, D / 2 + 1.6, M.asphalt);
-  for (const s of [-1, 1]) flatPanel(g, 0.12, 3.6, gx + s * (GW / 2 - 0.6), 0.04, D / 2 + 1.6, M.paintWhite);
+  // Concrete apron in front of the door, in the same cement as the floor inside
+  // and unmarked, so nothing about the driveway reads as a different surface.
+  flatPanel(g, GW - 0.4, 4.2, gx, 0.03, D / 2 + 1.6, M.concrete);
   // House number by the door.
   panel(g, 0.5, 0.3, MAIN_X + 0.75, 1.8, D / 2 + 0.05, 0, M.signAmber);
 
@@ -1795,7 +1795,9 @@ function houseWithGarage() {
 // path and a picket-fenced lawn. The fence is low and its gate is left open.
 function houseStandard() {
   const g = new THREE.Group();
-  const W = 11, D = 10, BODY = 3.6;
+  // A big SQUARE footprint (11 x 11), matching the giant square of the world
+  // inside the front door. It used to be 11 wide by 10 deep.
+  const W = 11, D = 11, BODY = 3.6;
   // The garage here is a ROOM, not a door: an open bay in the front elevation
   // with a floor, a back wall and a ceiling that you drive into. GX/GW2/GH2
   // describe that opening. 5.5 wide is the most the 11-wide elevation gives up
@@ -1842,17 +1844,16 @@ function houseStandard() {
   gableRoof(gRoof, 5.8, 3.0, 1.2, 0.3, M.shingleWarm);
   gRoof.rotation.y = Math.PI / 2;
   g.add(gRoof);
-  // Driveway apron from the bay out to the kerb, with a bay line each side.
-  flatPanel(g, GW2 + 0.6, 4.4, GX, 0.03, D / 2 + 2.4, M.asphalt);
-  for (const s of [-1, 1]) flatPanel(g, 0.12, 4.0, GX + s * (GW2 / 2 - 0.3), 0.04, D / 2 + 2.4, M.paintWhite);
+  // Driveway apron from the bay out to the kerb, in the same cement as the bay
+  // floor and with no paint on it, so the two read as one continuous slab.
+  flatPanel(g, GW2 + 0.6, 4.4, GX, 0.03, D / 2 + 2.4, M.concrete);
   // A strip light over the mouth, so the bay reads as lit from the street.
   box(g, GW2 - 1.2, 0.16, 0.2, GX, GH2 - 0.2, gz1 - 0.35, lampMatOf(), false);
 
   // ---- The bay interior: a room, not a recess ----
-  // Concrete floor, a ceiling over the void, and a back wall you can see. The
-  // floor is deliberately a different material from the apron outside, because
-  // "paved" and "inside" reading the same is what makes a garage look like a
-  // hole cut in a wall.
+  // Concrete floor, a ceiling over the void, and a back wall you can see. Floor
+  // and apron outside are the same cement with no paint on either, so the bay
+  // is one unbroken slab running in from the kerb.
   flatPanel(g, GW2 - 0.5, gz1 - gz0 - 0.3, GX, 0.04, (gz0 + gz1) / 2, M.concrete);
   flatPanel(g, GW2 - 0.4, gz1 - gz0 - 0.2, GX, GH2 - 0.06, (gz0 + gz1) / 2, lampMatOf());
   // Painted band round the inside of the bay at bumper height.

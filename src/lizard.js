@@ -10,11 +10,36 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 
 // Flame materials — the body glows, the mane/tail/breath are unlit so they
 // pop against the night scene.
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0xd8482c, emissive: 0xff3c00, emissiveIntensity: 1.0, roughness: 0.55 });
-const bellyMat = new THREE.MeshStandardMaterial({ color: 0xff8c42, emissive: 0xff6a1f, emissiveIntensity: 0.7, roughness: 0.6 });
-const spikeMat = new THREE.MeshBasicMaterial({ color: 0xffb347 });   // flame mane / tail / breath
-const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffff88 });
-const clawMat = new THREE.MeshStandardMaterial({ color: 0x2a1410, roughness: 0.9 });
+//
+// The colours live in a PALETTE so the same geometry can be rebuilt as a
+// different animal. The playroom's pet lizard (see levels/house/playroom.js
+// `makeTerrarium`) is this exact model in green with the fire switched off.
+export const FLAME_PALETTE = {
+  body: 0xd8482c, bodyEmissive: 0xff3c00, bodyEmissiveIntensity: 1.0,
+  belly: 0xff8c42, bellyEmissive: 0xff6a1f, bellyEmissiveIntensity: 0.7,
+  spike: 0xffb347,
+  eye: 0xffff88,
+  claw: 0x2a1410,
+  flat: false,
+};
+
+function makeLizardMaterials(p) {
+  return {
+    bodyMat: new THREE.MeshStandardMaterial({
+      color: p.body, emissive: p.bodyEmissive ?? 0x000000,
+      emissiveIntensity: p.bodyEmissiveIntensity ?? 1, roughness: 0.55,
+      flatShading: !!p.flat,
+    }),
+    bellyMat: new THREE.MeshStandardMaterial({
+      color: p.belly, emissive: p.bellyEmissive ?? 0x000000,
+      emissiveIntensity: p.bellyEmissiveIntensity ?? 1, roughness: 0.6,
+      flatShading: !!p.flat,
+    }),
+    spikeMat: new THREE.MeshBasicMaterial({ color: p.spike }),
+    eyeMat: new THREE.MeshBasicMaterial({ color: p.eye }),
+    clawMat: new THREE.MeshStandardMaterial({ color: p.claw, roughness: 0.9, flatShading: !!p.flat }),
+  };
+}
 
 // Behaviour
 const MAX_FIRES = 2;      // keep the same cap as before: 2 buildings burn at once
@@ -26,7 +51,12 @@ const FLEE_PLAYER_R = 5;  // and it really doesn't want to be run over
 const IGNITE_TIME = 0.9;  // how long it breathes fire before the building catches
 const ARRIVE_DIST = 0.7;
 
-function makeLizard() {
+// The lizard geometry, built from a palette. `opts.flames === false` omits the
+// fire parts — the unlit flame mane, the tail flame, the mouth breath and the
+// warm glow — so the same body reads as an ordinary green pet lizard.
+export function makeLizardModel(palette = FLAME_PALETTE, opts = {}) {
+  const flames = opts.flames !== false;
+  const { bodyMat, bellyMat, spikeMat, eyeMat, clawMat } = makeLizardMaterials(palette);
   const g = new THREE.Group();
 
   // Torso — a low, stretched fire-salamander body
@@ -64,11 +94,12 @@ function makeLizard() {
   headPivot.add(hornR);
   g.add(headPivot);
 
-  // Flame mane running down the spine (unlit, flickers in update)
+  // Dorsal spikes down the spine. On the flame lizard these are the tall unlit
+  // flame mane (they flicker in update); on a plain lizard a shorter scaly ridge.
   const mane = [];
   for (let i = 0; i < 4; i++) {
-    const fl = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.4, 6), spikeMat);
-    fl.position.set(0, 0.98, -0.55 + i * 0.38);
+    const fl = new THREE.Mesh(new THREE.ConeGeometry(flames ? 0.15 : 0.11, flames ? 0.4 : 0.26, 6), spikeMat);
+    fl.position.set(0, flames ? 0.98 : 0.86, -0.55 + i * 0.38);
     fl.rotation.x = -0.2;
     g.add(fl);
     mane.push(fl);
@@ -83,10 +114,13 @@ function makeLizard() {
     s.position.z = z;
     tailPivot.add(s);
   }
-  const tailFlame = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 6), spikeMat);
-  tailFlame.position.set(0, 0.08, -1.0);
-  tailFlame.rotation.x = Math.PI / 2 - 0.4;   // flame licks out the tail tip
-  tailPivot.add(tailFlame);
+  let tailFlame = null;
+  if (flames) {
+    tailFlame = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.3, 6), spikeMat);
+    tailFlame.position.set(0, 0.08, -1.0);
+    tailFlame.rotation.x = Math.PI / 2 - 0.4;   // flame licks out the tail tip
+    tailPivot.add(tailFlame);
+  }
   g.add(tailPivot);
 
   // Four little legs that scurry (front & hind pairs alternate)
@@ -110,20 +144,31 @@ function makeLizard() {
     legs[name] = leg;
   }
 
-  // Warm glow so it reads as a creature of fire at night
-  const light = new THREE.PointLight(0xff5500, 7, 10, 2);
-  light.position.set(0, 0.8, 0);
-  g.add(light);
+  // Warm glow so it reads as a creature of fire at night (flame lizard only).
+  let light = null;
+  if (flames) {
+    light = new THREE.PointLight(0xff5500, 7, 10, 2);
+    light.position.set(0, 0.8, 0);
+    g.add(light);
+  }
 
-  // Flame breath from the mouth (hidden until it ignites a building)
-  const breath = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 6), spikeMat);
-  breath.rotation.x = -Math.PI / 2;   // cone tip toward +Z
-  breath.position.set(0, 0.6, 1.25);
-  breath.visible = false;
-  g.add(breath);
+  // Flame breath from the mouth (hidden until it ignites a building).
+  let breath = null;
+  if (flames) {
+    breath = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.55, 6), spikeMat);
+    breath.rotation.x = -Math.PI / 2;   // cone tip toward +Z
+    breath.position.set(0, 0.6, 1.25);
+    breath.visible = false;
+    g.add(breath);
+  }
 
   g.userData = { headPivot, tailPivot, tailFlame, mane, breath, light, legs };
   return g;
+}
+
+// The default flame lizard, as the town uses it.
+function makeLizard() {
+  return makeLizardModel();
 }
 
 function countActive(fires) {
@@ -190,8 +235,8 @@ export function addLizard(scene) {
     headPivot.rotation.x = Math.sin(p * 2) * 0.12;
     const t = st.time;
     for (let i = 0; i < mane.length; i++) mane[i].scale.y = 1 + Math.sin(t * 20 + i * 1.7) * 0.3;
-    tailFlame.scale.y = 1 + Math.sin(t * 24) * 0.3;
-    light.intensity = 7 + Math.sin(t * 23) * 2;
+    if (tailFlame) tailFlame.scale.y = 1 + Math.sin(t * 24) * 0.3;
+    if (light) light.intensity = 7 + Math.sin(t * 23) * 2;
 
     // ---- flee check (robot feet + player car) ----
     let fleeing = false;

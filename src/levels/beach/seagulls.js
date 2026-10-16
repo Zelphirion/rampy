@@ -2,7 +2,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 import {
   BEACH_HALF_W, BEACH_SEA_Y, BEACH_SHORE_Z, BEACH_RIM_Z, BEACH_BASIN_Y,
   BEACH_REEFS, beachGroundOffsetAt, clamp01,
-} from './layout.js?v=1791600000000';
+} from './layout.js?v=1800000000000';
 
 // ===== The gulls =====
 //

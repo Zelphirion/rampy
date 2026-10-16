@@ -114,6 +114,11 @@ async function furniture() {
       all.push(fp);
       continue;
     }
+    // A group tagged as structure is scenery, not furniture: the Hot Wheels
+    // track is a loop-the-loop of rails, and measuring it as a wardrobe in the
+    // middle of the playroom is nonsense. (The mesh branch above filters
+    // structure by height; a group can be any height, so it says so explicitly.)
+    if (child.userData?.structure) continue;
     if (!child.children.some((c) => c.isMesh)) continue;
     const fp = footprint(child);
     // Only things standing in the house. The builder also makes the world

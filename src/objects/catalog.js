@@ -29,23 +29,47 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildCityBuilding, frontYard, kerbMailbox, newspaperRack } from '../cityBuildings.js';
-import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1791570000000';
+import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1799999999999';
 import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js?v=1799999999999';
 import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';
-import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1791600000000';
-import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js';
-import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1791600000000';
-import { buildCoralHead } from '../levels/beach/reefs.js?v=1791600000000';
-import { createGulls } from '../levels/beach/seagulls.js';
+import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1800000000000';
+import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js?v=1791038847704';
+import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1800000000000';
+import { buildCoralHead } from '../levels/beach/reefs.js?v=1800000000000';
+import { createGulls } from '../levels/beach/seagulls.js?v=1800000000000';
 import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
+import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore } from '../levels/space/index.js?v=1799900000000';
+import {
+  makeCivicLoungeChair, makeInfoKiosk, makeVendingPod, makeCleanerDrone,
+  makeSecurityBarrier, makeEyeTerminal, makeBoostPad,
+  makeSoilBed, makeBioDome, makeHangingVine, makeSprinklerVent,
+  makePollinationPod, makeSunLampArm, makeSlickPatch,
+  makeGratedBay, makePlasmaConduit, makeSteamGeyser, makeLiftPlatform,
+  makeTowCrane, makeOverridePlate,
+  makeConveyorBelt, makeGroundConveyor, makeCargoContainer, makeTrashCube, makeCompactor,
+  makeTractorPad, makeVentGrate, makeRescueCrane, makeDeconAirlock, makeDeconBay, makeHazardPanel,
+  makeLoaderBot,
+} from '../levels/space/sectors.js?v=1799900000000';
 import {
   MAT, bed, sofa, table, chair, wardrobe, counterRun, tub, toilet, sinkUnit,
   fridge, rug, ceilingLight, tableLamp,
   buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
   buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
   HOUSE, ROOMS, FIREPLACE,
-} from '../levels/house/index.js';
-
+} from '../levels/house/index.js?v=1800000000001';
+import { makeGalley, makeStove, makeCounterRun, makeKnifeStrip, makeCoffeeMaker, makeBlender, makeToasterOven, makeMicrowave, makeUtensilJar, makeTeapot, makeOilBottle, makeCuttingBoard, makeSpiceRack, HOUSE_KITCHEN, STATION_KITCHEN } from '../kitchen.js?v=1799900000000';
+import {
+  makePlayTrain,
+  makeRedHorse,
+  makeLegoBox,
+  makeHangingRocket,
+  makeXylophone,
+  makeBlockCastle,
+  makeMagnetCity,
+  makeHotWheels,
+  makeJackInTheBox,
+  makeTerrarium,
+} from '../levels/house/playroom.js';
 // ===== Primitives =====
 // Small wrappers so each object below is a list of shapes rather than a wall of
 // `new THREE.Mesh(new THREE.BoxGeometry(...), new THREE.MeshStandardMaterial({...}))`.
@@ -164,12 +188,19 @@ function blockBuilding(name, o) {
 
 // `build` is either a zero-arg factory or the name of one of the city's LAYOUT
 // buildings (which builds the real thing via buildCityBuilding).
-function obj(name, x, z, build) {
+//
+// `ring` (optional) is the space station's own coordinate pair { s, w }: the arc
+// distance around the wheel and the offset across the corridor. The wheel is not
+// addressed in world (x, z) - the car lives ON the rim, posed by the ring drive -
+// so space objects carry this third coordinate instead, and "view in context"
+// parks the car on the rim with it.
+function obj(name, x, z, build, ring) {
+  const base = { name, x, z, ...(ring ? { ring } : {}) };
   if (typeof build === 'string') {
     const id = build;
-    return { name, x, z, build: () => buildCityBuilding(id) };
+    return { ...base, build: () => buildCityBuilding(id) };
   }
-  return { name, x, z, build };
+  return { ...base, build };
 }
 
 // A generic van-and-box body, which is what half the drivable rides are: a cab
@@ -314,6 +345,7 @@ export const LEVELS = [
   { id: 'ramp', label: 'Rampworld', blurb: 'The rolling hills, the velodrome, the wheel of death.' },
   { id: 'house', label: 'House', blurb: 'Every room of the house, one category at a time.' },
   { id: 'beach', label: 'Beach', blurb: 'The cove: the campfire, the palms, the reefs.' },
+  { id: 'space', label: 'Space Station', blurb: 'The wheel: drive the inside of a rotating station.' },
 ];
 
 // ===== CITY =====
@@ -383,6 +415,63 @@ function cityCategories() {
 function houseCategories() {
   return [
     {
+      id: 'playroom', name: 'Childrens Playroom', blurb: 'Messy toys in the walk-in: a looping toy train on a trestle viaduct, one big rocking horse, an overflowing Lego box, a hung rocket, a rainbow xylophone, a block castle, a magnet-tile parking garage, the Hot Wheels loop, and a wind-up Jack-in-the-box.',
+      objects: [
+        obj('Play Train', -4, -82, () => {
+          const g = group('Play Train');
+          const pt = makePlayTrain();
+          g.add(pt.group);
+          return g;
+        }),
+        obj('Rocking Horse', -30, -27, () => {
+          const g = group('Rocking Horse');
+          const h = makeRedHorse();
+          g.add(h);
+          return g;
+        }),
+        obj('Lego Box', -14, -43, () => {
+          const g = group('Lego Box');
+          g.add(makeLegoBox().group);
+          return g;
+        }),
+        obj('Hanging Rocket', -36, -59, () => {
+          const g = group('Hanging Rocket');
+          g.add(makeHangingRocket());
+          return g;
+        }),
+        obj('Rainbow Xylophone', -30, -39, () => {
+          const g = group('Rainbow Xylophone');
+          g.add(makeXylophone().group);
+          return g;
+        }),
+        obj('Block Castle', -6, -71, () => {
+          const g = group('Block Castle');
+          g.add(makeBlockCastle().group);
+          return g;
+        }),
+        obj('Magnet Parking', -28, -59, () => {
+          const g = group('Magnet Parking');
+          g.add(makeMagnetCity().group);
+          return g;
+        }),
+        obj('Hot Wheels Track', 0, -55, () => {
+          const g = group('Hot Wheels Track');
+          g.add(makeHotWheels().group);
+          return g;
+        }),
+        obj('Jack in the Box', -38, -40, () => {
+          const g = group('Jack in the Box');
+          g.add(makeJackInTheBox().group);
+          return g;
+        }),
+        obj('Pet Terrarium', -34.5, -80, () => {
+          const g = group('Pet Terrarium');
+          g.add(makeTerrarium({ x: -34.5, z: -80 }).group);
+          return g;
+        }),
+      ],
+    },
+    {
       id: 'living', name: 'Living Room', blurb: 'The long west room. The fireplace is on the far wall.',
       objects: [
         obj('Fireplace', FIREPLACE.x, FIREPLACE.z, () => {
@@ -420,6 +509,22 @@ function houseCategories() {
           counterRun(g, -22, 92.45, 20, 0, 'x', false);
           return g;
         }),
+        // The galley is previewed as its separate pieces rather than one combined
+        // group: every object that sits on the worktop (and the two wall tools)
+        // gets its own tile. The space station keeps its compact galley as one
+        // object (see the Civic sector's "Station Galley").
+        obj('Blender', -13, 91, () => makeBlender({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Toaster Oven', -10, 91, () => makeToasterOven({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Microwave', -6, 91, () => makeMicrowave({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Utensil Jar', -2, 91, () => makeUtensilJar({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Teapot', 1, 91, () => makeTeapot({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Oil Bottle', 4, 91, () => makeOilBottle({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Cutting Boards', 5, 92, () => makeCuttingBoard({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Spice Rack', -15, 92, () => makeSpiceRack({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Range Stove', -4, 91, () => makeStove({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Kitchen Counter', -14, 91, () => makeCounterRun({ pal: HOUSE_KITCHEN, s: 2.5, len: 8, sink: true })),
+        obj('Knife Strip', -12, 92, () => makeKnifeStrip({ pal: HOUSE_KITCHEN, s: 2.5 })),
+        obj('Coffee Maker', -8, 91, () => makeCoffeeMaker({ pal: HOUSE_KITCHEN, s: 2.5 })),
         obj('Cupboard', ROOMS.kitchen.x0 + 3.1, 54, () => {
           const g = group('Cupboard');
           counterRun(g, ROOMS.kitchen.x0 + 3.1, 54, 12, 0, 'z', false);
@@ -546,21 +651,6 @@ function houseCategories() {
           buildTyreStack(g, -54, 53);
           return g;
         }),
-      ],
-    },
-    // The rides. Every one of these is a shape you can pick from the gear menu
-    // and drive, which is why they are here rather than filed under traffic: the
-    // point of browsing them is to see what you are allowed to get into. Each
-    // build is the REAL garage vehicle from cars.js.
-    {
-      id: 'rides', name: 'Rides', blurb: 'Everything you can climb into and drive.',
-      objects: [
-        obj('Fire Truck', 45, 0, () => createFiretruck()),
-        obj('Taco Truck', -22, 6, () => createTacoTruck()),
-        obj('Monster Truck', 0, 0, () => createMonsterTruck()),
-        obj('Steamroller', 0, 0, () => createSteamroller()),
-        obj('School Bus', 0, 0, () => createSchoolBus()),
-        obj('Indy 500', 0, 0, () => createIndyCar()),
       ],
     },
   ];
@@ -908,6 +998,88 @@ function beachCategories() {
   ];
 }
 
+// ===== SPACE STATION =====
+// The categories ARE the four rim sectors plus the core/hull, because that is
+// exactly how the station is laid out - each arc of the wheel is one function of
+// station life. Every `build` delegates to the level's own `make*`/`build*`
+// factory (levels/space), so a tile is the real geometry you drive past on the
+// rim, never a hand-made mini model. The x/z values are cosmetic: "view in
+// context" for space just flies you out to the station, since the ring itself is
+// not addressed in world coordinates.
+
+function spaceCategories() {
+  // Ring arcs (s) are world units along the floor; the wheel's circumference is
+  // 2*pi*44. The four sectors tile that circumference: civic 0..69, hydro
+  // 69..138, reactor 138..207, waste 207..276. The `w` values put the car beside
+  // the prop rather than inside it. These are the same spots the level builds
+  // each prop at (see levels/space/sectors.js), so "view in context" lands the
+  // driver right next to the real thing.
+  return [
+    {
+      id: 'core', name: 'Core & Hull', blurb: 'The spinning heart of the wheel.',
+      objects: [
+        obj('Station Core', 0, 26, () => buildSpaceCore().g, { s: 30, w: 0 }),
+        obj('Pod Bay', -22, 0, () => buildSpacePodBay(), { s: 4, w: 6 }),
+        obj('Console Bank', 14, 0, () => buildSpaceConsoleBank(), { s: 20, w: 9 }),
+        obj('Lander', 10, 22, () => buildArrivalShip().g, { s: 6, w: 3 }),
+      ],
+    },
+    {
+      id: 'civic', name: 'Civic & Habitation', blurb: 'The clean white arc: lounges, kiosks and a monorail boost lane.',
+      objects: [
+        obj('Lounge Chair', -6, 2, () => makeCivicLoungeChair(), { s: 11, w: -10 }),
+        obj('Info Kiosk', -3, 2, () => makeInfoKiosk(), { s: 17, w: 10 }),
+        obj('Vending Pod', 0, 2, () => makeVendingPod(), { s: 23, w: -10 }),
+        obj('Cleaner Drone', 3, 2, () => makeCleanerDrone(), { s: 36, w: 0 }),
+        obj('Security Barrier', 6, 2, () => makeSecurityBarrier(), { s: 24, w: 0 }),
+        obj('Eye Terminal', 9, 2, () => makeEyeTerminal(), { s: 48, w: 10 }),
+        obj('Boost Pad', 12, 2, () => makeBoostPad(), { s: 30, w: -6.5 }),
+        obj('Station Galley', 15, 2, () => makeGalley({ pal: STATION_KITCHEN, s: 0.8 }), { s: 30, w: 9.5 }),
+      ],
+    },
+    {
+      id: 'hydro', name: 'Hydroponics', blurb: 'The greenhouse arc: soil terraces, glass domes and grow lamps.',
+      objects: [
+        obj('Soil Bed', -6, 4, () => makeSoilBed(), { s: 90, w: -9.5 }),
+        obj('Bio-Dome', -3, 4, () => makeBioDome(), { s: 93, w: 0 }),
+        obj('Hanging Vine', 0, 4, () => makeHangingVine(), { s: 100, w: 0 }),
+        obj('Sprinkler Vent', 3, 4, () => makeSprinklerVent(), { s: 105, w: 4 }),
+        obj('Pollination Pod', 6, 4, () => makePollinationPod(), { s: 87, w: 3 }),
+        obj('Sun-Lamp Arm', 9, 4, () => makeSunLampArm(), { s: 89, w: 3 }),
+        obj('Slick Patch', 12, 4, () => makeSlickPatch(), { s: 110, w: 8 }),
+      ],
+    },
+    {
+      id: 'reactor', name: 'Reactor & Maintenance', blurb: 'The dark arc: grating, plasma conduits and steam geysers.',
+      objects: [
+        obj('Grated Bay', -6, 6, () => makeGratedBay(), { s: 150, w: -9 }),
+        obj('Plasma Conduit', -3, 6, () => makePlasmaConduit(), { s: 150, w: 0 }),
+        obj('Steam Geyser', 0, 6, () => makeSteamGeyser(), { s: 156, w: 6 }),
+        obj('Lift Platform', 3, 6, () => makeLiftPlatform(), { s: 162, w: 0 }),
+        obj('Tow Crane', 6, 6, () => makeTowCrane(), { s: 154, w: 0 }),
+        obj('Override Plate', 9, 6, () => makeOverridePlate(), { s: 146, w: 0 }),
+      ],
+    },
+    {
+      id: 'waste', name: 'Waste & Docking', blurb: 'The industrial arc: belts, compactors and the depressurization vent.',
+      objects: [
+        obj('Conveyor Belt', -8, 8, () => makeConveyorBelt(), { s: 221, w: -5 }),
+        obj('Cargo Container', -5, 8, () => makeCargoContainer(), { s: 220, w: -9.5 }),
+        obj('Trash Cube', -2, 8, () => makeTrashCube(), { s: 224, w: -5 }),
+        obj('Compactor', 1, 8, () => makeCompactor(), { s: 227, w: 0 }),
+        obj('Tractor Pad', 4, 8, () => makeTractorPad(), { s: 219, w: 0 }),
+        obj('Vent Grate', 7, 8, () => makeVentGrate(), { s: 244, w: 0 }),
+        obj('Rescue Crane', 10, 8, () => makeRescueCrane(), { s: 262, w: 8.4 }),
+        obj('Decon Airlock', 13, 8, () => makeDeconAirlock(), { s: 262, w: 8.4 }),
+        obj('Decon Bay', 16, 8, () => makeDeconBay(), { s: 262, w: 8.4 }),
+        obj('Trash Loader', 19, 8, () => makeLoaderBot(), { s: 269, w: 15 }),
+        obj('Hazard Panel', 22, 8, () => makeHazardPanel(), { s: 250, w: -12 }),
+        obj('Ground Conveyor', 25, 8, () => makeGroundConveyor(), { s: 253, w: 6 }),
+      ],
+    },
+  ];
+}
+
 // ===== Dispatch =====
 // One place that knows which builder belongs to which level id, so the browser
 // never has to care that 'ramp' is called rampworld.js somewhere else.
@@ -918,6 +1090,7 @@ const CATEGORY_BUILDERS = {
   underground: undergroundCategories,
   ramp: rampCategories,
   beach: beachCategories,
+  space: spaceCategories,
 };
 
 const categoryCache = new Map();

@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from './physics.js';
+import { addKnockable } from './physics.js?v=1800000000002';
 
 // ===== The Holy Mountain =====
 // A driveable mountain in the far-NW field (north of the shops row at z=64,

@@ -1,28 +1,31 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { makeClamShell } from '../../props.js?v=1791570000000';
-import { addKnockable } from '../../physics.js';
+import { makeClamShell } from '../../props.js?v=1799999999999';
+import { addKnockable } from '../../physics.js?v=1800000000002';
 import { shellRadius } from '../../clam.js';
-import { addBeachCliffs } from './cliffs.js?v=1791600000000';
-import { addBeachLife, makeCrab } from './critters.js?v=1791600000000';
-import { buildReefs } from './reefs.js?v=1791600000000';
+import { addBeachCliffs } from './cliffs.js?v=1800000000000';
+import { addBeachLife, makeCrab } from './critters.js?v=1800000000000';
+import { buildReefs } from './reefs.js?v=1800000000000';
 import { buildBoat, updateBoat, BOAT_SPOT } from './boat.js?v=1791038847704';
-import { createGulls } from './seagulls.js?v=1791700000000';
-import { buildSandcastle } from './sandcastle.js?v=1791600000000';
+import { createGulls } from './seagulls.js?v=1800000000000';
+import { buildSandcastle } from './sandcastle.js?v=1800000000000';
+import { buildMermaidCastle } from './mermaidCastle.js?v=1800000000000';
+import { buildShipwreck, buildTreasureChest } from './shipwreck.js?v=1800000000000';
 import {
   BEACH_START, BEACH_SHELL, BEACH_SAND_Y, BEACH_SEA_Y, BEACH_SHORE_Z,
   BEACH_SHELF_Z0, BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_CLIFF_Z, BEACH_HALF_W,
   BEACH_EDGE_X, BEACH_BASIN_Y, BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0,
-  BEACH_MAP_Z1, CLIFF_REACH, BEACH_PALMS, BEACH_ROCKS, BEACH_CAMPFIRE,
+  BEACH_MAP_Z1, BEACH_DEEP_FLOOR_Z, BEACH_DEEP_Z, CLIFF_REACH, BEACH_PALMS, BEACH_ROCKS, BEACH_CAMPFIRE,
   beachGroundOffsetAt, beachSandOffsetAt, beachColliders, clamp01,
-} from './layout.js?v=1791600000000';
+} from './layout.js?v=1800000000000';
 
 // Re-exported so main.js keeps one import for the beach, exactly as before.
 export {
   beachGroundOffsetAt, BEACH_START, BEACH_SHORE_Z,
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_BASIN_Y,
   BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_CAMPFIRE,
+  BEACH_DEEP_Z,
 };
-export { BEACH_SHELL } from './layout.js?v=1791600000000';
+export { BEACH_SHELL } from './layout.js?v=1800000000000';
 
 // The object browser builds the REST of the beach from these same builders, so
 // a preview is the real geometry rather than a miniature. They are geometry
@@ -48,7 +51,10 @@ export { makeCrab };
 
 const SAND_MIN_X = BEACH_MAP_X0;
 const SAND_MAX_X = BEACH_MAP_X1;
-const SAND_MIN_Z = BEACH_TRENCH_Z - 6;
+// The sand grid runs out to BEACH_DEEP_FLOOR_Z so the trench floor carries on
+// well past the drop-off and the mermaids, under the mermaids' castle out in
+// the deep. It is scenery the car's rim collider can never reach.
+const SAND_MIN_Z = BEACH_DEEP_FLOOR_Z;
 const SAND_MAX_Z = BEACH_CLIFF_Z + 14;
 const SAND_STEP = 1;
 // How far the sand is sunk below the shell's own surface inside the shell's
@@ -222,6 +228,10 @@ function sandY(x, z) {
 function sandRowStep(z) {
   if (z >= BEACH_SHORE_Z - 10 && z <= BEACH_SHELF_Z0 + 4) return 0.34; // the waterline
   if (z >= BEACH_TRENCH_Z - 2 && z <= BEACH_RIM_Z + 2) return 0.5;     // the lip
+  // Past the trench the floor is dead flat all the way to the horizon, so the
+  // rows step out coarsely: this is what lets the sand run out to
+  // BEACH_DEEP_FLOOR_Z without paying for tens of thousands of flat vertices.
+  if (z < BEACH_TRENCH_Z - 2) return 4;
   return SAND_STEP;
 }
 
@@ -654,31 +664,73 @@ export function createBeachWorld(scene, opts = {}) {
   shell.group.position.y += base;
 
   // ===== Sea =====
-  // Translucent on purpose: the whole point of the basin is that you can see
-  // the cliffs carrying on underwater, the fish, and the mermaid, and none of
-  // that is visible through an opaque surface. depthWrite is off so the water
-  // never hides the opaque things it is drawn in front of.
-  // Sized and centred to cover the whole map - the sea runs out past the
-  // cliffs' feet and all the way to the seaward edge, so there is never a
-  // visible edge to the water itself, only the drop-off and then the dark.
-  const SEA_SPAN_X = (BEACH_MAP_X1 - BEACH_MAP_X0) + 240;
-  const SEA_SPAN_Z = (BEACH_MAP_Z1 - BEACH_MAP_Z0) + 240;
-  const seaGeo = new THREE.PlaneGeometry(SEA_SPAN_X, SEA_SPAN_Z, 80, 80);
+  // The water is CLEAR near the shore and becomes opaque out to sea. The whole
+  // point of the basin is that you can see the coral, the cliffs carrying on
+  // underwater and the fish when you are in the shallows; but past the drop-off
+  // the surface closes over and hides everything under it, reading as open
+  // ocean to the horizon. The fade is done in the fragment shader from the
+  // fragment's world Z, so it is smooth no matter how coarse the mesh is.
+  // depthWrite is off so the water never hides the opaque things it is drawn in
+  // front of.
+  // Far larger than the map: the sea has to run past the far plane in every
+  // direction so it never shows an edge. You only ever see water going on for
+  // ever, with the drop-off and the mermaids' castle somewhere out in the haze.
+  const SEA_SPAN_X = (BEACH_MAP_X1 - BEACH_MAP_X0) + 1400;
+  const SEA_SPAN_Z = (BEACH_MAP_Z1 - BEACH_MAP_Z0) + 1400;
+  const seaGeo = new THREE.PlaneGeometry(SEA_SPAN_X, SEA_SPAN_Z, 120, 120);
   seaGeo.rotateX(-Math.PI / 2);
-  const sea = new THREE.Mesh(seaGeo, new THREE.MeshStandardMaterial({
+  // Where the surface starts to close over and where it is fully opaque. The
+  // gradient now reaches almost all the way to the waterline: a sliver of clear
+  // water right at the shore so you can still see in A LITTLE, then it hazes up
+  // and seals well before the mermaids' line (z ~ -72) and the wreck far beyond
+  // it, so neither can be made out from the beach. The coral (z ~ -54) is hidden
+  // from the shore too, but you see it the moment you drive down into the basin.
+  const SEA_FADE_Z0 = -2;    // fully clear from the waterline to here
+  const SEA_FADE_Z1 = -32;   // fully opaque from here out
+  const SEA_ALPHA_NEAR = 0.12;
+  const SEA_ALPHA_FAR = 1.0;
+  const seaMat = new THREE.MeshStandardMaterial({
     color: 0x2b86b8, roughness: 0.16, metalness: 0.3,
-    transparent: true, opacity: 0.58, depthWrite: false,
-  }));
+    transparent: true, depthWrite: false,
+  });
+  seaMat.onBeforeCompile = (sh) => {
+    sh.uniforms.uSeaFade0 = { value: SEA_FADE_Z0 };
+    sh.uniforms.uSeaFade1 = { value: SEA_FADE_Z1 };
+    sh.uniforms.uSeaNear = { value: SEA_ALPHA_NEAR };
+    sh.uniforms.uSeaFar = { value: SEA_ALPHA_FAR };
+    sh.uniforms.uSeaFroth = { value: new THREE.Color(0xdff2f7) };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying float vSeaZ;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\nvSeaZ = (modelMatrix * vec4(transformed, 1.0)).z;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>',
+        '#include <common>\nvarying float vSeaZ;'
+        + '\nuniform float uSeaFade0;\nuniform float uSeaFade1;'
+        + '\nuniform float uSeaNear;\nuniform float uSeaFar;\nuniform vec3 uSeaFroth;')
+      .replace('#include <color_fragment>',
+        '#include <color_fragment>\n'
+        + '{\n'
+        + '  float d = clamp((uSeaFade0 - vSeaZ) / (uSeaFade0 - uSeaFade1), 0.0, 1.0);\n'
+        + '  d = d * d;\n'   // stay clear over the coral, then close quickly
+        + '  diffuseColor.a = mix(uSeaNear, uSeaFar, d);\n'
+        + '  diffuseColor.rgb = mix(diffuseColor.rgb, uSeaFroth, smoothstep(0.6, 1.0, d));\n'
+        + '}');
+  };
+  const sea = new THREE.Mesh(seaGeo, seaMat);
   sea.position.set(0, base + BEACH_SEA_Y, (BEACH_MAP_Z0 + BEACH_MAP_Z1) / 2);
   sea.renderOrder = 2;
   group.add(sea);
   const seaBase = Float32Array.from(seaGeo.attributes.position.array);
 
-  // The floor of the trench, so the drop-off ends in something dark rather than
-  // in nothing at all.
+  // The floor of the trench, so the drop-off ends in something rather than in
+  // nothing at all. It is the exact colour sandColour() gives the deepest sand
+  // (0.483, 0.399, 0.286, set as linear to match the grid's vertex colours), and
+  // it reaches as far as the water, so where the grid ends the floor just
+  // carries on: no seam, no edge, sea floor to the horizon in every direction.
   const abyss = new THREE.Mesh(
     new THREE.PlaneGeometry(SEA_SPAN_X, SEA_SPAN_Z),
-    new THREE.MeshStandardMaterial({ color: 0x16303a, roughness: 1 }),
+    new THREE.MeshStandardMaterial({ color: new THREE.Color(0.483, 0.399, 0.286), roughness: 1 }),
   );
   abyss.rotation.x = -Math.PI / 2;
   abyss.position.set(0, base + BEACH_TRENCH_Y - 4, (BEACH_MAP_Z0 + BEACH_MAP_Z1) / 2);
@@ -692,10 +744,14 @@ export function createBeachWorld(scene, opts = {}) {
   // Bands run out past the drop-off as well, so the surf carries on over the
   // lip instead of stopping dead at it.
   const FOAM_SPAN = BEACH_SHORE_Z - BEACH_MAP_Z0 + 30;
+  // The bands are as wide as the cove and a little beyond; they must NOT be tied
+  // to the (now enormous) sea span, or the surf would draw as thin lines running
+  // off to the horizon over the rocks.
+  const FOAM_W = (BEACH_MAP_X1 - BEACH_MAP_X0) + 200;
   for (let i = 0; i < 12; i++) {
     const k = i / 11;
     const band = new THREE.Mesh(
-      new THREE.PlaneGeometry(SEA_SPAN_X * 0.8, 1.6 + k * 5.5),
+      new THREE.PlaneGeometry(FOAM_W, 1.6 + k * 5.5),
       new THREE.MeshBasicMaterial({
         color: 0xfdfbf4, transparent: true, opacity: 0.4 - k * 0.2,
         depthWrite: false, fog: false,
@@ -822,6 +878,25 @@ export function createBeachWorld(scene, opts = {}) {
   // no collider: the car drives into it and it comes down in a heap.
   const castle = buildSandcastle(base);
   group.add(castle.group);
+
+  // The mermaids' castle, far out in the deep past the drop-off. The same model
+  // as the sand castle, in pink and dressed with shells. With the drop-off now
+  // open (see layout.js), this is a landmark the car can actually drive out to.
+  const mermaidCastle = buildMermaidCastle(base);
+  group.add(mermaidCastle.group);
+
+  // The wreck: a huge 1800s sailing ship, broken and heeled over on the floor
+  // just short of the mermaids' castle - the drowned neighbour of the pink
+  // castle. Its forward quarter has rotted away and nothing of it breaks the
+  // surface. The car can drive out to it now that the drop-off is open.
+  const shipwreck = buildShipwreck(base);
+  group.add(shipwreck.group);
+
+  // The treasure: a chest burst open beside the wreck, spilling gold, jewels and
+  // pearls across the sea floor. The come-on that makes the long drive out here
+  // worth it. Scenery only - no collider, so the car can drive right up to it.
+  const treasure = buildTreasureChest(base);
+  group.add(treasure.group);
 
   // With the palms and rocks now knockables, the only solid things left in the
   // level are the cliffs and the shell's outline.
@@ -959,6 +1034,8 @@ export function createBeachWorld(scene, opts = {}) {
       life.update(delta, carPos ? carPos.x : 0, carPos ? carPos.z : 0, carR);
       campfire.update(t);
       castle.update(delta, carPos, carR);
+      mermaidCastle.update(delta, t);
+      shipwreck.update(delta, t);
       // `blocked` is true while the shell is closing, or during a fade: she does
       // not start a ten-second count towards robbing a car that is already on
       // its way home. Both cars are offered as targets (P2 only exists in split

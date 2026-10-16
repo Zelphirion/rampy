@@ -3,12 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Little City Drive</title>
+    <title>Crankshaft and Rampy's Wreckless Ramble</title>
     <link rel="icon" type="image/png" href="/city/favicon/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/city/favicon/favicon.svg" />
     <link rel="shortcut icon" href="/city/favicon/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="/city/favicon/apple-touch-icon.png" />
     <link rel="manifest" href="/city/favicon/site.webmanifest" />
+    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+    <script>eruda.init();</script>
     <style>
       html, body {
         margin: 0;
@@ -1744,7 +1746,7 @@
             <label class="gfx-label" for="gfx-scale">Resolution scale</label>
             <span class="gfx-value" id="gfx-scale-value">1.00&times;</span>
           </div>
-          <input id="gfx-scale" class="gfx-slider" type="range" min="0.1" max="1.5" step="0.05" value="1" aria-label="Resolution scale">
+          <input id="gfx-scale" class="gfx-slider" type="range" min="0.2" max="1.5" step="0.05" value="1" aria-label="Resolution scale">
           <div class="gfx-hint" id="gfx-scale-hint">1.00&times; the display's own pixel ratio.</div>
           <div class="gfx-hint">Lower is blockier and faster. Below 0.5 is a deliberately chunky, retro look — the bottom of the slider is there for old machines.</div>
         </div>
@@ -1752,10 +1754,10 @@
         <div class="gfx-row">
           <div class="gfx-row-head">
             <label class="gfx-label" for="gfx-far">Draw distance</label>
-            <span class="gfx-value" id="gfx-far-value">300 units</span>
+            <span class="gfx-value" id="gfx-far-value">500 units</span>
           </div>
-          <input id="gfx-far" class="gfx-slider" type="range" min="50" max="500" step="10" value="300" aria-label="Draw distance in units">
-          <div class="gfx-hint">How far the camera sees before the world fades out. Shorter is faster.</div>
+          <input id="gfx-far" class="gfx-slider" type="range" min="50" max="500" step="10" value="500" aria-label="Draw distance in units">
+          <div class="gfx-hint">The world is always drawn to the horizon; this only moves if you change it here.</div>
           <label class="gfx-check"><input id="gfx-fog-tie" type="checkbox" checked> Thicken the fog to match, so nothing pops into view at the edge</label>
         </div>
 
@@ -1965,6 +1967,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1799999999999"></script>
+    <script type="module" src="./src/main.js?v=1800000000002"></script>
   </body>
 </html>

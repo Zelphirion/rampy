@@ -15,31 +15,35 @@
 // Nothing wraps. The city and ramp worlds are toruses; this one is a closed box,
 // and main.js turns the wrap off while worldState is 'house'. Being a closed
 // box is load-bearing: there is no way out of the house at all any more. The
-// front door on the east wall is SHUT AND LOCKED, and the only way back to the
-// city is the dark garage off the kitchen.
+// front door on the west wall is SHUT AND LOCKED, and the only way back to the
+// city is the dark garage.
 //
-// Floor plan (interior faces; the shell walls sit 3 outside these):
+// Floor plan (interior faces; the shell walls sit 3 outside these). `R` marks
+// the roller door (west wall), `G` the garage doorway on the garage's east
+// wall, `D` the locked front door (west wall), `B` the bathroom's bi-swing door:
 //
 //   z =  94  +-------------+-------------+-------------+------------+
 //           |  DARK       |   KITCHEN   |   DINING    |   FOYER    |
-//           |  GARAGE     |             |             |            |
-//           | (the way    +-------------+-------------+   front    |
-//           |    out)     |             |             |   door     |
-//   z =  46  +-------------+-------------+-------------+---(locked)--+
-//           |             |             |             |            |
-//           |   LIVING    |    HALL     |             |  BATHROOM  |
-//           |   ROOM      |             |             |            |
-//   z = -20  +-------------+-------------+-------------+------------+
+//    roller |  GARAGE     |      G      |             |            |
+//    door R | (the way    +-------------+             |            |
+//  z=58..86 |    out)     |             |   (open)    |            |
+//   z =  46 +-------------+-------------+-------------+------------+
+//     front |             |             |             |            |
+//     door  |   LIVING    |    HALL     |             |  BATHROOM  |
+//    D      |   ROOM      |             |             |     B      |
+//   z = -20 +-------------+-------------+-------------+------------+
 //           |  BEDROOM 1  |  WALK-IN    |  BEDROOM 2  |   MAIN     |
 //           |             |   CLOSET    |             |   CLOSET   |
 //   z = -86  +-------------+-------------+-------------+------------+
 //
-// The DARK GARAGE in the north-west corner is the only way out of the house.
-// Its door is off the KITCHEN and there is no other: the wall it shares with
-// the living room is solid, and the other two sides are shell. So leaving means
-// crossing the whole floor — foyer, dining, kitchen — which is the point of a
-// house this size. It is pitch dark in there; all you get is the beckoning
-// lamp deep in the back of it, and the car rolls away from the camera into it.
+// The DARK GARAGE in the north-west corner is the only way out of the house,
+// and also where you arrive. Its door is off the KITCHEN - the east wall of the
+// garage - and there is no other: the wall it shares with the living room is
+// solid, and the other two sides are shell. You arrive facing east, so you
+// drive straight through the doorway into the kitchen; leaving again means
+// crossing the whole floor. It is pitch dark in there; all you get is the
+// beckoning lamp deep in the back of it, and the car rolls away from the camera
+// into it.
 //
 // The walk-in closet runs east-west along the south end and opens into BOTH
 // bedrooms, so you can drive bedroom 1 -> closet -> bedroom 2 without going
@@ -55,7 +59,14 @@ export const HOUSE = {
   minX: -90, maxX: 90,
   minZ: -86, maxZ: 94,
   wall: 3,            // shell wall thickness
-  ceil: 30,           // ceiling height
+  // Ceiling height. Every wall (shell and interior), the window headers and the
+  // ceiling itself are keyed off this, so raising it raises the whole box. The
+  // shell is deliberately tall now: the playroom Hot Wheels tour climbs to y=27,
+  // and with the roof only just above that the top of the frame on the high
+  // shelf runs cleared the wall tops and showed the grassy outside. A roomy box
+  // keeps the walls well above the track. (The top-down plan view hides the
+  // ceiling mesh, so a taller box costs it nothing.)
+  ceil: 36,
   floorY: 0,
 };
 
@@ -82,25 +93,63 @@ export const ROOMS = {
   closetA:    { x0: 52,  x1: 90,  z0: -86, z1: -20 },   // the main closet
 };
 
-// Where the car is put when it arrives. It comes in through the KITCHEN
-// doorway, so it is dropped in the DARK GARAGE, just inside that doorway,
-// facing east back into the house (yaw PI; yaw 0 faces west). The fog is at
-// its thickest here, so the first thing you see is the beckoning lamp at the
-// far end rather than the room — and the only way out, the roller door behind
-// you, stays hidden in the murk until you turn around.
+// Short human-readable names for each room, shown as minimap labels. Kept
+// separate from ROOMS (which stays pure geometry) so say `ROOM_LABELS[name]`
+// wherever a room needs to be named; the playroom Hot Wheels tour renders these
+// across the top-down map in main.js drawMinimap().
+export const ROOM_LABELS = {
+  darkGarage: 'Garage',
+  kitchen: 'Kitchen',
+  dining: 'Dining',
+  foyer: 'Foyer',
+  living: 'Living Room',
+  hall: 'Hall',
+  bathroom: 'Bathroom',
+  bed1: 'Bedroom 1',
+  walkin: 'Walk-In',
+  bed2: 'Bedroom 2',
+  closetA: 'Closet',
+};
+
+// Where the car is put when it arrives. It is dropped in the DARK GARAGE, just
+// inside the KITCHEN doorway, facing east back into the house (yaw PI; yaw 0
+// faces west) — so the way on is straight ahead through the doorway on the
+// garage's east wall. The fog is at its thickest here, so the first thing you
+// see is the beckoning lamp at the far end rather than the room, and the only
+// way out, the roller door behind you, stays hidden in the murk until you turn.
 export const HOUSE_START = { x: -50, z: 72, yaw: Math.PI };
 
-// The FRONT DOOR: a real door in the east shell wall, at the foyer. It is SHUT
-// and LOCKED, and that is the whole point of it — you can see it, walk up to
-// it, and it does not open. There is a deadbolt, a hasp and a padlock on it.
-// The shell wall itself is continuous behind it, so the door is decoration over
-// solid masonry: there is no trigger, no gap and no collider gap anywhere.
+// The FRONT DOOR: a real door in the WEST shell wall, beside the roller door,
+// on the living room. It is SHUT and LOCKED, and that is the whole point of it ???
+// you can see it, walk up to it, and it does not open. There is a deadbolt, a
+// hasp and a padlock on it. The shell wall itself is continuous behind it, so
+// the door is decoration over solid masonry: there is no trigger, no gap and no
+// collider gap anywhere.
 export const FRONT_DOOR = {
   wallAxis: 'z',       // it lives in a wall that runs along Z (a constant-x wall)
-  at: HOUSE.maxX + HOUSE.wall / 2,
-  z0: 58, z1: 78,      // 20 wide, centred on the foyer
+  at: HOUSE.minX - HOUSE.wall / 2,
+  z0: 25, z1: 45,      // 20 wide, clear of the west window at z 0..16 and the roller door at 58+
   h: 22,               // head height
-  inward: -1,          // the room side faces -X
+  inward: 1,           // the room side faces +X
+};
+
+// The BACK DOOR: the same trick as the front door, one room over. It hangs on
+// the foyer's NORTH shell wall (the only solid exterior wall the foyer has —
+// its east wall carries the window), is SHUT and LOCKED, and has a glazed
+// transom in its top so you can see the sky through the glass while the leaf
+// stays shut. Like the front door the shell behind it stays solid: it is drawn
+// over continuous masonry, with no trigger, gap or collider break.
+//
+// A normal single-door leaf: 12 wide and 22 tall, so it reads as a door rather
+// than a square opening. (It used to be 20 wide — as wide as it was tall, and
+// wide enough to swallow the foyer's north window — which is why it looked like
+// a barn opening.)
+export const BACK_DOOR = {
+  wallAxis: 'x',       // it lives in a wall that runs along X (a constant-z wall)
+  at: HOUSE.maxZ + HOUSE.wall / 2,
+  x0: 65, x1: 77,      // 12 wide, centred on the foyer's north wall
+  h: 22,               // head height
+  inward: -1,          // the room side faces -Z
 };
 
 // The way OUT. It is a region deep in the dark garage that the car must reach;
@@ -175,33 +224,38 @@ export const FIREPLACE = {
 // the whole rest of the room boundary missing.
 export const HOUSE_WALLS = [
   // ---- North band: running along Z between the four rooms ----
-  { axis: 'z', at: -46, run0: 46,  run1: 94, gap: { a0: 62, a1: 82, top: 22 } },  // darkGarage | kitchen  <- the ONLY way into the dark garage
+  // darkGarage | kitchen. The dark garage's ONLY door is here, on its east wall,
+  // straight ahead of the car when it arrives.
+  { axis: 'z', at: -46, run0: 46,  run1: 94, gap: { a0: 62, a1: 82, top: 22 } },
   // { axis: 'z', at: 6,   run0: 46,  run1: 94, gap: { a0: 54, a1: 84, top: 22 } },  // kitchen    | dining   (open)
   // { axis: 'z', at: 52,  run0: 46,  run1: 94, gap: { a0: 60, a1: 80, top: 22 } },  // dining     | foyer (open)
   // ---- Middle band: the living room's east wall, and the rooms off the hall ----
   // { axis: 'z', at: 6,   run0: -20, run1: 46, gap: { a0: -6, a1: 18,  top: 22 } }, // living     | hall (open)
-  { axis: 'z', at: 52,  run0: -20, run1: 46, gap: { a0: 0,  a1: 20,  top: 22 } }, // hall       | bathroom
+  // The bathroom's ONE entrance, off the hall (the living-room side). A
+  // bi-swing push door hangs in it (see buildPushDoor in index.js). It is
+  // deliberately NARROW (a bathroom door, not a barn opening) and FULL HEIGHT:
+  // its head is the ceiling, so there is no lintel and no band of wall over the
+  // leaf to read as a gap. Still wider than the car (12 > 2 * CAR_RADIUS).
+  { axis: 'z', at: 52,  run0: -20, run1: 46, gap: { a0: 4,  a1: 16,  top: HOUSE.ceil } }, // hall | bathroom
   // ---- South band: the two bedrooms and the walk-in between them ----
   { axis: 'z', at: -46, run0: -86, run1: -20, gap: { a0: -70, a1: -50, top: 22 } }, // bed1 | walkin
   { axis: 'z', at: 6,   run0: -86, run1: -20, gap: { a0: -70, a1: -50, top: 22 } }, // walkin | bed2
   { axis: 'z', at: 52,  run0: -86, run1: -20, gap: { a0: -70, a1: -50, top: 22 } }, // bed2 | closetA
   // ---- Running along X between the bands ----
-  // The kitchen|living opening used to start at x=-42, which is 4 off the west
-  // shell. There is a solid wall in a room, and it needs a run of counter on it
-  // somewhere ??? 4 of wall is not enough for that, so the run ended up standing
-  // in the opening. -36..-10 leaves 8 of wall at the west end for it.
-  { axis: 'x', at: 46,  run0: -46, run1: 6,  gap: { a0: -36, a1: -10, top: 22 } }, // kitchen | living  (open plan)
+  // kitchen | living is fully OPEN: no wall spans z=46 between x=-46 and x=6, so
+  // the kitchen and the living room flow into one another (open plan).
   { axis: 'x', at: -20, run0: -90, run1: -46, gap: { a0: -74, a1: -54, top: 22 } }, // bed1   | living
   { axis: 'x', at: -20, run0: -46, run1: 6,  gap: { a0: -30, a1: -10, top: 22 } }, // walkin | living
   { axis: 'x', at: -20, run0: 6,   run1: 52, gap: { a0: 0,   a1: 20,  top: 22 } }, // bed2   | hall
-  { axis: 'x', at: -20, run0: 52,  run1: 90, gap: { a0: 58,  a1: 78,  top: 22 } }, // closetA| bathroom
   // ---- Solid walls: boundaries you reach another way ----
   // The dark garage is walled off from the living room. Without this you could
   // drive into the pitch-dark garage straight out of the front room, take the
   // exit trigger at 90 degrees, and skip the entire house.
   { axis: 'x', at: 46,  run0: -90, run1: -46 },
-  { axis: 'x', at: 46,  run0: 6,   run1: 52 },    // dining | hall
   { axis: 'x', at: 46,  run0: 52,  run1: 90 },    // foyer  | bathroom
+  // closetA | bathroom is SOLID: the bathroom keeps a single entrance off the
+  // hall, and the main closet is reached from bedroom 2 only.
+  { axis: 'x', at: -20, run0: 52,  run1: 90 },    // closetA| bathroom
 ];
 
 // Big furniture, for the minimap. The minimap used to draw the shell and the
@@ -242,8 +296,6 @@ export const MAP_ITEMS = [
   { kind: 'plant',  x: 60, z: 87,  w: 8,  d: 8,  ry: 0, built: true },
   { kind: 'sofa',   label: 'bench', x: 68, z: 53,  w: 20, d: 8,  ry: 0, built: true },
   // ---- Hall ----
-  { kind: 'counter', label: 'console', x: 44, z: 10, w: 7, d: 26, ry: 0, built: true },
-  { kind: 'table',  label: 'table',  x: 22, z: 6,   w: 20, d: 16, ry: 0, built: true },
   { kind: 'plant',  x: 14, z: 38,  w: 8,  d: 8,  ry: 0, built: true },
   // ---- Bathroom ----
   // Tub hard against the east wall, its long axis running north-south, with the
@@ -258,18 +310,17 @@ export const MAP_ITEMS = [
   { kind: 'counter', label: 'desk', x: -66, z: -34, w: 10, d: 16, ry: 0, built: true },
   { kind: 'counter', label: 'desk', x: 44,  z: -34, w: 10, d: 16, ry: 0, built: true },
   // ---- Walk-in closet + main closet: runs of wardrobes either side of the aisle ----
-  { kind: 'wardrobe', label: 'wardrobes', x: -42.5, z: -36.7, w: 2, d: 22, ry: 0, built: true },
-  { kind: 'wardrobe', label: 'wardrobes', x: 2.5,   z: -36.7, w: 2, d: 22, ry: 0, built: true },
+  { kind: 'table',    label: 'play table', x: -20, z: -52, w: 12, d: 12, ry: 0, built: true },
+  { kind: 'blocks',   label: 'blocks', x: -16, z: -68, w: 8,  d: 8,  ry: 0, built: true },
   { kind: 'wardrobe', label: 'wardrobes', x: 56,    z: -36.7, w: 3, d: 22, ry: 0, built: true },
   { kind: 'wardrobe', label: 'wardrobes', x: 86,    z: -36.7, w: 3, d: 22, ry: 0, built: true },
   // ---- The dark garage ----
-  // Deliberately all pushed against the north and south walls. The car has to
-  // roll the length of this room, west, into the exit trigger, so the whole
-  // middle band of it is kept clear: anything standing in the way would stop
-  // the exit shot short and leave you circling a workbench forever.
+  // Deliberately all pushed against the north and south walls. The car rolls the
+  // length of this room, west along z=72, from the kitchen doorway on the east
+  // wall out through the roller door, so the whole middle band of it is kept
+  // clear: anything standing in the way would stop the run short.
   { kind: 'bench',  label: 'workbench', x: -58, z: 88.5, w: 14, d: 5, ry: 0, built: true },
   { kind: 'bench',  label: 'workbench', x: -66, z: 52, w: 20, d: 6, ry: 0, built: true },
-  { kind: 'tyres',  x: -54, z: 53,  w: 10,  d: 8,  ry: 0, built: true },
 ];
 
 // Where the cat may choose to fall asleep, and the spots it wanders between

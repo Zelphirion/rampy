@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from './physics.js';
+import { addKnockable } from './physics.js?v=1800000000002';
 import {
   GLASS_TOWER_COLS as towerCols, GLASS_TOWER_ROWS as towerRows,
   GLASS_Z0 as Z0, GLASS_Z1 as Z1,
