@@ -152,13 +152,13 @@ function makeLampPost(scene, x, z) {
 // ===== Lamp-post field in the park (a whole forest of them to knock down) =====
 function addLampField(scene) {
   // A 5 x 7 grid filling the park, skipping anything that would stand in the
-  // pond or off the grass. The park is deliberately small now, so the field is
+  // pond or off the grass. The park is deliberately small, so the field is
   // tighter and closer together than it used to be.
   let count = 0;
-  for (let x = 16.2; x <= 27.8; x += 2.9) {
-    for (let z = 46.2; z <= 61.8; z += 2.6) {
-      const dx = x - 22;
-      const dz = z - 54;
+  for (let x = 24.2; x <= 35.8; x += 2.9) {
+    for (let z = 162.2; z <= 177.8; z += 2.6) {
+      const dx = x - 30;
+      const dz = z - 170;
       if (dx * dx + dz * dz < 4.0 * 4.0) continue;   // over the pond
       makeLampPost(scene, x, z);
       count++;
@@ -332,10 +332,10 @@ function makeStreetCone(scene, x, z) {
 // Position on the main east-west road, far east of the intersection.
 export const POTHOLE = { x: -50, z: 8, radius: 3 };
 
-// Park lake: the shallow blue pond in the town park (centre 22,54) behaves like
-// the pothole - driving in rocks the car, dips it into the water and kicks up
-// splashes. Slightly bigger than the pothole's pool (the pond's top rim is 3.2).
-export const LAKE = { x: 22, z: 54, radius: 3.6 };
+// Park lake: the pond in the (relocated) town park behaves like the pothole -
+// driving in rocks the car, dips it into the water and kicks up splashes. Much
+// bigger than the pothole's pool, now that it shares the enlarged park.
+export const LAKE = { x: -122, z: 70, radius: 16 };
 
 function makePothole(scene) {
   const { x, z, radius } = POTHOLE;
@@ -1009,24 +1009,30 @@ function makeBench(scene, x, z, rotY) {
   addKnockable(group, 1.1, { fallTime: 0.35 });
 }
 
-// The park is a small square of grass, x 14..30 / z 44..64, with the library
-// hard against its east edge and park-spine along the far side. The library
-// fronts west onto the grass, so the east fence is left off so the two read as
-// one place.
+// The park is a big rectangle of grass, x -148..-98 / z 16..106, sitting where
+// the old nature-area lake used to be (the city grew 4x and the park moved out
+// of the town square, then out here). The shell (SHELL_X/SHELL_Z) sits on it, so
+// the lawn, the slab hole and the portal all travel together. See clam.js. The
+// playground (a drive-up slide and a red merry-go-round) and a large pond share
+// the same lawn.
+const PARK_X0 = -148, PARK_X1 = -98, PARK_Z0 = 16, PARK_Z1 = 106;
+
+const sandMat = new THREE.MeshStandardMaterial({ color: 0xcbb389, roughness: 1 });
+
 function addPark(scene) {
   // The lawn is an extruded slab with the scallop's own silhouette punched out
   // of it, so the shell's wavy margin finishes its run inside the turf instead
   // of sitting on top of it. The hole is cut to the FAN, not to a circle: the
   // valve only spans ~200 degrees, so a round hole would open onto bare earth
   // behind the hinge.
-  // Park lawn: x 14..30, z 44..64, expressed in the shape's frame for a mesh
-  // sitting at (SHELL_X, 0, SHELL_Z) rotated -90 deg about X - so sy runs from
-  // (SHELL_Z - 64) to (SHELL_Z - 44).
+  // The lawn rectangle is expressed in the shape's frame for a mesh sitting at
+  // (SHELL_X, 0, SHELL_Z) rotated -90 deg about X - so the shape's y runs from
+  // (SHELL_Z - PARK_Z0) down to (SHELL_Z - PARK_Z1).
   const lawnShape = new THREE.Shape();
-  lawnShape.moveTo(14 - SHELL_X, SHELL_Z - 64);
-  lawnShape.lineTo(30 - SHELL_X, SHELL_Z - 64);
-  lawnShape.lineTo(30 - SHELL_X, SHELL_Z - 44);
-  lawnShape.lineTo(14 - SHELL_X, SHELL_Z - 44);
+  lawnShape.moveTo(PARK_X0 - SHELL_X, SHELL_Z - PARK_Z0);
+  lawnShape.lineTo(PARK_X1 - SHELL_X, SHELL_Z - PARK_Z0);
+  lawnShape.lineTo(PARK_X1 - SHELL_X, SHELL_Z - PARK_Z1);
+  lawnShape.lineTo(PARK_X0 - SHELL_X, SHELL_Z - PARK_Z1);
   lawnShape.closePath();
   const pit = new THREE.Path();
   const pitPts = clamFanOutline(T_GRASS_HOLE, SHELL_X, SHELL_Z);
@@ -1046,24 +1052,221 @@ function addPark(scene) {
   park.receiveShadow = true;
   scene.add(park);
 
+  // A sandy shore ring, then the water disc, so the pond reads as a lake rather
+  // than a blue puddle on the turf.
+  const pondSand = new THREE.Mesh(
+    new THREE.RingGeometry(LAKE.radius - 0.2, LAKE.radius + 3.5, 48),
+    sandMat
+  );
+  pondSand.rotation.x = -Math.PI / 2;
+  pondSand.position.set(LAKE.x, 0.17, LAKE.z);
+  pondSand.receiveShadow = true;
+  scene.add(pondSand);
+
   const pond = new THREE.Mesh(
-    new THREE.CylinderGeometry(3.2, 3.6, 0.12, 24),
+    new THREE.CircleGeometry(LAKE.radius, 48),
     new THREE.MeshStandardMaterial({ color: 0x2f6fae, roughness: 0.35 })
   );
-  pond.position.set(22, 0.16, 54);
+  pond.rotation.x = -Math.PI / 2;
+  pond.position.set(LAKE.x, 0.18, LAKE.z);
   pond.receiveShadow = true;
   scene.add(pond);
 
-  [[15,45],[15,63],[29,45],[29,63],[22,45],[22,63],[15,54],[29,54]].forEach(([x, z]) => makeTree(scene, x, z));
-  // Park benches around the perimeter - facing inward
-  makeBench(scene, 16, 60, 0);
-  makeBench(scene, 28, 60, Math.PI);
-  makeBench(scene, 16, 48, Math.PI);
-  makeBench(scene, 28, 48, 0);
-  makeBench(scene, 22, 62.5, 0);
-  makeBench(scene, 22, 45.5, Math.PI);
-  // The bench at (22,62.5) sits a stride clear of the shell's pit lip.
-  return makeClamShell(scene, PARK_CLAM);
+  // Perimeter trees - clear of the pond, the shell and the playground.
+  [[-146, 18], [-100, 18], [-146, 104], [-100, 104], [-146, 60], [-100, 60], [-124, 104], [-104, 104]]
+    .forEach(([x, z]) => makeTree(scene, x, z));
+
+  // Benches around the lawn. The bench at (-134,104) sits a stride clear of the
+  // shell's pit lip (the clam tests pin the hole's north edge clear of it).
+  makeBench(scene, -134, 104, Math.PI);
+  makeBench(scene, -138, 70, Math.PI / 2);
+  makeBench(scene, -106, 70, -Math.PI / 2);
+  makeBench(scene, -122, 50, 0);
+  makeBench(scene, -128, 92, 0);
+
+  // The playground: a metal playground slide and a red merry-go-round.
+  const parkRamps = buildParkSlide(scene);
+  const merry = buildMerryGoRound(scene, -110, 28, 5.5);
+
+  const clamShell = makeClamShell(scene, PARK_CLAM);
+  return { clamShell, parkRamps, parkColliders: [merry.collider] };
+}
+
+// ===== Park slide =====
+// A metal playground slide, run north-south so the chute throws you INTO the
+// park, never at the west fence. You climb the open ladder on the south side —
+// a pair of side rails with rungs packed so tightly there is no bare gap
+// between them, standing almost vertical — crest at the top, then slither down
+// the wide shiny chute on the north side: main.js gives a `slide` ramp a
+// gravity-like downhill push, so the descent needs no pedal. `boost: 0` on both
+// means the car rolls off the base instead of launching. The two ramps meet at
+// the crest z. The ladder's drive surface is the ramp collider, not the mesh:
+// the rails and rungs are pure dressing over an invisible steep wedge, which is
+// why it stays drivable however bare the open ladder looks.
+const SLIDE_X = -130;   // the slide's centre line
+const SLIDE_CREST_Z = 34;   // where the ladder top meets the chute top
+function buildParkSlide(scene) {
+  const ladderMat = new THREE.MeshStandardMaterial({ color: 0x8a9099, roughness: 0.6, metalness: 0.3 });
+  const rungMat = new THREE.MeshStandardMaterial({ color: 0x707880, roughness: 0.5, metalness: 0.4 });
+  const chuteMat = new THREE.MeshStandardMaterial({ color: 0xdfe6ee, roughness: 0.18, metalness: 0.85 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0x9fe0ff, roughness: 0.4, metalness: 0.2 });
+  const defs = [
+    // Ladder: a short run for a tall rise, so it stands almost vertical. Top z =
+    // CREST, base z = CREST-2; you throttle up it. `open` builds it as a bare
+    // ladder (rails + packed rungs) rather than a solid wedge.
+    { x: SLIDE_X, z: SLIDE_CREST_Z - 1, runX: 0, runZ: 1, len: 2, width: 4.5, height: 5, boost: 0, open: true, mat: ladderMat },
+    // Chute: top z = CREST, base z = CREST+4 (north); flagged slide.
+    { x: SLIDE_X, z: SLIDE_CREST_Z + 4, runX: 0, runZ: -1, len: 8, width: 7, height: 5, boost: 0, slide: true, mat: chuteMat },
+  ];
+  for (const r of defs) {
+    const rotY = Math.atan2(-r.runZ, r.runX);
+    const slopeLen = Math.hypot(r.len, r.height);
+    const slopeAngle = Math.atan2(r.height, r.len);
+
+    // A holder in the wedge's own frame: children placed here are laid along
+    // the slope (local +X), across it (local +Z) and up from it (local +Y),
+    // then carried round with the ramp.
+    const holder = new THREE.Group();
+    holder.rotation.y = rotY;
+    holder.position.set(r.x, 0, r.z);
+
+    if (r.open) {
+      // An open ladder: two rails climbing the full slope, plus rungs packed
+      // along it. The rungs are sized to nearly fill the space between them, so
+      // the climb reads as a ladder with no bare gap — a rung roughly every
+      // 0.4 units up the 5.4-long slope.
+      for (const side of [-1, 1]) {
+        const railZ = side * (r.width / 2 - 0.12);
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(slopeLen, 0.16, 0.16), railMat);
+        rail.rotation.z = slopeAngle;
+        rail.position.set(0, r.height / 2, railZ);
+        rail.castShadow = true;
+        holder.add(rail);
+      }
+      const steps = Math.max(6, Math.round(slopeLen / 0.4));
+      const pitch = slopeLen / steps;
+      for (let i = 0; i < steps; i++) {
+        const t = (i + 0.5) / steps;
+        const rung = new THREE.Mesh(new THREE.BoxGeometry(pitch * 0.82, 0.09, r.width - 0.5), rungMat);
+        rung.rotation.z = slopeAngle;
+        rung.position.set((t - 0.5) * r.len, t * r.height + 0.05, 0);
+        rung.castShadow = true;
+        holder.add(rung);
+      }
+      scene.add(holder);
+      continue;
+    }
+
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(r.len, 0);
+    shape.lineTo(r.len, r.height);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: r.width, bevelEnabled: false });
+    geo.translate(-r.len / 2, 0, -r.width / 2);   // center the wedge on its midpoint
+    const m = new THREE.Mesh(geo, r.mat);
+    // Local +X (base -> top) lines up with the run direction.
+    m.rotation.y = rotY;
+    m.position.set(r.x, 0, r.z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+
+    if (r.slide) {
+      // Raised kerbs along each side of the chute, so the descent reads as a
+      // slide and the car is corralled down the middle.
+      for (const side of [-1, 1]) {
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(slopeLen, 0.3, 0.3), railMat);
+        rail.rotation.z = slopeAngle;
+        rail.position.set(0, r.height / 2 + 0.15, side * (r.width / 2 - 0.2));
+        rail.castShadow = true;
+        holder.add(rail);
+      }
+    }
+    scene.add(holder);
+  }
+  return defs;
+}
+
+// ===== Merry-go-round (playground spinner) =====
+// A red deck that only turns while the car is parked on it: main.js reads the
+// collider's live `spin` and carries the car around with the deck - the same
+// machinery the underground turntable uses. It winds up from rest while
+// occupied, then coasts back down. The grab handles are cosmetic only; you drive
+// straight through them.
+const _merryRounds = [];
+const merryRedMat = new THREE.MeshStandardMaterial({ color: 0xd8231b, roughness: 0.5, metalness: 0.05 });
+const merryTrimMat = new THREE.MeshStandardMaterial({ color: 0xf2c53d, roughness: 0.5, metalness: 0.25 });
+const merryPoleMat = new THREE.MeshStandardMaterial({ color: 0xf4efe4, roughness: 0.6 });
+
+function buildMerryGoRound(scene, x, z, r) {
+  const group = new THREE.Group();
+  group.position.set(x, 0, z);
+
+  const deckTop = 0.62;   // matches the collider top main.js reads (h + 0.3)
+  const spinner = new THREE.Group();
+
+  const deck = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.46, 40), merryRedMat);
+  deck.position.y = deckTop - 0.23;
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  spinner.add(deck);
+
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(r - 0.05, 0.12, 10, 40), merryTrimMat);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = deckTop - 0.04;
+  spinner.add(rim);
+
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const hx = Math.cos(a) * r * 0.82;
+    const hz = Math.sin(a) * r * 0.82;
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.7, 10), merryTrimMat);
+    bar.position.set(hx, deckTop + 0.85, hz);
+    bar.castShadow = true;
+    spinner.add(bar);
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 10), merryRedMat);
+    knob.position.set(hx, deckTop + 1.7, hz);
+    knob.castShadow = true;
+    spinner.add(knob);
+  }
+  group.add(spinner);
+
+  // Static hub pole and cap the deck turns around.
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 3.0, 16), merryPoleMat);
+  pole.position.y = 1.9;
+  pole.castShadow = true;
+  group.add(pole);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.45, 16, 12), merryTrimMat);
+  cap.position.y = 3.4;
+  cap.castShadow = true;
+  group.add(cap);
+
+  scene.add(group);
+
+  const collider = { x, z, halfW: r, halfD: r, r, h: 0.32, soft: true, spin: 0 };
+  const state = { x, z, r, spin: 0, spinner, collider };
+  _merryRounds.push(state);
+  return state;
+}
+
+// Wind each deck up while a car sits on it and let it coast down otherwise.
+// Called once a frame from main.js while in the city. `alsoPos` is an optional
+// SECOND body on the deck — the split-screen twin, or the blue chase car — so
+// the deck winds up for them too, not only for Player 1.
+export function updateMerryGoRound(delta, carPos, alsoPos = null) {
+  for (const m of _merryRounds) {
+    const onDeck = (p) => {
+      const dx = p.x - m.x;
+      const dz = p.z - m.z;
+      return dx * dx + dz * dz < (m.r * 0.9) * (m.r * 0.9);
+    };
+    const occupied = onDeck(carPos) || (alsoPos ? onDeck(alsoPos) : false);
+    if (occupied) m.spin = Math.min(m.spin + 0.9 * delta, 2.4);
+    else m.spin = Math.max(m.spin - 0.7 * delta, 0);
+    m.collider.spin = m.spin;
+    m.spinner.rotation.y += m.spin * delta;
+  }
 }
 
 // Add a giant open scallop (pecten) shell near the pond - like Botticelli's
@@ -1756,21 +1959,22 @@ function addVillageCharm(scene, fountains) {
   sidewalk.receiveShadow = true;
   scene.add(sidewalk);
 
-  // Fountain + statues on the town square: the block between west-spine and
-  // arterial-ns, set back from the main drag behind the bodega, so you meet the
-  // shopfront first and the fountain opens out behind it.
-  makeFountain(scene, -22, 32, fountains);
-  makeStatue(scene, -25, 32, 0.3, bronzeMat);
-  makeFlowerBed(scene, -27.5, 32, 0);
-  makeStatue(scene, -19, 32, -0.3, statueStoneMat);
-  makeFlowerBed(scene, -16.5, 32, 0);
-  makeFlowerBed(scene, -22, 36, 0);
+  // Fountain + statues on the park lawn: the town-square water feature and its
+  // statues + flowerbeds moved out to the park proper, on the open apron south
+  // of the pond and east of the playground slide, so the whole charm ensemble
+  // sits on the grass rather than on a plaza in the middle of the town blocks.
+  makeFountain(scene, -114, 46, fountains);
+  makeStatue(scene, -119, 46, 0.3, bronzeMat);
+  makeFlowerBed(scene, -116.5, 46, 0);
+  makeStatue(scene, -109, 46, -0.3, statueStoneMat);
+  makeFlowerBed(scene, -111.5, 46, 0);
+  makeFlowerBed(scene, -114, 41, 0);
 
   // A couple more in the park, clear of the pond and the benches
-  makeStatue(scene, 17.5, 62, -0.8, bronzeMat);
-  makeFlowerBed(scene, 15, 62, 0);
-  makeStatue(scene, 26.5, 46, 0.8, statueStoneMat);
-  makeFlowerBed(scene, 26.5, 44, Math.PI / 2);
+  makeStatue(scene, -128, 50, -0.8, bronzeMat);
+  makeFlowerBed(scene, -130.5, 50, 0);
+  makeStatue(scene, -112, 90, 0.8, statueStoneMat);
+  makeFlowerBed(scene, -112, 92.5, Math.PI / 2);
 }
 
 // ===== Build everything =====
@@ -1796,21 +2000,13 @@ export function addProps(scene) {
   makeStopSign(scene, 0, 12.8, 0);
   makeStopSign(scene, 0, -12.8, Math.PI);
 
-  // The lamp-post rows. The x = -17 row runs along the front of the two suburban
-  // houses, and two of its posts stood square in the middle of a garage mouth:
-  // the brown-roofed house's OPEN BAY — the way into the house — at z -70, and the
-  // grey-roofed house's shut roller door at z -42. Nothing mechanical was wrong (a
-  // lamp post is knockable, not a collider, so it never blocked the trigger), but
-  // a streetlight planted in the driving line of a garage reads as a mistake.
-  //
-  // So the row SKIPS the two house frontages, and each skipped post is replaced on
-  // the grass verge instead. The frontage bounds are declared here rather than
-  // imported, because props.js knows nothing about buildings; they are copied from
-  // the LAYOUT entries in cityBuildings.js and suburbanGarages.test.mjs re-derives
-  // them, so a building that moves cannot quietly leave the light behind.
+  // The lamp-post rows. The town rows run along x = +/-17 and z = +/-17, but
+  // they no longer relate to the two suburban houses: those moved out to the
+  // east outer-belt cul-de-sac (see cityBuildings.js LAYOUT), where they front
+  // a north-south street. That street gets its own short verge row below.
   const HOUSE_FRONTAGES = [
-    { name: 'houseStandard open bay', z0: -73.5, z1: -67.0 },    // brown roof, the way in
-    { name: 'houseGarage roller door', z0: -47.25, z1: -39.25 },  // grey roof, now shut
+    { name: 'houseStandard open bay', z0: 43.7, z1: 51.1 },      // brown roof, the way in
+    { name: 'houseGarage roller door', z0: 72.25, z1: 81.25 },    // grey roof, now shut
   ];
   const onAFrontage = (z) => HOUSE_FRONTAGES.some((f) => z > f.z0 && z < f.z1);
 
@@ -1821,15 +2017,33 @@ export function addProps(scene) {
   }
   for (let z = -70; z <= 70; z += 14) {
     makeLampPost(scene, 17, z);
-    if (!onAFrontage(z)) makeLampPost(scene, -17, z);
+    makeLampPost(scene, -17, z);
   }
-  // The two replacements. x = -14.5 is the middle of the grass verge between the
-  // houses' front faces (x -17.5) and the arterial-ns kerb (x -12), which is where
-  // a streetlight actually belongs; each z is by a front door rather than over a
-  // garage, and clear of both garage bands and both door paths. The bay does not
-  // lose its light — it has its own beckoning lamp inside it.
-  makeLampPost(scene, -14.5, -62.5);
-  makeLampPost(scene, -14.5, -51.0);
+  // The cul-de-sac row: a line of posts down the grass verge between the two
+  // houses' front faces (x ~108.5) and the street kerb (x 112). The row SKIPS
+  // each garage mouth, because a streetlight planted in the driving line of a
+  // garage reads as a mistake even though a lamp post is knockable rather than
+  // a collider, and it skips any post that would land on top of one of the
+  // door lamps below. The frontage bands are declared here rather than
+  // imported, because props.js knows nothing about buildings; they are copied
+  // from the LAYOUT entries in cityBuildings.js, and suburbanGarages.test.mjs
+  // re-derives them, so a house that moves cannot quietly leave the light
+  // behind.
+  //
+  // Two posts by the front doors, so a skipped frontage is still lit. Each z is
+  // the door's own centreline in world space (the front doors sit off the
+  // garage mouths), and x = 110.5 is mid-verge, clear of both aprons.
+  //
+  // The brown house's door moved when the house was made bigger - it is 1.6
+  // wide now and stands 13 clear of the bay, scaled off the house interior's
+  // own front door - and it moved again when the door was made a normal leaf
+  // beside the garage instead of a barn opening over it, so its lamp moved
+  // with it, to 53.06.
+  const DOOR_LAMPS = [53.06, 67.25];
+  for (let z = 44; z <= 84; z += 6) {
+    if (!onAFrontage(z) && !DOOR_LAMPS.some((d) => Math.abs(z - d) < 1.5)) makeLampPost(scene, 110.5, z);
+  }
+  for (const z of DOOR_LAMPS) makeLampPost(scene, 110.5, z);
 
   // Fire hydrants, all on grass verges. Every one is checked against the ROADS
   // table in cityRoads.js by the city audit, so none of them stands in tarmac.
@@ -1844,29 +2058,29 @@ export function addProps(scene) {
   makeFireHydrant(scene, -46, 14);     // bodega frontage
   makeFireHydrant(scene, -46, 16);     // north verge above the bodega
   makeFireHydrant(scene, -22, 37);     // north side of the town square
-  makeFireHydrant(scene, 31, 50);      // between the park and the library
   makeFireHydrant(scene, 44, 100);     // far north, east of the hospital
   makeFireHydrant(scene, -13.5, 90);   // far north, verge on the main drag
   makeFireHydrant(scene, 64, 100);     // far north, west of the retained block
-  makeFireHydrant(scene, 67, 60);      // grass east of the park
+  makeFireHydrant(scene, -100, 100);   // north-east edge of the park
+  makeFireHydrant(scene, -121, 18);    // south edge of the park, by the gate
   // The market row: three along its own sidewalk and one at its west end.
   makeFireHydrant(scene, -34, 59);
   makeFireHydrant(scene, -20, 59);
   makeFireHydrant(scene, -46, 55);
 
-  // Park border, three sides only — the library fronts the open east edge.
-  makeFenceLine(scene, 14, 44, 14, 64, 10);
-  makeFenceLine(scene, 14, 64, 30, 64, 8);
-  makeFenceLine(scene, 30, 64, 30, 44, 10);
+  // Park border, three sides only — the south edge opens onto the park spur.
+  makeFenceLine(scene, -148, 16, -148, 106, 12);
+  makeFenceLine(scene, -148, 106, -98, 106, 10);
+  makeFenceLine(scene, -98, 16, -98, 106, 12);
 
-  const clamShell = addPark(scene);
+  const { clamShell, parkRamps, parkColliders } = addPark(scene);
   addMarketStalls(scene);
   addVillageCharm(scene, fountains);
   addStreetFurniture(scene);
   const { colliders: mineColliders } = makeMineShaftEntrance(scene);
   const mineGems = excavateDescendingAdit(scene);
 
-  return { trafficLights, fountains, mineColliders, mineGems, clamShell };
+  return { trafficLights, fountains, mineColliders, mineGems, clamShell, parkRamps, parkColliders };
 }
 
 // ========================================================================

@@ -15,12 +15,13 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // you read off "does this one reach that one?" by comparing edges. The mesh
 // builder converts to centre+size.
 //
-// The network is deliberately kept INSIDE the railway ring (the loop runs at
-// x = +/-84, z = -84 and z = +120, with 10-unit corner arcs), so no road ever
-// meets the track. The rail is the town's edge, which is why it reads as a
-// boundary rather than an obstacle in the middle of the streets. Nothing in
-// town is allowed to straddle the loop either — see the clearance notes on
-// RAIL_CLEARANCE below.
+// The town's own streets are kept INSIDE the railway ring (the loop runs at
+// x = +/-84, z = -84 and z = +120, with 10-unit corner arcs), so no town road
+// meets the track — the rail is the town's edge, which is why it reads as a
+// boundary rather than an obstacle in the middle of the streets. The two
+// arterials are the deliberate exception: they run straight out over the tracks
+// and on into the new outer belt, where they join the ring road that circles the
+// whole finite map (see the outer-belt entries below).
 // ---------------------------------------------------------------------------
 
 // Widths, in world units. The car is a shade under 2.3 wide, so a 14-wide
@@ -43,12 +44,44 @@ export const TOWN = { x0: -72, x1: 72, z0: -72, z1: 108 };
 // lines, local streets get a dashed centre line only.
 export const ROADS = [
   // ---- Arterials — the same two the traffic AI already drives ------------
-  // Both run the full width of the world, crossing the railway on the way, so a
-  // car can leave town in any direction without ever touching grass.
-  { id: 'arterial-ew', kind: 'arterial', x0: -90, x1: 90, z0: -12, z1: 12 },
-  // Runs north past the town centre and on past the mega-ramp base at z = 80,
-  // because you need tarmac all the way up to line up on it.
-  { id: 'arterial-ns', kind: 'arterial', x0: -12, x1: 12, z0: -90, z1: 123 },
+  // Both run the full width of the city now, out across the railway ring to the
+  // outer belt's ring road, so a car can leave town in any direction without
+  // ever touching grass.
+  { id: 'arterial-ew', kind: 'arterial', x0: -166, x1: 166, z0: -12, z1: 12 },
+  // Runs north past the town centre and on past the mega-ramp base at z = 80 and
+  // out through the outer belt to the north ring road.
+  { id: 'arterial-ns', kind: 'arterial', x0: -12, x1: 12, z0: -150, z1: 198 },
+
+  // ---- Outer belt ring --------------------------------------------------
+  // A rectangular loop in the outer belt, just inside the brick boundary wall,
+  // so the new outer area is drivable and connected rather than a grassy void.
+  // Moved INWARD (west/east/north) so a strip of land survives between the road
+  // and the wall: the city's portal tree stands against the west wall inside
+  // that strip. ring-west is 18 wide (not 20) because the park's west edge is
+  // hard-pinned at x = -148; ring-south does not move at all because the
+  // spaceport yard occupies the ground it would cut through.
+  { id: 'ring-north', kind: 'arterial', x0: -166, x1: 166, z0: 178, z1: 198 },
+  { id: 'ring-south', kind: 'arterial', x0: -166, x1: 166, z0: -150, z1: -130 },
+  { id: 'ring-west', kind: 'arterial', x0: -166, x1: -148, z0: -150, z1: 198 },
+  { id: 'ring-east', kind: 'arterial', x0: 148, x1: 166, z0: -150, z1: 198 },
+
+  // ---- Outer-belt access spurs -----------------------------------------
+  // A spur up the west belt to the spaceport yard's north gate (the yard was
+  // moved out here out of the town), and a short dead-end street in the east
+  // belt where the suburban houses now sit in a cul-de-sac. The south end meets
+  // the yard slab's north edge: the slab is 24x32 (z -126..-94), so the spur
+  // stops at z = -94 and never runs across the concrete.
+  { id: 'spaceport-spur', kind: 'street', x0: -128, x1: -112, z0: -94, z1: 12 },
+  // The cul-de-sac is a north-south street the two houses front from the west
+  // (their fronts point east at x ~109). It dead-ends at both z ends and is
+  // joined to the east ring by a short link, so the pair reads as a tucked-away
+  // stub off the ring rather than a through-route.
+  { id: 'culdesac', kind: 'street', x0: 112, x1: 126, z0: 42, z1: 84 },
+  { id: 'culdesac-link', kind: 'street', x0: 126, x1: 148, z0: 54, z1: 68 },
+  // A short stub north off the top of the spaceport-spur to the park's south
+  // edge (the park moved out of the town square into the belt with the city-grown
+  // 4x, then onto the old nature-area lake site; see props.js addPark).
+  { id: 'park-spur', kind: 'street', x0: -124, x1: -116, z0: 12, z1: 16 },
 
   // ---- Market street (north-west) --------------------------------------
   // The shops face south at z = 58, so the street that serves them has to be
@@ -66,8 +99,8 @@ export const ROADS = [
   // Split either side of the mega-ramp, which climbs the x ~0 corridor from
   // z = 40 to z = 80, so no east-west street can cross it up there.
   { id: 'north-row', kind: 'street', x0: 6, x1: 56, z0: 65, z1: 79 },
-  // Spine up the east side, serving the library and the park, and reaching
-  // the far north blocks. It starts at z = 43, clear of the portal hill.
+  // Spine up the east side, serving the library, and reaching the far north
+  // blocks. It starts at z = 43, clear of the portal hill.
   { id: 'park-spine', kind: 'street', x0: 48, x1: 62, z0: 43, z1: 123 },
 
   // ---- Spines -----------------------------------------------------------

@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
   BEACH_SANDCASTLE, SAND_PILE_R, sandPileProfileAt, setSandPile, beachGroundOffsetAt,
-} from './layout.js?v=1800000000000';
+} from './layout.js?v=1800000000003';
 
 // ===== The sand castle =====
 //

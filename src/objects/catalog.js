@@ -29,16 +29,22 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildCityBuilding, frontYard, kerbMailbox, newspaperRack } from '../cityBuildings.js';
-import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1799999999999';
+import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1800000000014';
 import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js?v=1799999999999';
 import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';
-import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1800000000000';
+import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1800000000003';
 import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js?v=1791038847704';
-import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1800000000000';
-import { buildCoralHead } from '../levels/beach/reefs.js?v=1800000000000';
-import { createGulls } from '../levels/beach/seagulls.js?v=1800000000000';
+import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1800000000003';
+import { buildCoralHead } from '../levels/beach/reefs.js?v=1800000000001';
+import { createGulls } from '../levels/beach/seagulls.js?v=1800000000001';
 import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
-import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore } from '../levels/space/index.js?v=1799900000000';
+import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore } from '../levels/space/index.js?v=1800000000015';
+import { BARN, SILO, WATER_TOWER, MILL, FARM_HOUSE } from '../levels/cornfield/layout.js?v=1800000000012';
+import {
+  makeBarnModel, makeSiloModel, makePumpkinModel, makeCornStalkModel, makePortalTree,
+  makeAppleTreeModel, makeBarrelModel, makeFarmallTractor, makeFarmTruckModel,
+  makeWaterTowerModel, makeMillModel, makeFarmhouseModel,
+} from '../levels/cornfield/index.js?v=1800000000019';
 import {
   makeCivicLoungeChair, makeInfoKiosk, makeVendingPod, makeCleanerDrone,
   makeSecurityBarrier, makeEyeTerminal, makeBoostPad,
@@ -56,7 +62,7 @@ import {
   buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
   buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
   HOUSE, ROOMS, FIREPLACE,
-} from '../levels/house/index.js?v=1800000000001';
+} from '../levels/house/index.js?v=1800000000022';
 import { makeGalley, makeStove, makeCounterRun, makeKnifeStrip, makeCoffeeMaker, makeBlender, makeToasterOven, makeMicrowave, makeUtensilJar, makeTeapot, makeOilBottle, makeCuttingBoard, makeSpiceRack, HOUSE_KITCHEN, STATION_KITCHEN } from '../kitchen.js?v=1799900000000';
 import {
   makePlayTrain,
@@ -69,7 +75,7 @@ import {
   makeHotWheels,
   makeJackInTheBox,
   makeTerrarium,
-} from '../levels/house/playroom.js';
+} from '../levels/house/playroom.js?v=1800000000021';
 // ===== Primitives =====
 // Small wrappers so each object below is a list of shapes rather than a wall of
 // `new THREE.Mesh(new THREE.BoxGeometry(...), new THREE.MeshStandardMaterial({...}))`.
@@ -346,6 +352,7 @@ export const LEVELS = [
   { id: 'house', label: 'House', blurb: 'Every room of the house, one category at a time.' },
   { id: 'beach', label: 'Beach', blurb: 'The cove: the campfire, the palms, the reefs.' },
   { id: 'space', label: 'Space Station', blurb: 'The wheel: drive the inside of a rotating station.' },
+  { id: 'cornfield', label: 'Farmland', blurb: 'The farm out west: flatten the corn, climb the silo, roll the pumpkins.' },
 ];
 
 // ===== CITY =====
@@ -377,7 +384,11 @@ function cityCategories() {
         obj('House Garage', -22, -49, 'houseGarage'),
         obj('Front Lawn Set', -22, -67, () => {
           const g = group('Front Lawn Set');
-          frontYard(g, 11, 10);
+          // The brown-roofed house's own front garden: the lawn is 20 wide and
+          // 12 deep now, with the door and its window where they are on it.
+          // The door is the house's normal leaf beside the bay (1.55 wide at
+          // x -1.06), and the driveway's west edge keeps the beds off it.
+          frontYard(g, 20, 12, -1.061, 1.555, -8.6, 1.1);
           return g;
         }),
       ],
@@ -998,6 +1009,34 @@ function beachCategories() {
   ];
 }
 
+// ===== CORNFIELD =====
+// The farm out in the west belt, reached through the arch cut in the giant tree.
+// Every build delegates to the level's own make* factory, so the tiles are the
+// true geometry. X/Z are real world positions (see AGENTS.md).
+function cornfieldCategories() {
+  return [
+    {
+      id: 'farm', name: 'The Farm', blurb: 'The barn, the silo, and what grows around them.',
+      objects: [
+        obj('Red Barn', BARN.x, BARN.z, () => makeBarnModel()),
+        obj('Grain Silo', SILO.x, SILO.z, () => makeSiloModel()),
+        obj('Water Tower', WATER_TOWER.x, WATER_TOWER.z, () => makeWaterTowerModel()),
+        obj('Mill House', MILL.x, MILL.z, () => makeMillModel(), { s: 26, w: -12 }),
+        obj('Farmhouse', FARM_HOUSE.x, FARM_HOUSE.z, () => makeFarmhouseModel(), { s: 22, w: 10 }),
+        obj('Giant Pumpkin', 8, 46, () => makePumpkinModel()),
+        obj('Corn Stalk', -38, 0, () => makeCornStalkModel()),
+        obj('Apple Tree', 77, -34, () => makeAppleTreeModel()),
+        obj('Barrel', -6, -18, () => makeBarrelModel()),
+        obj('1939 Farmall', 0, -10, () => makeFarmallTractor()),
+        obj('Farm Truck', 76, 78, () => makeFarmTruckModel()),
+        // The giant tree stands at the city end of the portal; its world spot is
+        // baked into main.js (CORN_TREE), not the level module.
+        obj('Portal Tree', -174, 60, () => makePortalTree(new THREE.Group(), 0, 0, 0).group),
+      ],
+    },
+  ];
+}
+
 // ===== SPACE STATION =====
 // The categories ARE the four rim sectors plus the core/hull, because that is
 // exactly how the station is laid out - each arc of the wheel is one function of
@@ -1069,7 +1108,10 @@ function spaceCategories() {
         obj('Compactor', 1, 8, () => makeCompactor(), { s: 227, w: 0 }),
         obj('Tractor Pad', 4, 8, () => makeTractorPad(), { s: 219, w: 0 }),
         obj('Vent Grate', 7, 8, () => makeVentGrate(), { s: 244, w: 0 }),
-        obj('Rescue Crane', 10, 8, () => makeRescueCrane(), { s: 262, w: 8.4 }),
+        // pose: 'ventGrab' swaps the normal park-behind context shot for the
+        // frozen rescue-grab tableau + camera HUD (see startVentCamTune in
+        // main.js); s/w keep the standard stand-off parking for everything else.
+        obj('Rescue Crane', 10, 8, () => makeRescueCrane(), { s: 262, w: 8.4, pose: 'ventGrab' }),
         obj('Decon Airlock', 13, 8, () => makeDeconAirlock(), { s: 262, w: 8.4 }),
         obj('Decon Bay', 16, 8, () => makeDeconBay(), { s: 262, w: 8.4 }),
         obj('Trash Loader', 19, 8, () => makeLoaderBot(), { s: 269, w: 15 }),
@@ -1091,6 +1133,7 @@ const CATEGORY_BUILDERS = {
   ramp: rampCategories,
   beach: beachCategories,
   space: spaceCategories,
+  cornfield: cornfieldCategories,
 };
 
 const categoryCache = new Map();

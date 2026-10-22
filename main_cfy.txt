@@ -1,0 +1,57 @@
+﻿13705:     // The cornfield is flat ground plus two surface families the module owns:
+13706:     // the barn ramp + silo spiral (rampInfoAt, baseY-aware) and the hayloft
+13707:     // (loftTopAt, gated on the car already being up at loft level so the ground
+13708:     // floor under it is never lifted). buildingTopAt is NOT consulted â€” the
+13709:     // walls' `top` field already contains a car up at loft height, and the loft
+13710:     // is not a collider at all.
+13711:     const gy = cornfieldWorld.groundY;
+13712:     if (jumpState.inAir) {
+13713:       jumpState.yVelocity -= gravity * delta;
+13714:       car.position.y += jumpState.yVelocity * delta;
+13715:       const surface = Math.max(
+13716:         cornfieldWorld.rampSurfaceY(car.position.x, car.position.z),
+13717:         cornfieldWorld.loftTopAt(car.position.x, car.position.z, car.position.y),
+13718:         cornfieldWorld.plateauTopAt(car.position.x, car.position.z, car.position.y)
+13719:       );
+13720:       const floor = Math.max(gy, surface);
+13721:       if (car.position.y <= floor) {
+13722:         car.position.y = floor;
+13723:         const impact = Math.abs(jumpState.yVelocity);
+13724:         jumpState.yVelocity = 0;
+13725:         jumpState.inAir = false;
+13726:         shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
+13727:       }
+13728:     } else {
+13729:       const r = cornfieldWorld.rampInfoAt(car.position.x, car.position.z);
+13730:       currentRamp = null;
+13731:       if (r) {
+13732:         car.position.y = r.baseY + r.height * r.s;
+13733:         wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+13734:       } else {
+13735:         const top = Math.max(
+13736:           cornfieldWorld.loftTopAt(car.position.x, car.position.z, car.position.y),
+13737:           cornfieldWorld.plateauTopAt(car.position.x, car.position.z, car.position.y)
+13738:         );
+13739:         if (top > 0) {
+13740:           car.position.y = Math.max(car.position.y, top);
+13741:         } else if (car.position.y > gy + 1) {
+13742:           // Just drove off the loft's (or the hill's) open edge â€” fall.
+13743:           jumpState.inAir = true;
+13744:           jumpState.yVelocity = 0;
+13745:         } else {
+13746:           car.position.y = gy;
+13747:         }
+13748:         wasOnRamp = null;
+13749:       }
+13750:     }
+13751:   } else if (worldState === 'house') {
+13752:     // A house is mostly a flat floor and a ceiling. But a few things in it are
+13753:     // meant to be driven on: the raised tiled deck, the surfboard ramp and the
+13754:     // bathtub's dish (house/surfaces.js). buildingTopAt is deliberately NOT
+13755:     // consulted here â€” the house's colliders are its walls with h = ceiling
+13756:     // height, so a wall would read as a 26-unit rooftop and snap the car on top.
+13757:     const surfs = houseWorld.surfaces;
+13758:     if (jumpState.inAir) {
+13759:       jumpState.yVelocity -= gravity * delta;
+13760:       car.position.y += jumpState.yVelocity * delta;
+

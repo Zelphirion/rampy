@@ -1,0 +1,12 @@
+﻿1345:   ];
+1346:   const truckCollider = colliders[colliders.length - 1];
+1347:   const ramps = [BARN_RAMP, hillRamp()];
+1348:   const spiral = buildSiloRamp(scene);
+1349:   ramps.push(...spiral);
+1350: 
+1351:   let shimmerT = 0;
+1352: 
+1353:   return {
+1354:     group: scene,
+1355:     colliders,
+

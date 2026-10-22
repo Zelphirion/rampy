@@ -1,8 +1,8 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
   BEACH_MERMAID_CASTLE, MERMAID_CASTLE_SCALE, beachGroundOffsetAt,
-} from './layout.js?v=1800000000000';
-import { buildStanding } from './sandcastle.js?v=1800000000000';
+} from './layout.js?v=1800000000003';
+import { buildStanding } from './sandcastle.js?v=1800000000001';
 
 // ===== The mermaids' castle =====
 //

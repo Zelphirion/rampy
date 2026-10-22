@@ -15,9 +15,9 @@ import {
 const EPS = 1e-9;
 
 // The park lawn, and the scenery the shell must stay clear of.
-const LAWN = { x0: 14, x1: 30, z0: 44, z1: 64 };
-const POND_EDGE_Z = 57.6;                        // pond rim, southern-most point
-const BENCH = { z: 62.5, halfD: 0.35 };
+const LAWN = { x0: -148, x1: -98, z0: 16, z1: 106 };   // world bounds of the park lawn
+const POND_EDGE_Z = 86;                                 // pond's north rim (world z 70+16)
+const BENCH = { z: 104, halfD: 0.35 };                  // north bench, clear of the pit
 const LOWER_LIP_X = SHELL_X + LOWER_SIZE;        // where the lower valve's rim lands
 const EPS2 = 1e-6;
 
@@ -111,7 +111,7 @@ test('the pit closes on the umbo, so there is no gap at the hinge', () => {
 test('the drivable ground is the dish inside its margin, lawn outside', () => {
   // Off the shell the ground is the top of the lawn, not zero - the lawn is a
   // slab, and the caller adds this straight onto the world's ground height.
-  for (const [x, z] of [[25, SHELL_Z], [SHELL_X, SHELL_Z + 2.6], [21, SHELL_Z], [SHELL_X, 45]]) {
+  for (const [x, z] of [[-140, SHELL_Z], [SHELL_X, SHELL_Z + 2.6], [-142, SHELL_Z], [SHELL_X, 45]]) {
     assert.equal(clamBowlHeightAt(x, z), SHELL_GRASS, `(${x},${z}) should be flat turf`);
   }
   assert.ok(Math.abs(clamBowlHeightAt(SHELL_X, SHELL_Z) - SHELL_UMBO_Y) < EPS2,
@@ -141,7 +141,7 @@ test('the fan leaves a lawn wedge behind its umbo, and the ground says so', () =
   // car - which stops in the trigger pocket, well east - never reaches it.
   const west = worldHole(T_GRASS_HOLE).x0 + SHELL_X;
   assert.ok(SHELL_X - west < 0.35, `wedge reaches ${(SHELL_X - west).toFixed(2)} west of the umbo`);
-  assert.ok(west > 21.5, 'the wedge should still be inside the lawn, not cut into the road');
+  assert.ok(west > LAWN.x0, 'the wedge should still be inside the lawn, not cut into the road');
   // And the trigger pocket never overlaps it.
   assert.ok(clamInsideShell(SHELL_X - 0.05, SHELL_Z) || SHELL_X - 0.05 > west,
     'trigger pocket must not reach behind the umbo');
@@ -152,8 +152,8 @@ test('the mouth is a continuous slope, with no cliff on the driving line', () =>
   // trigger pocket. It has to be smooth all the way - no step where the lawn
   // ends, no drop where the dish crosses the turf.
   let worst = 0;
-  let prev = clamBowlHeightAt(24.5, SHELL_Z);
-  for (let x = 24.45; x >= SHELL_X + 0.02; x -= 0.01) {
+  let prev = clamBowlHeightAt(SHELL_X + 2.5, SHELL_Z);
+  for (let x = SHELL_X + 2.45; x >= SHELL_X + 0.02; x -= 0.01) {
     const y = clamBowlHeightAt(x, SHELL_Z);
     assert.ok(Number.isFinite(y), `ground went non-finite at x=${x.toFixed(2)}`);
     worst = Math.max(worst, Math.abs(y - prev));
@@ -180,16 +180,25 @@ test('the bowl profile reaches the lawn exactly where the hole is cut', () => {
   }
 });
 
-test('the trigger is a small pocket in the middle of the bowl', () => {
-  for (const [x, z] of [[SHELL_X, SHELL_Z], [SHELL_X + 0.4, SHELL_Z], [SHELL_X + 0.4, SHELL_Z + 0.3]]) {
+test('the trigger arms near-touch, across the whole fan', () => {
+  // The bowl pocket and anywhere on the fan itself: the car's centre within
+  // (or just past) the shell's silhouette starts the cinematic, because the
+  // old mid-bowl pocket made the portal feel broken — you could drive right
+  // across the shell and nothing happened.
+  for (const [x, z] of [
+    [SHELL_X, SHELL_Z], [SHELL_X + 0.4, SHELL_Z], [SHELL_X + 0.4, SHELL_Z + 0.3],
+    [SHELL_X + 1.5, SHELL_Z],           // out at the mouth, on the fan
+    [SHELL_X, SHELL_Z - 1.6],           // the wide side rib
+    [SHELL_X, SHELL_Z + 2.2],           // just past the far rim — nose-touch
+  ]) {
     assert.ok(clamInsideShell(x, z), `(${x},${z}) should trigger`);
   }
-  // Out on the rim, off the shell, or out at the wide ends of the fan.
-  for (const [x, z] of [[25, SHELL_Z], [SHELL_X, SHELL_Z + 2.2], [SHELL_X, 45], [0, 0],
-                        [SHELL_X + 1.5, SHELL_Z], [SHELL_X, SHELL_Z - 1.6]]) {
+  // Well clear of the shell: a car length or more off the fan in any
+  // direction. Driving PAST the pit on the lawn cannot trip the portal.
+  for (const [x, z] of [[SHELL_X + 2.8, SHELL_Z], [SHELL_X, SHELL_Z + 3.2],
+                        [SHELL_X, 20], [0, 0]]) {
     assert.ok(!clamInsideShell(x, z), `(${x},${z}) must NOT trigger`);
   }
-  // The pocket is a fraction of the bowl, so you cannot trip it by driving past.
   assert.ok(LOWER_SIZE > 1.2, 'bowl is implausibly small');
 });
 
@@ -259,6 +268,6 @@ test('the umbo is buried, and the dish really dips below the turf', () => {
   assert.ok(LOWER_FLAT < 1 && UPPER_FLAT === 1, 'only the lower valve is squashed');
   // The valve needs to be bigger than the hole it sits in, or the rim would be
   // clipped off flush with the cut instead of overhanging and burying itself.
-  assert.ok(LOWER_LIP_X > bounds(clamFanOutline(T_GRASS_HOLE, SHELL_X, SHELL_Z)).x1,
+  assert.ok(LOWER_LIP_X > SHELL_X + bounds(clamFanOutline(T_GRASS_HOLE, SHELL_X, SHELL_Z)).x1,
     'the valve rim must overhang the turf hole');
 });

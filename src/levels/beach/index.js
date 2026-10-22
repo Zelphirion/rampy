@@ -1,22 +1,23 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { makeClamShell } from '../../props.js?v=1799999999999';
+import { makeClamShell } from '../../props.js?v=1800000000014';
 import { addKnockable } from '../../physics.js?v=1800000000002';
 import { shellRadius } from '../../clam.js';
-import { addBeachCliffs } from './cliffs.js?v=1800000000000';
-import { addBeachLife, makeCrab } from './critters.js?v=1800000000000';
-import { buildReefs } from './reefs.js?v=1800000000000';
+import { addBeachCliffs } from './cliffs.js?v=1800000000001';
+import { addBeachLife, makeCrab } from './critters.js?v=1800000000003';
+import { buildReefs } from './reefs.js?v=1800000000001';
 import { buildBoat, updateBoat, BOAT_SPOT } from './boat.js?v=1791038847704';
-import { createGulls } from './seagulls.js?v=1800000000000';
-import { buildSandcastle } from './sandcastle.js?v=1800000000000';
-import { buildMermaidCastle } from './mermaidCastle.js?v=1800000000000';
-import { buildShipwreck, buildTreasureChest } from './shipwreck.js?v=1800000000000';
+import { createGulls } from './seagulls.js?v=1800000000001';
+import { buildSandcastle } from './sandcastle.js?v=1800000000001';
+import { buildMermaidCastle } from './mermaidCastle.js?v=1800000000001';
+import { buildShipwreck, buildTreasureChest } from './shipwreck.js?v=1800000000002';
+import { buildBlueFlag } from './blueFlag.js?v=1800000000003';
 import {
   BEACH_START, BEACH_SHELL, BEACH_SAND_Y, BEACH_SEA_Y, BEACH_SHORE_Z,
   BEACH_SHELF_Z0, BEACH_RIM_Z, BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_CLIFF_Z, BEACH_HALF_W,
   BEACH_EDGE_X, BEACH_BASIN_Y, BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0,
   BEACH_MAP_Z1, BEACH_DEEP_FLOOR_Z, BEACH_DEEP_Z, CLIFF_REACH, BEACH_PALMS, BEACH_ROCKS, BEACH_CAMPFIRE,
-  beachGroundOffsetAt, beachSandOffsetAt, beachColliders, clamp01,
-} from './layout.js?v=1800000000000';
+  beachGroundOffsetAt, beachSandOffsetAt, beachColliders, clamp01, beachDeepRevealed,
+} from './layout.js?v=1800000000003';
 
 // Re-exported so main.js keeps one import for the beach, exactly as before.
 export {
@@ -25,7 +26,7 @@ export {
   BEACH_MAP_X0, BEACH_MAP_X1, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_CAMPFIRE,
   BEACH_DEEP_Z,
 };
-export { BEACH_SHELL } from './layout.js?v=1800000000000';
+export { BEACH_SHELL } from './layout.js?v=1800000000003';
 
 // The object browser builds the REST of the beach from these same builders, so
 // a preview is the real geometry rather than a miniature. They are geometry
@@ -892,11 +893,19 @@ export function createBeachWorld(scene, opts = {}) {
   const shipwreck = buildShipwreck(base);
   group.add(shipwreck.group);
 
-  // The treasure: a chest burst open beside the wreck, spilling gold, jewels and
+  // The treasure: a chest burst open inside the wreck, spilling gold, jewels and
   // pearls across the sea floor. The come-on that makes the long drive out here
   // worth it. Scenery only - no collider, so the car can drive right up to it.
   const treasure = buildTreasureChest(base);
   group.add(treasure.group);
+
+  // ===== The blue flag =====
+  // The gate to the deep. A blue pennant on a post standing on the sea floor
+  // at the lip of the drop-off, in front of everything drowned. The pennant is
+  // furled against the wood until the player has actually gone under, and it
+  // is not lifted before that - see the gate in update() below.
+  const blueFlag = buildBlueFlag(base);
+  group.add(blueFlag.group);
 
   // With the palms and rocks now knockables, the only solid things left in the
   // level are the cliffs and the shell's outline.
@@ -910,6 +919,29 @@ export function createBeachWorld(scene, opts = {}) {
   // the sand: a collider with a roof height would also be a thing you could
   // drive up onto.
   for (const c of life.crabColliders) colliders.push(c);
+
+  // ===== What is behind the flag =====
+  //
+  // Everything the blue flag is standing in front of: the mermaids, their
+  // castle, the wreck, and the treasure chest lying in it. None of it is drawn
+  // while the player's eye is above the water - the deep is not scenery you
+  // look at from the beach, it is somewhere you have to go.
+  //
+  // The mermaids are handed over individually because they live inside the
+  // wildlife group, and hiding that group would take the crabs, the fish and
+  // the turtles with it.
+  const deepObjects = [
+    mermaidCastle.group,
+    shipwreck.group,
+    treasure.group,
+    ...life.mermaids,
+  ];
+  // The deep starts hidden. The first frame the player is in the beach they
+  // are on the sand with the sea in front of them, and nothing drowned is in
+  // the picture.
+  let deepOn = false;
+  let flagLifted = false;
+  for (const o of deepObjects) o.visible = false;
 
   // ===== The boat =====
   // Scenery only. It floats out past the drop-off, so the rim collider puts it
@@ -1003,7 +1035,19 @@ export function createBeachWorld(scene, opts = {}) {
     get carCarry() { return gulls.carCarry; },
     // Which car the carry pose belongs to: 0 = P1, 1 = P2, -1 = none.
     get carryIndex() { return gulls.carryIndex; },
-    update(delta, carPos, carR, blocked, carPos2) {
+    // Whether the deep is being drawn at all. It is open only while the
+    // player's eye is under the water - from the beach, or from the top-down
+    // view, the mermaids' castle and the wreck simply are not in the picture.
+    get deepRevealed() { return deepOn; },
+    // Whether the blue flag has been lifted. It latches: the first dive lifts
+    // it for good, even after the player surfaces again.
+    get flagLifted() { return flagLifted; },
+    // The blue flag itself, for anyone who wants to hang a lamp off it.
+    get blueFlag() { return blueFlag; },
+    // Everything that lives behind the flag. They are all hidden while the
+    // player's eye is above the water.
+    get deepObjects() { return deepObjects; },
+    update(delta, carPos, carR, blocked, carPos2, camY) {
       t += delta;
       const shut = shell.update(delta);
       // Two crossing swells ride the water's vertices.
@@ -1036,6 +1080,30 @@ export function createBeachWorld(scene, opts = {}) {
       castle.update(delta, carPos, carR);
       mermaidCastle.update(delta, t);
       shipwreck.update(delta, t);
+
+      // ===== The gate to the deep =====
+      //
+      // The eye decides, not the car. If the CAMERA is out of the water then
+      // the castle, the wreck and the mermaids are not on the screen, whatever
+      // the car happens to be doing - so from the beach, or from the top-down
+      // view, the far side of the drop-off is just sea. Once the eye is under,
+      // they are there.
+      //
+      // `camY` is the camera's height; if nobody has told us (an old caller
+      // that does not know about the gate) the car stands in for it, which is
+      // the next best guess at where the player is looking from.
+      const eyeY = typeof camY === 'number'
+        ? camY
+        : (carPos ? carPos.y : base + BEACH_SEA_Y);
+      deepOn = beachDeepRevealed(eyeY, base, deepOn);
+      for (const o of deepObjects) o.visible = deepOn;
+
+      // The flag lifts the first time the eye goes under the water, and then it
+      // STAYS up for the rest of the session. The deep itself is not latched:
+      // surfacing closes it again, and the sea closes over the castle.
+      if (deepOn) flagLifted = true;
+      blueFlag.update(delta, flagLifted);
+
       // `blocked` is true while the shell is closing, or during a fade: she does
       // not start a ten-second count towards robbing a car that is already on
       // its way home. Both cars are offered as targets (P2 only exists in split

@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Crankshaft and Rampy's Wreckless Ramble</title>
-    <link rel="icon" type="image/png" href="/city/favicon/favicon-96x96.png" sizes="96x96" />
-    <link rel="icon" type="image/svg+xml" href="/city/favicon/favicon.svg" />
-    <link rel="shortcut icon" href="/city/favicon/favicon.ico" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/city/favicon/apple-touch-icon.png" />
-    <link rel="manifest" href="/city/favicon/site.webmanifest" />
-    <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
-    <script>eruda.init();</script>
+    <link rel="icon" type="image/png" href="./favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="./favicon/favicon.svg" />
+    <link rel="shortcut icon" href="./favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./favicon/apple-touch-icon.png" />
+    <link rel="manifest" href="./favicon/site.webmanifest" />
+    
+    
     <style>
       html, body {
         margin: 0;
@@ -522,6 +522,52 @@
         color: #8fa8cc;
       }
 
+      /* ===== Camera tab (gear → Camera) =====
+         One button per view. Like the Graphics tab the panel sits over the real
+         world rather than the showroom, so choosing a view shows it rather than
+         describing it — hence the same semi-transparent backing. */
+      body.tab-camera #camera-panel {
+        display: flex;
+        background: rgba(6, 11, 22, 0.66);
+      }
+      .cam-choices {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding-right: 4px;
+      }
+      .cam-choice {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        text-align: left;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(16, 27, 48, 0.7);
+        color: #dbe7ff;
+        font-family: Arial, sans-serif;
+        cursor: pointer;
+        transition: background 0.18s, border-color 0.18s;
+      }
+      .cam-choice:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .cam-choice.active {
+        background: rgba(40, 80, 140, 0.85);
+        border-color: #7ef9ff;
+        box-shadow: 0 0 14px rgba(126, 249, 255, 0.3);
+      }
+      .cam-choice-name {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #eef2ff;
+      }
+      .cam-choice.active .cam-choice-name { color: #7ef9ff; }
+      .cam-choice-desc { font-size: 12px; line-height: 1.45; color: #b9cbe8; }
+
       /* ===== About tab (gear → About) =====
          The logo, the game's name and what it was built with. One centred
          column, so it reads the same on a phone and a desktop. */
@@ -931,6 +977,67 @@
           whole browser panel, leaving the disc full screen. */
       body.object-open #objects-panel { display: none !important; }
       #obj-detail .od-actions { justify-content: center; }
+
+      /* Camera-tuning HUD for the Rescue Crane grab pose (main.js ventCamTune).
+         Live coordinates for framing the act-1 exterior shot; up only while the
+         frozen pose is active. */
+      #ventcam-hud {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 32;
+        display: none;
+        width: min(310px, calc(100vw - 28px));
+        border-radius: 12px;
+        border: 1px solid rgba(126, 249, 255, 0.28);
+        background: rgba(10, 20, 38, 0.92);
+        padding: 10px 11px;
+        box-shadow: 0 10px 34px rgba(0, 0, 0, 0.65);
+        pointer-events: auto;
+      }
+      #ventcam-hud .vh-title {
+        font-family: Arial, sans-serif;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #7ef9ff;
+        margin-bottom: 6px;
+      }
+      #ventcam-hud .vh-line {
+        font-family: Consolas, Menlo, monospace;
+        font-size: 11.5px;
+        line-height: 1.55;
+        color: #dbe7ff;
+        white-space: nowrap;
+      }
+      #ventcam-hud .vh-hint {
+        font-family: Arial, sans-serif;
+        font-size: 10.5px;
+        color: #93a9c8;
+        margin-top: 7px;
+      }
+      #ventcam-hud .vh-frames,
+      #ventcam-hud .vh-actions { display: flex; gap: 6px; margin-top: 8px; }
+      .vh-btn {
+        flex: 1 1 0;
+        padding: 7px 6px;
+        border-radius: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(20, 34, 58, 0.85);
+        color: #dbe7ff;
+        font-family: Arial, sans-serif;
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.18s, border-color 0.18s;
+      }
+      .vh-btn:hover { background: rgba(30, 55, 95, 0.9); border-color: #7ef9ff; }
+      .vh-btn.primary { background: rgba(40, 80, 140, 0.9); border-color: #7ef9ff; color: #fff; }
+      .vh-btn.primary:hover { background: rgba(55, 110, 185, 0.95); }
+      .vh-btn.active { background: rgba(40, 80, 140, 0.9); border-color: #7ef9ff; color: #fff; }
 
       /* Narrow screens: the panels take the full width and sit above the pager
          buttons, which the gear modal hides on these tabs anyway. */
@@ -1561,11 +1668,12 @@
 
     <!-- Showroom tabs: PLAYER swaps your ride, CHASE swaps the car that chases
          you, LEVELS teleports you, CONTROLS lists every keyboard/mouse binding
-         beside its Xbox controller twin, GRAPHICS tunes resolution, draw
-         distance, shadows and anti-aliasing live, ABOUT names the game and what
-         it was built with. OBJECTS is deliberately not a tab — it is a screen
-         inside Levels, reached from each level's own Objects button, so the
-         catalogue is always about a specific place. Only visible while the
+         beside its Xbox controller twin, CAMERA picks one of the three views the
+         C key cycles (chase / top-down / cinematic), GRAPHICS tunes resolution,
+         draw distance, shadows and anti-aliasing live, ABOUT names the game and
+         what it was built with. OBJECTS is deliberately not a tab — it is a
+         screen inside Levels, reached from each level's own Objects button, so
+         the catalogue is always about a specific place. Only visible while the
          showroom is up. -->
     <div id="picker-tabs">
       <button id="tab-player" class="picker-tab active" type="button" title="Choose the car you drive">&nbsp;Player&nbsp;</button>
@@ -1573,6 +1681,7 @@
       <button id="tab-multiplayer" class="picker-tab" type="button" title="Two drivers, one box: split-screen multiplayer">&nbsp;Multiplayer&nbsp;</button>
       <button id="tab-levels" class="picker-tab" type="button" title="Go to another level">&nbsp;Levels&nbsp;</button>
       <button id="tab-controls" class="picker-tab" type="button" title="Keyboard, mouse and Xbox controller controls">&nbsp;Controls&nbsp;</button>
+      <button id="tab-camera" class="picker-tab" type="button" title="Chase, top-down plan or cinematic view">&nbsp;Camera&nbsp;</button>
       <button id="tab-graphics" class="picker-tab" type="button" title="Resolution, draw distance, shadows, frame rate">&nbsp;Graphics&nbsp;</button>
       <button id="tab-about" class="picker-tab" type="button" title="About this game">&nbsp;About&nbsp;</button>
     </div>
@@ -1658,7 +1767,7 @@
             </tr>
             <tr>
               <td class="ctl-input"><kbd>C</kbd></td>
-              <td class="ctl-what">Switch between chase camera and top-down view</td>
+              <td class="ctl-what">Cycle the camera: chase &rarr; top-down &rarr; cinematic</td>
               <td class="ctl-pad"><span class="padbtn">B</span></td>
             </tr>
             <tr class="ctl-group"><td colspan="3">Game</td></tr>
@@ -1793,6 +1902,31 @@
           </div>
           <div class="gfx-hint">If the frame rate stays under 25fps, the settings step themselves down until it recovers, saving as it goes. Choosing <b>Max</b> above turns this off and keeps the picture you asked for.</div>
         </div>
+      </div>
+    </div>
+
+    <!-- Camera: the three views the C key cycles through, as buttons. Picking
+         one switches the live camera straight away — the world renders behind
+         this panel, so you see the new view before you go back to driving, and
+         it is the view you keep. -->
+    <div id="camera-panel" class="browser-panel">
+      <div class="browser-title">Camera</div>
+      <div class="browser-blurb">Pick how you watch the car. The view changes
+        behind this panel the moment you choose it, and it stays for driving.
+        The <b>C</b> key cycles the same three.</div>
+      <div class="cam-choices">
+        <button id="cam-view-chase" class="cam-choice" type="button">
+          <span class="cam-choice-name">Chase</span>
+          <span class="cam-choice-desc">A low camera behind the car that follows it around, aimed where you are heading.</span>
+        </button>
+        <button id="cam-view-plan" class="cam-choice" type="button">
+          <span class="cam-choice-name">Top-down</span>
+          <span class="cam-choice-desc">A plan view straight down over the car, with a zoom that pulls right out to see the whole block. North is up, matching the minimap.</span>
+        </button>
+        <button id="cam-view-cine" class="cam-choice" type="button">
+          <span class="cam-choice-name">Cinematic</span>
+          <span class="cam-choice-desc">A fixed tripod parked nearby that simply turns to keep the car in frame. It hops to a fresh vantage if the car stays hidden.</span>
+        </button>
       </div>
     </div>
 
@@ -1952,6 +2086,27 @@
       </div>
     </div>
 
+    <!-- Camera-tuning HUD: up while the Rescue Crane's "View in context" pose
+         is frozen (main.js ventCamTune) — live coordinates for framing the
+         act-1 exterior shot at the claw's cast. -->
+    <div id="ventcam-hud">
+      <div class="vh-title">Vent cam tune &mdash; rescue grab</div>
+      <div class="vh-line" id="vh-map">map x=0 z=0</div>
+      <div class="vh-line" id="vh-cam">cam x=0 y=0 z=0</div>
+      <div class="vh-line" id="vh-look">look x=0 y=0 z=0</div>
+      <div class="vh-line" id="vh-orbit">fov 45</div>
+      <div class="vh-frames">
+        <button class="vh-btn vh-frame active" data-frame="cast" type="button">Cast peak</button>
+        <button class="vh-btn vh-frame" data-frame="oncar" type="button">On car</button>
+        <button class="vh-btn vh-frame" data-frame="grip" type="button">Gripped</button>
+      </div>
+      <div class="vh-actions">
+        <button id="vh-use" class="vh-btn primary" type="button">Use this camera</button>
+        <button id="vh-exit" class="vh-btn" type="button">Exit</button>
+      </div>
+      <div class="vh-hint">drag: orbit &middot; wheel: zoom &middot; frame: re-pose the claw &middot; 2/4/6/8: pan</div>
+    </div>
+
     <!-- Inline error capture for debugging: records runtime errors before modules run -->
     <script>
       window._errs = window._errs || [];
@@ -1967,6 +2122,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1800000000002"></script>
+    <script type="module" src="./src/main.js?v=1800000000024"></script>
   </body>
 </html>

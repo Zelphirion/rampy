@@ -1,5 +1,5 @@
 // Scratch harness for designing the freehand Hot Wheels coaster. Not shipped.
-import { buildTrack, teardropLoopNodes } from './hotwheels.mjs';
+import { buildTrack, teardropLoopNodes } from './hotwheels.mjs?v=1800000000020';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 

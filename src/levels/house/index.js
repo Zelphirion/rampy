@@ -19,7 +19,7 @@ import {
   makePlayTrain, makeRedHorse, makeLegoBox, makeHangingRocket,
   makeXylophone, makeBlockCastle, makeMagnetCity, makeHotWheels, makeJackInTheBox,
   makeTerrarium,
-} from './playroom.js';
+} from './playroom.js?v=1800000000021';
 import { playTrainPoints } from './playtrain.mjs';
 
 // Re-exported so main.js (and anyone poking at the level) has one import site.
@@ -953,10 +953,12 @@ function buildFrontDoor(g, shellT) {
   // Hasp and staple with a padlock hanging shut through them.
   box(g, 0.8, 1.2, 3.2, knobX + inw * 0.3, 3.4, dc + dw / 2 - 2.6, MAT.metal, false);
   box(g, 1.1, 3.2, 1.1, knobX + inw * 0.7, 2.4, dc + dw / 2 - 2.6, MAT.lockRed, false);
-  // A security chain, drawn across the opening, permanently on.
-  for (let i = 0; i < 7; i++) {
+  // A security chain, drawn across the opening, permanently on. Six links on a
+  // 1.5 pitch, from the knocker's side to the hasp: the leaf is 12 wide now, so
+  // there is room for a chain and not for a rope.
+  for (let i = 0; i < 6; i++) {
     box(g, 0.5, 0.5, 2.2, knobX + inw * (0.4 + i * 0.35), 17.5 - i * 0.55,
-      dc - dw / 2 + 2.6 + i * 2.4, MAT.metal, false);
+      dc - dw / 2 + 1.8 + i * 1.5, MAT.metal, false);
   }
   // Outside face: a porch light over the door and a step, so the door has an
   // outside to be a door to.

@@ -1,0 +1,82 @@
+﻿14940:       return false;
+14941:     },
+14942:   });
+14943: 
+14944:   // Freight train: advances along its loop of rails. Solid to the player and
+14945:   // the blue car (they bounce off) and the hit car wobbles, but it never
+14946:   // leaves the track.
+14947:   train.update(delta, {
+14948:     wrapDeltaX: wrappedDeltaX,
+14949:     wrapDeltaZ: wrappedDeltaZ,
+14950:     player: car.position,
+14951:     playerR: playerCarRadius,
+14952:     bumper: bumperCar.position,
+14953:     bumperR: aiCarRadius,
+14954:   });
+14955: 
+14956:   // Car-vs-car collisions: push overlapping vehicles apart and bounce them so
+14957:   // nothing drives through anything else.
+14958:   resolveCarCollisions();
+14959: 
+14960:   }  // end city AI (worldState === 'city')
+14961: 
+14962:   // Split-screen: step and frame Player 2 for this frame. Their twin physics
+14963:   // and chase camera are isolated from P1's block above, so the single-player
+14964:   // path is untouched. While the express tube owns P2, skip the twin physics so
+14965:   // it can't fight the ride pose.
+14966:   if (splitActive && players[1] && !express2State.active) {
+14967:     stepTwoPlayer(players[1], delta);
+14968:     // Outside the city the AI collision pass above never ran, so bump the two
+14969:     // players apart here; inside the city resolveCarCollisions already did it.
+14970:     if (worldState !== 'city') resolvePlayerPairCollision();
+14971:     followCameraTwo(players[1], delta);
+14972:   }
+14973: 
+14974:   // Chase camera â€” held in updateCamera() so it can also keep running while
+14975:   // the game is paused (scroll-wheel zoom + drag orbit stay live).
+14976:   updateCamera(delta);
+14977:   clampBeachCamera();   // keep the camera on the playable side of the beach cliffs
+14978:   // After the camera has settled, so the fade tests the view the player
+14979:   // actually gets this frame rather than last frame's position.
+14980:   updateHouseFade(delta);
+14981:   updateTubeHum();   // distance-fade the express-tube buzz to the camera
+14982: 
+14983:   // City ambience (traffic lights, props, fountains, pedestrians) â€” only in
+14984:   // the city; the ramp world has none of these.
+14985:   if (worldState === 'city') {
+14986:   // 4-way traffic lights: E/W (x-axis) and N/S (z-axis) alternate on a 12s
+14987:   // cycle, so crossing traffic doesn't slam into each other.
+14988:   trafficLights.forEach(({ bulbs, axis }) => {
+14989:     if (globalDarkness) {
+14990:       bulbs.forEach(b => { b.material.emissiveIntensity = 0; });
+14991:       return;
+14992:     }
+14993:     const active = axisSignal(clock.elapsedTime, axis);   // 0=red, 1=amber, 2=green
+14994:     bulbs.forEach((b, i) => { b.material.emissiveIntensity = i === active ? 1.5 : 0; });
+14995:   });
+14996: 
+14997:   // Gentle fountain splashes in the centre plaza
+14998:   updateFountains(fountains, delta);
+14999: 
+15000:   // Twinkling gemstones lining the mine shaft
+15001:   updateMineGems(mineGems, delta);
+15002: 
+15003:   // Fire hydrant water sprays
+15004:   updateHydrantSprays(delta);
+15005: 
+15006:   // Park merry-go-round: wind up while the car sits on its deck, coast otherwise
+15007:   updateMerryGoRound(delta, car.position);
+15008: 
+15009:   // Park lake splash droplets (city scene only â€” the spawn is gated above)
+15010:   updateLakeSplashes(delta);
+15011: 
+15012:   // Animate hovering rings in the open building
+15013:   updateHoveringRings(clock.elapsedTime);
+15014: 
+15015:   // Blinking alarms and beacons on the new city landmarks
+15016:   updateCityBuildings(clock.elapsedTime);
+15017: 
+15018:   // The spacecraft company: run the fleet's dock/open/load/launch loop.
+15019:   spaceport.update(delta, clock.elapsedTime);
+15020:   // Knocking the substation's transformer over blacks the city out; the street
+

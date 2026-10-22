@@ -22,8 +22,8 @@ const TWO_PI = Math.PI * 2;
 
 // ---- The dock spur: an off-ramp that leaves the main ring road -------------
 // The +Z window wall is gapped around world angle 0 and a second strip of road
-// continues the corridor floor out past the wall to the lip of the pod bay, so
-// the player can drive OFF the main road and into the dock. These numbers live
+// continues the corridor floor out past the wall to the berth at the dock head,
+// so the player can drive OFF the main road and park where the rocket loads. These numbers live
 // here (the geometry and the driveable range must agree) and are exported for
 // main.js, which widens the ring lane near the dock and times the boarding
 // trigger from them.
@@ -188,103 +188,106 @@ export function buildSpaceConsoleBank(v = 0) {
   return bank;
 }
 
-// ---- The pod bay: the station's own dock, the door the car drives out of ----
-// This is THE pod bay: the big boxy hangar that hangs off the OUTER hull at the
-// head of the dock spur, with a circular airlock facing radially outward so the
-// arriving rocket noses straight INTO it and two doors that draw apart along the
-// tangent. The level places this very model (see buildSpace) and the catalogue
-// shows it too, so the tile is the same door you drive out of. `userData.setDoors`
-// drives the slide.
+// ---- The pod bay: the station's eye-port, the door the rocket slides into ----
+// The port at the very CENTRE of the station: the level bolts this model onto
+// the core's +Z face (the wheel axle), aimed down the incoming rocket's throat, so the arrival
+// flies to the middle of the ship and the two lids open "like an eye" for it,
+// then slide shut around it once it is home (main.js's arrival cine drives
+// `userData.setDoors`, 0 = shut, 1 = wide open). The catalogue shows this same
+// model on the Pod Bay tile, so the tile is the door the rocket flies into.
 //
-// Local frame (matches the level's orientFloor at theta = 0): X = tangent, Y =
-// inward (the corridor's "up", toward the hub), Z = axial. The corridor floor is
-// the Y = 0 plane; the hangar is open on the +Y face for the car and bulges into
-// space at Y < 0, where the airlock is cut into the outward face.
+// Local frame: the mouth lies on the y = 0 plane with its normal along -Y (the
+// direction the level aims it), the body built back along +Y; X is the slide
+// axis and Z the other diameter. The face plate is an annulus (ROUT outside,
+// MOUTH_R hole); the two half-disc lids sit just behind it in a shallow slot
+// and slide apart along X — shut they meet on the centre-line, open they park
+// flush behind the plate so the mouth is a clean hole for the ship. A collar
+// tube hides the retracted lids from the side and a skirt flares back from it
+// to bed the port into the core sphere.
 export function buildSpacePodBay(opts = {}) {
   const bay = new THREE.Group();
 
-  // Dimensions default to the catalogue pod bay. The level passes bigger numbers
-  // for the full dock hangar, big enough that the whole rocket parks inside it.
-  const MOUTH_R = opts.mouthR ?? 5.6;  // airlock radius
-  const hx = opts.hx ?? 7.0;           // half-width, tangent
-  const hz0 = opts.hz0 ?? 7.0;         // axial span start (toward the +Z edge)
-  const hz1 = opts.hz1 ?? 19.0;        // axial span end
-  const hy0 = opts.hy0 ?? -15.0;       // outward face (deep into space)
-  const hy1 = opts.hy1 ?? -0.7;        // radial span: hull down to open space
-  const zc = (hz0 + hz1) / 2, zd = hz1 - hz0;
-  const yc = (hy0 + hy1) / 2, yd = hy1 - hy0;
-  const wt = 0.5;                      // wall thickness
+  const MOUTH_R = opts.mouthR ?? 4.6;   // iris radius (the hole the ship passes)
+  const ROUT = MOUTH_R + 4.8;           // face plate / collar outer radius
+  const TH = 0.5;                       // lid slot thickness
+  const RETRACT = MOUTH_R;              // full-open slide: lids park clear of the mouth
+  const slotY = 0.02;                   // lids sit just behind the plate
 
-  // Walls: closed on every side except the +Y face; the airlock is cut into the
-  // outward (-Y) face.
-  const sideL = new THREE.Mesh(new THREE.BoxGeometry(wt, yd, zd), M.steelDark);
-  sideL.position.set(-hx, yc, zc);
-  sideL.receiveShadow = true;
-  bay.add(sideL);
-  const sideR = sideL.clone();
-  sideR.position.x = hx;
-  bay.add(sideR);
-  const end0 = new THREE.Mesh(new THREE.BoxGeometry(hx * 2, yd, wt), M.steelDark);
-  end0.position.set(0, yc, hz0);
-  bay.add(end0);
-  const end1 = end0.clone();
-  end1.position.z = hz1;
-  bay.add(end1);
+  // Face plate: a real annulus (extruded ring), mouth-facing -Y.
+  const plateShape = new THREE.Shape();
+  plateShape.absarc(0, 0, ROUT, 0, Math.PI * 2, false);
+  const holePath = new THREE.Path();
+  holePath.absarc(0, 0, MOUTH_R, 0, Math.PI * 2, true);
+  plateShape.holes.push(holePath);
+  const plateGeo = new THREE.ExtrudeGeometry(plateShape, { depth: 0.5, bevelEnabled: false, curveSegments: 40 });
+  plateGeo.rotateX(Math.PI / 2);        // extrusion +Z -> -Y: plate fills y -0.5..0
+  bay.add(new THREE.Mesh(plateGeo, M.steel));
 
-  // Ribbed wall panels + a lit strip down the inside so the throat reads as a
-  // working hangar rather than a plain box.
-  for (const sx of [-1, 1]) {
-    for (let i = 1; i <= 4; i++) {
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.2, yd - 1.2, 0.3), M.steel);
-      rib.position.set(sx * (hx - 0.3), yc, hz0 + i * (zd / 5));
-      bay.add(rib);
-    }
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, zd - 2), M.glowCyan);
-    strip.position.set(sx * (hx - 0.35), hy0 + 1.4, zc);
-    bay.add(strip);
-  }
-
-  // Heavy bezel + collar around the circular mouth on the outward face.
-  const bezel = new THREE.Mesh(new THREE.CylinderGeometry(MOUTH_R + 0.7, MOUTH_R + 0.7, 1.4, 44, 1, true), M.steel);
-  bezel.position.set(0, hy0 + 0.5, zc);
+  // Heavy bezel + lit rim hugging the mouth lip.
+  const bezel = new THREE.Mesh(new THREE.TorusGeometry(MOUTH_R + 0.5, 0.5, 10, 44), M.steel);
+  bezel.rotation.x = Math.PI / 2;
+  bezel.position.y = -0.35;
   bay.add(bezel);
-  const collar = new THREE.Mesh(new THREE.TorusGeometry(MOUTH_R, 0.55, 10, 44), M.steel);
-  collar.rotation.x = Math.PI / 2;     // torus axis -> local Y (radial)
-  collar.position.set(0, hy0, zc);
-  bay.add(collar);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(MOUTH_R - 0.7, 0.22, 8, 44), M.glowCyan);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(MOUTH_R - 0.12, 0.2, 8, 44), M.glowCyan);
   rim.rotation.x = Math.PI / 2;
-  rim.position.set(0, hy0 + 0.15, zc);
+  rim.position.y = -0.55;
   bay.add(rim);
 
-  // Radial bolts round the collar.
-  const boltGeo = new THREE.BoxGeometry(0.34, 0.7, 0.7);
+  // Open collar behind the plate (double-sided: the throat interior is seen
+  // through the open mouth) + a skirt flaring back to bed the port into the
+  // core sphere.
+  const shellMat = M.steelDark.clone();
+  shellMat.side = THREE.DoubleSide;
+  const can = new THREE.Mesh(new THREE.CylinderGeometry(ROUT, ROUT, 2.4, 44, 1, true), shellMat);
+  can.position.y = 0.7;                 // y -0.5..1.9
+  bay.add(can);
+  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(ROUT, ROUT + 1.8, 3.0, 44, 1, true), shellMat);
+  skirt.position.y = 3.4;               // y 1.9..4.9
+  bay.add(skirt);
+
+  // Radial bolts round the face plate, and running lights on it.
+  const boltGeo = new THREE.BoxGeometry(0.34, 0.42, 0.7);
   for (let i = 0; i < 12; i++) {
     const a = (i / 12) * Math.PI * 2;
     const bolt = new THREE.Mesh(boltGeo, M.steelDark);
-    bolt.position.set(Math.cos(a) * MOUTH_R, hy0, zc + Math.sin(a) * MOUTH_R);
+    bolt.position.set(Math.cos(a) * (ROUT - 0.45), -0.45, Math.sin(a) * (ROUT - 0.45));
     bolt.rotation.y = -a;
     bay.add(bolt);
   }
-
-  // Corner running lights on the frame.
   for (const sx of [-1, 1]) {
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8), M.glowWarm);
-    beacon.position.set(sx * (hx - 0.4), hy0 + 0.25, hz0 + 0.6);
+    beacon.position.set(sx * (ROUT - 1.1), -0.6, 0);
     bay.add(beacon);
   }
 
-  // Two doors that draw apart along the tangent to open the airlock.
-  const doorGeo = new THREE.BoxGeometry(MOUTH_R - 0.05, 0.5, MOUTH_R * 2 - 0.3);
-  const doorL = new THREE.Mesh(doorGeo, M.steel);
-  const doorR = new THREE.Mesh(doorGeo, M.steel);
-  doorL.position.set(-MOUTH_R / 2, hy0, zc);
-  doorR.position.set(MOUTH_R / 2, hy0, zc);
+  // The iris glow: a lit ring seated on the plinth behind the mouth, haloing
+  // the ship's nose when the eye is open.
+  const iris = new THREE.Mesh(new THREE.TorusGeometry(MOUTH_R * 0.78, 0.26, 8, 40), M.hangar);
+  iris.rotation.x = Math.PI / 2;
+  iris.position.y = 1.06;
+  bay.add(iris);
+
+  // ---- The two lids: half-disc slabs that slide apart like an eyelid ------
+  // Each lid's geometry is offset by half the radius so the MESH positions stay
+  // symmetric for the door driver: shut at -+MOUTH_R/2 (arcs meeting on the
+  // centre-line), open at -+1.5*MOUTH_R (retracted flush behind the plate).
+  function lidGeo(sign) {
+    const sh = new THREE.Shape();
+    if (sign < 0) sh.absarc(0, 0, MOUTH_R, Math.PI / 2, Math.PI * 1.5, false);
+    else sh.absarc(0, 0, MOUTH_R, -Math.PI / 2, Math.PI / 2, false);
+    sh.closePath();
+    const geo = new THREE.ExtrudeGeometry(sh, { depth: TH, bevelEnabled: false, curveSegments: 32 });
+    geo.rotateX(-Math.PI / 2);          // extrusion +Z -> +Y: slab fills y slotY..slotY+TH
+    geo.translate(-sign * MOUTH_R / 2, slotY, 0);
+    return geo;
+  }
+  const doorL = new THREE.Mesh(lidGeo(-1), M.steel);
+  const doorR = new THREE.Mesh(lidGeo(1), M.steel);
   bay.add(doorL, doorR);
-  // A raised handle along the inner edge of each door.
+  // A raised handle along the seam edge of each lid.
   for (const d of [doorL, doorR]) {
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.34, MOUTH_R * 1.5), M.panel);
-    grip.position.set(d === doorL ? 2.4 : -2.4, 0.42, 0);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.26, MOUTH_R * 1.6), M.panel);
+    grip.position.set(d === doorL ? MOUTH_R / 2 - 0.3 : -MOUTH_R / 2 + 0.3, slotY - 0.13, 0);
     d.add(grip);
   }
 
@@ -292,10 +295,15 @@ export function buildSpacePodBay(opts = {}) {
   bay.userData.doorR = doorR;
   bay.userData.mouthR = MOUTH_R;
   bay.userData.setDoors = (open) => {
-    const o = Math.max(0, Math.min(1, open));
-    const slide = MOUTH_R / 2 + (MOUTH_R + 0.6) * o;
+    const o = Math.max(0, Math.min(1.2, open));
+    const slide = MOUTH_R / 2 + RETRACT * o;
     doorL.position.x = -slide;
     doorR.position.x = slide;
+    // The lit rim and iris halo swell as the lids draw back, so the eye visibly
+    // opens WIDER than its rest state (the departure asks for more than 1).
+    const grow = 1 + 0.16 * Math.min(o, 1.15);
+    rim.scale.setScalar(grow);
+    iris.scale.setScalar(grow);
   };
   bay.userData.setDoors(0);
   return bay;
@@ -305,12 +313,13 @@ export function buildSpacePodBay(opts = {}) {
 // ---- dock floor and tucks it into the rocket's open hold ---------------------
 //
 // The same closed-form two-link reach as the city boarding arm (spaceport.js),
-// but built INSIDE the hangar's own frame and sized to span the whole hangar:
-// the base stands on the +Y (floor) side, off the car's lane, and the claw can
-// reach both the berth (where the car parks) and the parked rocket's hold out in
-// the bay. `reach(worldTarget, grip, fit)` solves the IK in the arm's vertical
-// plane and returns the claw's world position so the held car can ride it;
-// `yawAngle()` reports the heading the armed car turns with.
+// but built INSIDE the dock frame (the old hangar's placement frame at the ring
+// floor) and sized to span the berth area: the base stands on the +Y (floor)
+// side, off the car's lane, and the claw can reach both the berth (where the car
+// parks) and the parked rocket's hold. `reach(worldTarget, grip, fit)` solves
+// the IK in the arm's vertical plane and returns the claw's world position so
+// the held car can ride it; `yawAngle()` reports the heading the armed car
+// turns with.
 export function buildSpaceHangarArm(opts = {}) {
   const g = new THREE.Group();
   const baseX = opts.baseX ?? 10;
@@ -417,10 +426,18 @@ export function buildSpaceHangarArm(opts = {}) {
 // reads it the way the brief describes:
 //   * the vertical spire runs along WORLD Y  -> top-and-bottom in the flyby frame
 //   * the gantry arms run along the cylinder axis (WORLD Z) -> left-and-right
-//   * the illuminated docking port faces +X  -> toward the incoming rocket
+//   * the eye-port docking door faces +X  -> toward the incoming rocket (the
+//     level mounts buildSpacePodBay on the core's +X plinth, see buildSpaceWorld)
 // CORE_R is exported (and surfaced on the level api) so the driving chase camera
 // can hold itself outside the sphere when fully zoomed in.
 export const CORE_R = 20;
+// The eye-port cuts a real hole through the core shell: the pod bay's skirt
+// flares back to this radius, so the rocket can slide INSIDE the station instead
+// of stopping against a painted-on door. The dark throat behind it keeps the
+// opening reading as a deep tunnel rather than a see-through hole.
+const EYE_HOLE_R = 11.2;
+const EYE_HOLE_Z = Math.sqrt(CORE_R * CORE_R - EYE_HOLE_R * EYE_HOLE_R);
+const EYE_HOLE_ANGLE = Math.asin(EYE_HOLE_R / CORE_R);
 export function buildSpaceCore() {
   const g = new THREE.Group();
   const R = CORE_R;
@@ -429,7 +446,40 @@ export function buildSpaceCore() {
   const spinners = [];   // groups to turn slowly
 
   // ---- Main sphere: panelled hull, seams and recessed equatorial bands ----
-  g.add(new THREE.Mesh(cache('coreShell', () => new THREE.SphereGeometry(R, 48, 34)), M.core));
+  // Built with the +Z cap removed (SphereGeometry's default hole is around +Y,
+  // so the geometry is rolled a quarter turn to aim it down the eye's axis).
+  // The eye-port model beds into the rim and the dark throat below closes it.
+  g.add(new THREE.Mesh(cache('coreShell', () => {
+    const shell = new THREE.SphereGeometry(R, 64, 40, 0, Math.PI * 2, EYE_HOLE_ANGLE, Math.PI - EYE_HOLE_ANGLE);
+    shell.rotateX(Math.PI / 2);
+    return shell;
+  }), M.core));
+
+  // Rim collar around the mouth of the hole, so the cut edge reads as a
+  // machined socket where the eye-port seats.
+  const eyeRim = new THREE.Mesh(
+    cache('coreEyeRim', () => new THREE.TorusGeometry(EYE_HOLE_R, 0.42, 10, 64)),
+    M.corePanel);
+  eyeRim.position.z = EYE_HOLE_Z;
+  g.add(eyeRim);
+
+  // The dark docking throat behind the eye: a tapered, open tube that swallows
+  // the rocket's nose after it clears the iris. Without it the hole would look
+  // straight through the station.
+  const throatMat = new THREE.MeshStandardMaterial({
+    color: 0x05080c, roughness: 0.88, metalness: 0.25, side: THREE.BackSide,
+  });
+  const throat = new THREE.Mesh(
+    cache('coreEyeThroat', () => new THREE.CylinderGeometry(EYE_HOLE_R + 0.05, 7.4, 13.0, 48, 1, true)),
+    throatMat);
+  throat.rotation.x = Math.PI / 2;     // cylinder axis Y -> world Z
+  throat.position.z = EYE_HOLE_Z - 6.5;
+  g.add(throat);
+  const throatCap = new THREE.Mesh(
+    cache('coreEyeThroatCap', () => new THREE.CircleGeometry(7.45, 48)),
+    new THREE.MeshStandardMaterial({ color: 0x030507, roughness: 1 }));
+  throatCap.position.z = EYE_HOLE_Z - 13.0;
+  g.add(throatCap);
 
   // Dark recessed bands hugging the equator (the plane perpendicular to the
   // spire), flattened against the shell so they read as machine grooves.
@@ -466,34 +516,12 @@ export function buildSpaceCore() {
     g.add(collar);
   }
 
-  // ---- Illuminated docking port on the +X face ---------------------------
-  const hangar = new THREE.Group();
-  hangar.position.set(R - 1.2, 0, 0);
-  hangar.add(new THREE.Mesh(cache('coreHousing', () => new THREE.BoxGeometry(3.2, 10, 13)), M.corePanel));
-  const throat = new THREE.Mesh(cache('coreThroat', () => new THREE.BoxGeometry(3.8, 8, 11)), M.coreDark);
-  throat.position.x = 0.6;
-  hangar.add(throat);
-  const glow = new THREE.Mesh(cache('coreGlow', () => new THREE.BoxGeometry(0.4, 6.8, 9.8)), M.hangar);
-  glow.position.x = 2.0;
-  hangar.add(glow);
-  const rimTop = new THREE.Mesh(cache('coreRimH', () => new THREE.BoxGeometry(0.6, 0.45, 10.6)), M.glowCyan);
-  rimTop.position.set(2.4, 3.7, 0);
-  const rimBot = rimTop.clone(); rimBot.position.y = -3.7;
-  const rimL = new THREE.Mesh(cache('coreRimV', () => new THREE.BoxGeometry(0.6, 7.9, 0.45)), M.glowCyan);
-  rimL.position.set(2.4, 0, 5.1);
-  const rimR = rimL.clone(); rimR.position.z = -5.1;
-  hangar.add(rimTop, rimBot, rimL, rimR);
-  const dockRing = new THREE.Mesh(cache('coreDockRing', () => new THREE.TorusGeometry(5.6, 0.45, 10, 44)), M.steel);
-  dockRing.rotation.y = Math.PI / 2;
-  dockRing.position.x = 1.9;
-  hangar.add(dockRing);
-  for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
-    const b = new THREE.Mesh(cache('coreBeacon', () => new THREE.SphereGeometry(0.32, 10, 8)), M.glowWarm.clone());
-    b.position.set(2.6, sy * 3.0, sz * 4.2);
-    hangar.add(b);
-    beacons.push(b.material);
-  }
-  g.add(hangar);
+  // ---- Illuminated docking port on the +Z face ---------------------------
+  // The eye-port model (buildSpacePodBay, mounted by buildSpaceWorld) beds
+  // straight into the rim collar above. There is deliberately no housing box
+  // behind it any more: the old block sat across the docking throat and the
+  // rocket had nowhere to go. The tapered dark throat is all that lies behind
+  // the mouth now, so the ship slides into the station's centre.
 
   // ---- Vertical sensor spire through the poles ---------------------------
   const spireTop = R + 17, spireBot = R + 13;
@@ -561,7 +589,10 @@ export function buildSpaceCore() {
 
   // ---- Lateral gantry arms + spherical outrigger pods --------------------
   const braceGeo = cache('armBrace', () => new THREE.BoxGeometry(0.24, 3.9, 0.24));
-  for (const s of [-1, 1]) {
+  // Only the far (-Z) arm. The +Z face is the eye/pod-bay mouth the arrival
+  // camera looks straight into, and the old mirrored outrigger sat right in
+  // front of it, hiding the iris.
+  for (const s of [-1]) {
     const z0 = R - 2, z1 = R + 12;
     const mid = (z0 + z1) / 2, len = z1 - z0;
     const spine = new THREE.Mesh(cache(`armSpine${len}`, () => new THREE.BoxGeometry(1.0, 1.0, len)), M.corePanel);
@@ -959,6 +990,234 @@ export function buildSpaceSky() {
   return skyGroup;
 }
 
+// ---- The boarding elevator at the berth --------------------------------
+// A big, unmistakable lift: you drive onto it, it rises, and it carries you up
+// to the waiting exit rocket's hold. Built so every cue reads as "elevator"
+// without any lettering (no in-world text in this game): hazard-chevron deck
+// edging, four glowing corner masts, a big lit up-arrow chevron painted on the
+// deck, a pair of red beacon lamps on top that blink, guide rails and a lit
+// threshold gate you enter through. Returns the deck (the part that rises) and
+// the masts/beacons so update() can animate it.
+// Local frame is the dockFrame: +X tangent, +Y inward/up-the-rim, +Z axial.
+export function buildSpaceBerthElevator() {
+  const g = new THREE.Group();
+  const addBox = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+
+  const HW = 2.6, HD = 3.6;      // half-width (tangent) / half-depth (axial)
+  const DECK_H = 0.4;
+
+  // Static base well: a recessed frame the deck sits in, so the platform reads
+  // as sunk into the floor when down and clearly a separate rising box when up.
+  const base = addBox(HW * 2 + 0.5, 0.6, HD * 2 + 0.5, 0, -0.3, 0, M.steelDark);
+  base.receiveShadow = true;
+
+  // ---- The rising deck ----------------------------------------------------
+  const deck = new THREE.Group();
+  deck.position.set(0, 0, 0);
+  g.add(deck);
+
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(HW * 2, DECK_H, HD * 2), M.steel);
+  plate.position.set(0, DECK_H / 2, 0);
+  plate.castShadow = true; plate.receiveShadow = true;
+  deck.add(plate);
+
+  // Hazard chevrons around the deck edge (alternating warm/steel), so the
+  // platform edge is unmistakable.
+  const chevGeo = new THREE.BoxGeometry(1.0, 0.06, 0.5);
+  const edge = (x, z, rotY) => {
+    for (let i = -1; i <= 1; i++) {
+      const c = new THREE.Mesh(chevGeo, (i + 3) % 2 === 0 ? M.glowWarm : M.steelDark);
+      c.position.set(x, DECK_H + 0.03, z + i * 1.1);
+      c.rotation.y = rotY;
+      deck.add(c);
+    }
+  };
+  edge(-HW + 0.3, 0, 0);
+  edge(HW - 0.3, 0, 0);
+
+  // Big lit up-arrow on the deck — the universal "this goes up" mark, built
+  // from three glowing chevrons stacked along the axial run (points +Z, toward
+  // the rocket park beyond the berth).
+  for (let k = 0; k < 3; k++) {
+    const zc = -1.2 + k * 1.2;
+    for (const sx of [-1, 1]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 1.05), M.glowCyan);
+      bar.position.set(sx * 0.42, DECK_H + 0.04, zc);
+      bar.rotation.y = sx * -0.72;      // the two bars meet in a "V" pointing +Z
+      deck.add(bar);
+    }
+  }
+
+  // Corner masts + blinking beacon lamps ride the deck.
+  const masts = [];
+  const beacons = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const mx = sx * (HW - 0.28), mz = sz * (HD - 0.28);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.6, 8), M.steel);
+      mast.position.set(mx, DECK_H + 1.3, mz);
+      mast.castShadow = true;
+      deck.add(mast);
+      masts.push(mast);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), M.glowWarm);
+      cap.position.set(mx, DECK_H + 2.7, mz);
+      deck.add(cap);
+      const lamp = cap;
+      beacons.push(lamp);
+    }
+  }
+
+  // Guide rails along the two long sides, leaving the ends open to drive on.
+  for (const sx of [-1, 1]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, HD * 2 - 0.4), M.glowCyan);
+    rail.position.set(sx * HW, DECK_H + 0.95, 0);
+    deck.add(rail);
+    for (const sz of [-1, 0, 1]) {
+      const stanch = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.95, 0.1), M.steel);
+      stanch.position.set(sx * HW, DECK_H + 0.48, sz * (HD - 0.5));
+      deck.add(stanch);
+    }
+  }
+
+  // ---- The threshold gate (static): a lit arch at the approach end, so you
+  // can't miss where to drive on. Two posts + a header, cyan marks.
+  const gate = new THREE.Group();
+  gate.position.z = -HD - 0.35;
+  g.add(gate);
+  for (const sx of [-1, 1]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.0, 0.3), M.steelDark);
+    post.position.set(sx * (HW + 0.25), 1.5, 0);
+    post.castShadow = true;
+    gate.add(post);
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.4, 0.1), M.glowCyan);
+    strip.position.set(sx * (HW + 0.25) - sx * 0.2, 1.5, 0);
+    gate.add(strip);
+  }
+  const header = new THREE.Mesh(new THREE.BoxGeometry(HW * 2 + 0.9, 0.4, 0.4), M.steelDark);
+  header.position.set(0, 3.0, 0);
+  gate.add(header);
+  // Three lit up-chevrons on the header — the "this is the lift" sign.
+  for (let i = 0; i < 3; i++) {
+    const cxh = (i - 1) * 0.75;
+    for (const sx of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.1, 0.1), M.glowWarm);
+      wing.position.set(cxh + sx * 0.18, 3.0 + 0.02, 0.24);
+      wing.rotation.z = sx * 0.9;
+      gate.add(wing);
+    }
+  }
+  // A little down-cage under the gate posts, so it reads as part of the lift.
+  for (const sx of [-1, 1]) {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.7), M.steelDark);
+    brace.position.set(sx * (HW + 0.25), 0.1, 0);
+    gate.add(brace);
+  }
+
+  return { g, deck, plate, masts, beacons, base, gate };
+}
+
+// ---- The road-centre departure lift ----------------------------------------
+// The unmistakable way home, sat plumb in the MIDDLE of the lane at the dock so
+// a driver cruising the loop cannot miss it. It is deliberately built so you
+// cannot blunder onto it head-on: two low rows of POSTS wall off the faces that
+// point along the racing direction (local +/-X), while the two axial SIDES
+// (local +/-Z) are left wide open. So you never mount it while just driving the
+// road — you pull off the line to one side and drive into its flank, which
+// triggers the whole fly-home cinematic. A rising deck (with up-chevrons and
+// corner beacons) sits in a sunk well, so it clearly reads as an elevator.
+// Local frame is the dockFrame: +X tangent, +Y inward/up-the-rim, +Z axial.
+export function buildSpaceRoadLift() {
+  const g = new THREE.Group();
+  const addBox = (w, h, d, x, y, z, mat) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    g.add(m);
+    return m;
+  };
+
+  const RW = 2.8, RD = 3.6;      // half-extent along the tangent (X) / axial (Z)
+  const DECK_H = 0.4;
+
+  // Sunk base well the deck rises out of.
+  addBox(RW * 2 + 0.5, 0.6, RD * 2 + 0.5, 0, -0.3, 0, M.steelDark);
+
+  // ---- The rising deck ----------------------------------------------------
+  const deck = new THREE.Group();
+  g.add(deck);
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(RW * 2, DECK_H, RD * 2), M.steel);
+  plate.position.set(0, DECK_H / 2, 0);
+  plate.castShadow = true; plate.receiveShadow = true;
+  deck.add(plate);
+
+  // Hazard chevrons along the two axial (open) sides, drawing the eye to where
+  // you drive on.
+  const chevGeo = new THREE.BoxGeometry(0.5, 0.06, 1.0);
+  for (const sz of [-1, 1]) {
+    for (let i = -1; i <= 1; i++) {
+      const c = new THREE.Mesh(chevGeo, (i + 3) % 2 === 0 ? M.glowWarm : M.steelDark);
+      c.position.set(i * 1.1, DECK_H + 0.03, sz * (RD - 0.3));
+      deck.add(c);
+    }
+  }
+
+  // Big lit up-arrow on the deck (points +Y, i.e. "this goes up").
+  for (let k = 0; k < 3; k++) {
+    const yc = -1.2 + k * 1.2;
+    for (const sz of [-1, 1]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.05, 1.05), M.glowCyan);
+      bar.position.set(sz * 0.42, DECK_H + 0.04, yc);
+      bar.rotation.y = sz * 0.72;
+      deck.add(bar);
+    }
+  }
+
+  // Corner masts + blinking beacon lamps ride the deck.
+  const masts = [];
+  const beacons = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      const mx = sx * (RW - 0.28), mz = sz * (RD - 0.28);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.6, 8), M.steel);
+      mast.position.set(mx, DECK_H + 1.3, mz);
+      mast.castShadow = true;
+      deck.add(mast);
+      masts.push(mast);
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), M.glowWarm);
+      lamp.position.set(mx, DECK_H + 2.7, mz);
+      deck.add(lamp);
+      beacons.push(lamp);
+    }
+  }
+
+  // ---- The blocking posts -------------------------------------------------
+  // Two stout rows of posts walling off the tangent (+/-X) faces — the faces a
+  // car meets when it is simply driving the lane — so you cannot drive onto the
+  // lift head-on. The axial (+/-Z) flanks are left open for the side entry.
+  const posts = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 0, 1]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 1.5, 10), M.steelDark);
+      post.position.set(sx * (RW + 0.5), 0.75, sz * (RD - 0.7));
+      post.castShadow = true;
+      g.add(post);
+      posts.push(post);
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.16, 10), M.glowWarm);
+      band.position.set(sx * (RW + 0.5), 1.35, sz * (RD - 0.7));
+      g.add(band);
+    }
+  }
+
+  return { g, deck, plate, masts, beacons, posts };
+}
+
+
 export function buildSpaceWorld(scene) {
   const group = new THREE.Group();
   scene.add(group);
@@ -969,11 +1228,19 @@ export function buildSpaceWorld(scene) {
   group.add(skyGroup);
 
   // ---- Lighting ----------------------------------------------------------
-  group.add(new THREE.HemisphereLight(0x8fb6ff, 0x101520, 1.1));
-  group.add(new THREE.AmbientLight(0x334455, 0.6));
-  const sunLight = new THREE.DirectionalLight(0xfff2c4, 1.4);
+  // Space is NOT dark — there is no fog out here, so the only reason anything
+  // reads dim is lighting, and a rocket sweeping past the arrival lens used to
+  // present its unlit flank. Full wash: cool sky-bounce + ambient fill, the
+  // warm sun from behind the station, and a cold fill from the void side the
+  // flyby tripod sits on, so the ship reads bright-white on the pass.
+  group.add(new THREE.HemisphereLight(0x8fb6ff, 0x101520, 1.6));
+  group.add(new THREE.AmbientLight(0x334455, 0.9));
+  const sunLight = new THREE.DirectionalLight(0xfff2c4, 1.55);
   sunLight.position.set(-720, 260, -520);
   group.add(sunLight);
+  const fillLight = new THREE.DirectionalLight(0xcfe0ff, 1.8);
+  fillLight.position.set(520, 380, 560);   // the void side the arrival lens sits on
+  group.add(fillLight);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * (Math.PI * 2);
     const l = new THREE.PointLight(0x9fd8ff, 0.9, 140, 2);
@@ -1106,28 +1373,41 @@ export function buildSpaceWorld(scene) {
     }
   }
 
-  // ---- Box dock (the arrival hangar) at theta = 0, on the +Z edge --------
-  // A BIG boxy hangar hung off the OUTER hull toward the +Z lane edge, DEEP
-  // enough (radially) and LONG enough (axially) that the whole rocket sits inside
-  // it with room to swing the loading arm. The tangent width stays as the
-  // catalogue airlock so it never fouls the side decon bay just along the
-  // shoulder. This is the SAME model the catalogue shows for the pod bay
-  // (buildSpacePodBay), just built bigger, so the door the ship noses into is the
-  // door the car drives out of. Constructed in its own local frame and dropped
-  // onto the outer hull at theta = 0 with orientFloor.
-  const bay = buildSpacePodBay({ mouthR: 7.5, hx: 7, hz0: 2, hz1: 28, hy0: -30 });
-  orientFloor(bay, 0, 0, RING_R);
+  // ---- The eye-port: the pod bay doors at the station's centre -----------
+  // The old boxy hangar that hung off the outer hull is GONE. The door moved to
+  // the very middle of the ship: the catalogue pod-bay model itself, bolted onto
+  // the core's +Z plinth and aimed down the incoming rocket's throat, so the
+  // arrival flies to the centre of the station and the lids open like an eye
+  // for it (main.js's arrival cine drives setDoors). +Z is the wheel's axle —
+  // standing in the hub and looking out along it, like the centre of a ferris
+  // wheel staring away from the rim, instead of down at the floor. Placed at
+  // world z = 21.5: the face plate stands proud of the sphere, the lid slot sits
+  // at z 20.98..21.48, and behind it the open iris/throat leads into the core.
+  // The arrival now slides the ship the rest of the way down the axle after the
+  // approach, so the hold comes to rest behind that slot (tail ~19.8) and the
+  // lids can shut in front of it.
+  const bay = buildSpacePodBay();
+  bay.rotation.x = -Math.PI / 2;   // mouth (local -Y) -> world +Z, body into the core
+  bay.position.set(0, 0, 21.5);
   group.add(bay);
 
-  // The big hydraulic loading arm that lifts the car off the dock floor and
-  // tucks it into the parked rocket's hold (driven by the departure cine in
-  // main.js). Stowed folded against the floor until then.
-  const hangarArm = buildSpaceHangarArm({ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2.6 });
-  bay.add(hangarArm.g);
+  // ---- The dock frame at the ring floor, theta = 0 -----------------------
+  // What remains of the old hangar: just its placement frame at the head of the
+  // dock spur, holding the loading arm and giving the departure's berth and its
+  // load camera their coordinates (main.js reads it as spaceWorld.dockFrame).
+  const dockFrame = new THREE.Group();
+  orientFloor(dockFrame, 0, 0, RING_R);
+  group.add(dockFrame);
 
-  // ---- The dock spur: the off-ramp from the main road into the pod bay -----
+  // The big hydraulic loading arm that lifts the car off the berth and tucks it
+  // into the parked rocket's hold (driven by the departure cine in main.js).
+  // Stowed folded against the floor until then.
+  const hangarArm = buildSpaceHangarArm({ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2.6 });
+  dockFrame.add(hangarArm.g);
+
+  // ---- The dock spur: the off-ramp from the main road to the berth --------
   // A second strip of curved floor continues the corridor through the +Z wall
-  // gap out to the bay lip, with a centreline and a berth ring so it reads as a
+  // gap out to the berth, with a centreline and a berth ring so it reads as a
   // road that ends at the dock. Built with the same cylinder maths as the floor
   // (theta is a quarter turn ahead of world angle), so a strip centred on world
   // angle 0 — the dock — is centred on cylinder theta = PI/2.
@@ -1144,7 +1424,7 @@ export function buildSpaceWorld(scene) {
   spurFloor.position.z = (DOCK_SPUR_Z0 + DOCK_SPUR_Z1) / 2;
   spurGroup.add(spurFloor);
 
-  // Centreline dashes running out to the bay (thin radially, long along Z).
+  // Centreline dashes running out to the berth (thin radially, long along Z).
   const dashGeo = new THREE.BoxGeometry(0.12, 0.5, 1.3);
   for (let i = 0; i < 4; i++) {
     const d = new THREE.Mesh(dashGeo, M.glowCyan);
@@ -1161,16 +1441,49 @@ export function buildSpaceWorld(scene) {
       spurGroup.add(stud);
     }
   }
-  // The berth ring: park here to be flown home.
+  // The berth ring marks where the loading arm picks the car up (behind the
+  // departure's black beat, so the drive never sees the hand-off).
   const berth = new THREE.Mesh(new THREE.TorusGeometry(1.7, 0.22, 8, 40), M.glowCyan);
   berth.rotation.y = Math.PI / 2;    // lie flat in the tangent plane at world angle 0
   berth.position.set(RING_R - 0.08, 0, DOCK_SPUR_Z1 - 1.0);
   spurGroup.add(berth);
 
+  // ---- The road-centre departure lift ------------------------------------
+  // Sat plumb in the middle of the lane at the dock: the unmistakable way home.
+  // Its fenced tangent ends stop a car that is simply driving the loop, while
+  // the open axial flanks let you pull off the line and drive in sideways to
+  // board. main.js drives the deck up and reads `s`/`halfS`/`halfW` for the
+  // post collision and the boarding trigger.
+  const roadLift = buildSpaceRoadLift();
+  roadLift.g.position.set(0, 0, 0);      // dockFrame origin = s 0, w 0
+  dockFrame.add(roadLift.g);
+  roadLift.s = 0;
+  roadLift.w = 0;
+  roadLift.halfS = 2.8;
+  roadLift.halfW = 3.6;
+
   // ---- A dormant launch rocket, hidden until the arrival cine ------------
   const arrival = buildArrivalShip();
   arrival.g.visible = false;
   group.add(arrival.g);
+
+  // Two lamps travel with that rocket, key above the roof and a cold fill under
+  // the belly: out in the void the hull is 100+ units from every station lamp,
+  // so without its own lighting the flyby pass is a silhouette. They ride the
+  // ship's own frame, so whichever flank the lens is on stays lit; distance is
+  // kept short so they wash the hull and not the stars. Intensities are hot
+  // because the physical falloff (decay 1.2) saps a lamp fast at hull range.
+  const shipKey = new THREE.PointLight(0xfff6e6, 60, 120, 1.2);
+  shipKey.position.set(1.5, 4.2, 4.2);
+  arrival.g.add(shipKey);
+  const shipFill = new THREE.PointLight(0xcfe6ff, 40, 120, 1.2);
+  shipFill.position.set(-2.0, -3.2, -3.6);
+  arrival.g.add(shipFill);
+  // A third lamp out at the nose, so the front of the hull does not fall off
+  // dark as the rocket sweeps past the fixed tripod.
+  const shipNose = new THREE.PointLight(0xfff2e0, 30, 100, 1.2);
+  shipNose.position.set(4.5, -0.5, 0);
+  arrival.g.add(shipNose);
 
   const api = {
     group,
@@ -1178,7 +1491,11 @@ export function buildSpaceWorld(scene) {
     core: core.g,
     coreRadius: CORE_R,
     floor,
+    // The eye-port at the station centre (setDoors below drives its lids).
     bay,
+    // The ring-floor frame at the spur head: holds the loading arm, and the
+    // departure's berth/load camera coordinates (main.js: spaceWorld.dockFrame).
+    dockFrame,
     spur: spurGroup,
     consoles,
     sectors,
@@ -1194,9 +1511,13 @@ export function buildSpaceWorld(scene) {
     arrivalSeat: arrival.seat,
     arrivalHinge: arrival.hinge,
     arrivalPlume: { g: arrival.plume, outer: arrival.outer, inner: arrival.inner },
+    // The road-centre departure lift: the player pulls into an open flank and
+    // the deck lifts the car to the exit rocket's hold (main.js drives
+    // `deck`/`beacons` and uses `s`/`halfS`/`halfW` for the collision).
+    roadLift,
     hangarArm,
-    // The berth, in the hangar's local frame: where the car parks to be loaded
-    // (world = bay.localToWorld). The load cine grabs the car here.
+    // The berth, in the dock frame's local frame: where the car parks to be
+    // loaded (world = dockFrame.localToWorld). The load cine grabs the car here.
     berthLocal: new THREE.Vector3(0, 0.0, DOCK_SPUR_Z1 - 1.0),
     // The dock spur's driveable footprint, for the lane widening + boarding
     // trigger in main.js (loop-distance half-width, max w, and berth w).
@@ -1210,13 +1531,19 @@ export function buildSpaceWorld(scene) {
     setDoors(open) {
       bay.userData.setDoors(open);
     },
-    update(dt, t, car) {
+    update(dt, t, car, car2) {
       for (const s of core.spinners) s.rotation.y += dt * 0.08;
       // Probes spin only — no drift, so each stays seated on its tether.
       for (const f of core.floaters) f.rotation.y += dt * f.userData.spin;
       for (const m of core.beacons) m.emissiveIntensity = 1.6 + Math.sin(t * 4) * 0.9;
       extRing.rotation.z -= dt * 0.045;   // hull markers wheel the other way
       skyGroup.rotation.z = -t * 0.02;   // stars wheel past the windows
+      // The road lift's beacon lamps pulse in a slow alternating sweep, so the
+      // platform reads as live and waiting even before you pull onto it.
+      for (let i = 0; i < roadLift.beacons.length; i++) {
+        const k = 0.5 + 0.5 * Math.sin(t * 4 + i * (Math.PI / 2));
+        roadLift.beacons[i].scale.setScalar(0.8 + k * 0.5);
+      }
       const su = skyGroup.userData;
       for (const c of su.clouds) c.material.opacity = c.userData.base + Math.sin(t * 0.25 + c.userData.phase) * c.userData.amp;
       for (const q of su.quasars) q.mat.opacity = q.base + Math.sin(t * q.speed + q.phase) * 0.2;
@@ -1235,10 +1562,10 @@ export function buildSpaceWorld(scene) {
           }
         }
       }
-      sectors.update(dt, t, car || null);
+      sectors.update(dt, t, car || null, car2 || null);
     },
     mapFeatures: [],
-    spawn: { s: 0, w: 4.6, heading: 0 },
+    spawn: { s: 0, w: 5.4, heading: 0 },
   };
 
   api.setDoors(0);

@@ -1314,7 +1314,14 @@ export function buildSpaceSectors() {
     const model = makeEyeTerminal();
     cell.add(model);
     const head = model.userData.head;
-    dynamics.push((dt, t, car) => {
+    dynamics.push((dt, t, cars) => {
+      // Track the NEAREST player, so the eye follows whichever car is closest
+      // (P1 or the split twin) rather than only Player 1.
+      let car = null, best = Infinity;
+      for (const c of cars) {
+        const dc = Math.abs(wrapS(c.s - s));
+        if (dc < best) { best = dc; car = c; }
+      }
       if (!car) return;
       const th = s / RING_R, c = Math.cos(th), sn = Math.sin(th);
       const ex = RING_R * c, ey = RING_R * sn, ez = w;
@@ -1998,9 +2005,13 @@ export function buildSpaceSectors() {
       let clock = 0;
       trashBot = { bot, cube, near: false, clock: 0, suppress: false, intake: beltIn, return: beltOut };
 
-      dynamics.push((dt, t, car) => {
-        const near = !!(car && car.s !== undefined)
-          && Math.hypot(wrapS(car.s - bayS), (car.w || 0) - bayW) < TRASH_NEAR;
+      dynamics.push((dt, t, cars) => {
+        // Wakes for EITHER player: if the split twin drives past the bay, the
+        // loop runs just as it does for Player 1.
+        let near = false;
+        for (const car of cars) {
+          if (Math.hypot(wrapS(car.s - bayS), (car.w || 0) - bayW) < TRASH_NEAR) { near = true; break; }
+        }
         trashBot.near = near;
         const active = near && !trashBot.suppress;
         if (active) clock += dt;
@@ -2091,17 +2102,19 @@ export function buildSpaceSectors() {
   }
 
   // ---- Knock-spring integration -----------------------------------------
-  function updateKnocks(dt, car) {
+  function updateKnocks(dt, cars) {
     for (const k of knocks) {
-      if (car && k.radius > 0.01) {
-        const ds = wrapS(k.s - car.s);
-        const dz = k.w - car.w;
-        const d = Math.hypot(ds, dz);
-        if (d < k.radius + 2.2) {
-          const inv = 1 / (d + 0.4);
-          const push = (6 / k.mass) * dt;
-          k.vx += ds * inv * push;
-          k.vz += dz * inv * push;
+      if (k.radius > 0.01) {
+        for (const car of cars) {
+          const ds = wrapS(k.s - car.s);
+          const dz = k.w - car.w;
+          const d = Math.hypot(ds, dz);
+          if (d < k.radius + 2.2) {
+            const inv = 1 / (d + 0.4);
+            const push = (6 / k.mass) * dt;
+            k.vx += ds * inv * push;
+            k.vz += dz * inv * push;
+          }
         }
       }
       k.vx += -k.dx * 14 * dt - k.vx * 4 * dt;
@@ -2128,11 +2141,12 @@ export function buildSpaceSectors() {
                               // (safely inside the shortest stem's 7.4 reach)
   const _vineDown = new THREE.Vector3(0, -1, 0);   // a vine hanging plumb
   const _vineDir = new THREE.Vector3();            // where the club actually points
-  function updateVines(dt, t, car) {
-    const hasCar = !!(car && car.speed !== undefined);
+  function updateVines(dt, t, cars) {
     for (const v of vines) {
       const hs0 = Math.sin(v.ang) * v.len;   // the club's own swing offset along s
-      if (hasCar) {
+      // Every car on the rim is an actor: both players part the same curtain, so
+      // a vine can be pushed from either side (and both feel the drag).
+      for (const car of cars) {
         // Where the club actually hangs right now (anchor + swing), so a car
         // already pushing one along keeps contact.
         const vs = v.s + hs0;
@@ -2184,8 +2198,8 @@ export function buildSpaceSectors() {
       // carrying the club back through the car it stops dead on the car's surface
       // and BOUNCES off, so the car can never be inside a vine. This runs LAST so
       // it always wins: no clamp below can pull the club back inside the car.
-      if (hasCar) {
-        const clubS = Math.sin(v.ang) * v.len;
+      const clubS = Math.sin(v.ang) * v.len;
+      for (const car of cars) {
         const px = clubS - wrapS(car.s - v.s);
         const py = v.dw - (car.w - v.w);
         const dist = Math.hypot(px, py);
@@ -2217,17 +2231,25 @@ export function buildSpaceSectors() {
     }
   }
 
-  function update(dt, t, car) {
+  // `car` and `car2` are the two players' ring states (car2 null under
+  // single-player). Every interactive prop treats all of them as actors, so the
+  // split twin is a full participant: it parts the vines, shoves the knockable
+  // props, wakes the trash loop and is tracked by the eye terminals, exactly as
+  // Player 1 is.
+  function update(dt, t, car, car2) {
+    const cars = [];
+    if (car && car.speed !== undefined) cars.push(car);
+    if (car2 && car2.speed !== undefined) cars.push(car2);
     state.hazardsOff = Math.max(0, state.hazardsOff - dt);
-    for (const d of dynamics) d(dt, t, car);
+    for (const d of dynamics) d(dt, t, cars);
     if (crane) crane.spinBeacon(t);
     // Hazard gating: while the override is active, live hazards read as off.
     const off = state.hazardsOff > 0;
     for (const z of zones) {
       z.off = off && (z.type === 'plasma' || z.type === 'geyser' || z.type === 'compactor' || z.type === 'tractor' || z.type === 'tug');
     }
-    updateKnocks(dt, car);
-    updateVines(dt, t, car);
+    updateKnocks(dt, cars);
+    updateVines(dt, t, cars);
   }
 
   return {

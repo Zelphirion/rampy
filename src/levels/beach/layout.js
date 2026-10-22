@@ -1,5 +1,9 @@
 import { createClamSite, LOWER_SIZE } from '../../clam.js';
-import { worldXLo, worldXHi, worldZLo, worldZHi } from '../../modules/world.js';
+
+// The beach keeps its own FIXED bounds. It used to borrow the city's world
+// bounds, but the city has since grown 4x and the beach must not move, so the
+// box it is built from is pinned to its original size here.
+const BEACH_XLO = -90, BEACH_XHI = 90, BEACH_ZLO = -90, BEACH_ZHI = 123;
 
 // ===== Beach World layout =====
 //
@@ -30,10 +34,10 @@ import { worldXLo, worldXHi, worldZLo, worldZHi } from '../../modules/world.js';
 // the whole map width and depth is driveable sand; the drop-off stands its own
 // distance in from the southern edge, which is why the water looks like it goes
 // on for ever while the last thing between the car and the dark is a lip.
-export const BEACH_MAP_X0 = worldXLo;   // -90, the map's west edge
-export const BEACH_MAP_X1 = worldXHi;   // +90, the map's east edge
-export const BEACH_MAP_Z0 = worldZLo;   // -90, the map's seaward edge
-export const BEACH_MAP_Z1 = worldZHi;   // +123, the map's landward edge
+export const BEACH_MAP_X0 = BEACH_XLO;   // -90, the map's west edge
+export const BEACH_MAP_X1 = BEACH_XHI;   // +90, the map's east edge
+export const BEACH_MAP_Z0 = BEACH_ZLO;   // -90, the map's seaward edge
+export const BEACH_MAP_Z1 = BEACH_ZHI;   // +123, the map's landward edge
 
 export const BEACH_HALF_W = BEACH_MAP_X1;   // 90: side cliff faces at the world's edge
 export const BEACH_CLIFF_Z = BEACH_MAP_Z1;  // 123: foot of the back cliff wall at the edge
@@ -66,11 +70,11 @@ export const BEACH_EDGE_X = BEACH_MAP_X1;        // 90: outer backstop, in the c
 // flat, so the extra reach costs almost nothing.
 export const BEACH_DEEP_FLOOR_Z = -700;
 
-// The far end of the DRIVABLE deep. The drop-off is no longer a wall: the car
-// drives down it and out across the trench floor to the wreck (z -415) and the
-// mermaids' castle (z -450). This is where the deep channel is closed off, well
-// past both, so the run is bounded rather than running on to the floor's own
-// far edge. The camera's keep-in uses it too.
+// The far end of the deep run. The rim wall keeps the car landward of the
+// drop-off, so this is scenery/containment rather than a driving limit now: the
+// wreck (z -150) and the mermaids' castle (z -190) stand between the lip and
+// this line, and the box that closes the deep off is here, well past both. The
+// camera's keep-in uses it too.
 export const BEACH_DEEP_Z = -480;
 
 // Where you arrive: on the sand BETWEEN the cliffs and the water, facing the
@@ -268,11 +272,10 @@ function shoreProfile(z) {
     return lerp(BEACH_WET_Y, BEACH_BASIN_Y, basinCurve(clamp01((BEACH_SHORE_Z - z) / (BEACH_SHORE_Z - BEACH_RIM_Z))));
   }
   if (z >= BEACH_TRENCH_Z) {
-    // The drop-off: the long ramp down off the shelf and out into the deep. It
-    // used to be a near-vertical precipice with a collider wall on the lip, so
-    // the car could never leave the basin. It is now the way DOWN - a smooth,
-    // drivable grade that carries you out to the wreck and the mermaids'
-    // castle - so it uses the same eased curve as the rest of the profile.
+    // The drop-off itself: a smooth graded ramp off the shelf down into the
+    // deep. The invisible rim wall keeps the car out of it, but the floor is
+    // still meshed all the way out - the wreck and the mermaids' castle stand
+    // on it, seen across the water from the basin.
     const u = clamp01((BEACH_RIM_Z - z) / (BEACH_RIM_Z - BEACH_TRENCH_Z));
     return lerp(BEACH_BASIN_Y, BEACH_TRENCH_Y, smooth(u));
   }
@@ -425,11 +428,13 @@ export function beachColliders() {
       place: (z, face, r) => ({ x: sx * (BEACH_HALF_W + face + r), z }),
     });
   }
-  // The offshore drop-off is OPEN. The car drives over the lip and down the ramp
-  // (see the profile's own drop-off), out across the deep to the wreck and the
-  // mermaids' castle. The old lip wall is gone; the deep run is closed off at its
-  // far end and along its flanks instead, so the car is still contained on a meshed
-  // floor with nowhere else to be - just a much bigger box.
+  // The offshore drop-off is CLOSED by the invisible rim wall at BEACH_RIM_Z —
+  // the car drives right down to the lip (the basin bowl eases to its edge) and
+  // stops against thin air, with the wreck and the mermaids' castle visible
+  // across the water beyond. The deep run is still closed off at its far end and
+  // along its flanks, so the contained box covers both the basin and the deep,
+  // and the buried backstops below catch any physics edge case.
+  wall(0, BEACH_RIM_Z, BEACH_EDGE_X + 30, 2.5);
   const deepFrom = BEACH_TRENCH_Z + 6;
   const deepTo = BEACH_DEEP_Z;
   const deepMid = (deepFrom + deepTo) / 2;
@@ -440,6 +445,16 @@ export function beachColliders() {
   wall(-BEACH_HALF_W - 8, deepMid, 8, deepHalf + 20);
   // Far end: past the castle, deep in the murk.
   wall(0, BEACH_DEEP_Z, BEACH_EDGE_X + 30, 8);
+  // The wreck's hull is walled on both sides and astern, so the car can drive
+  // INTO the open bow but not through the planking. The side walls hug just
+  // inside the beam (BEAM/2 = 14, wall face at +-14), which stops the car's disc
+  // flush with the hull surface at midships, and they run only 50 of the 56
+  // units from stern to cut - leaving the rotted bow face as an open drive-in
+  // mouth. The bow itself is deliberately NOT walled: that is the way in.
+  const W = BEACH_SHIPWRECK;
+  wall(W.x - 13, W.z, 1, 50);
+  wall(W.x + 13, W.z, 1, 50);
+  wall(W.x, W.z - 52, 12, 1);
   // Backstops buried inside the cliffs. Nothing should ever reach these; they
   // exist so a physics edge case cannot put the car in the void, and they are
   // never visible.
@@ -545,27 +560,22 @@ export const sandPileOffsetAt = (x, z) => (sandPileActive ? sandPileProfileAt(x,
 
 // ---- The mermaids' castle ----
 //
-// The landmark the deep is built around: a GIANT version of the very same
-// castle model that stands on the sand (`sandcastle.js`'s buildStanding), but
-// rendered in pearl-pink, dusted with glitter and ringed with shells and other
-// things off the sea floor. It is scenery, not a destination.
+// The landmark out in the deep: a GIANT version of the very same castle model
+// that stands on the sand (`sandcastle.js`'s buildStanding), but rendered in
+// pearl-pink, dusted with glitter and ringed with shells and other things off
+// the sea floor. It is scenery, not a destination — the rim wall keeps the car
+// landward of the drop-off, so you only ever see it across the water.
 //
-// It stands well OUT PAST the mermaids: their patrol never leaves x = +-15, and
-// the castle sits off to the east side (a large +x) and far further seaward (a
-// much more negative z) than they ever swim. It is deep past the drop-off, on the
-// flat deep floor, in water the car's rim collider can never let it reach - so
-// there is nothing here to drive into and nothing to interact with. You only ever
-// see it, tiny and hazy, away out in the distance.
-//
-// It is placed ~20 castle-lengths from the beach. A castle-length is taken as
-// the castle's own width across the curtain walls, 2 * WALL_HALF * scale ~ 23.8,
-// so 20 of them is ~476: with x = 50 that lands the keep ~478 units from the
-// spawn - right out at the camera's own far plane, a small silhouette in the
-// haze and nothing more. The deep floor (BEACH_DEEP_FLOOR_Z) runs far past it so
-// it never floats over the void.
+// It stands just past the wreck, off to the east side (a large +x) and a little
+// further seaward, so the two drowned landmarks read together from the shore.
+// A castle-length is the castle's own width across the curtain walls,
+// 2 * WALL_HALF * scale ~ 23.8; this is about eight of them from the spawn —
+// close enough to pick out the towers through the water haze from the beach,
+// far enough to still be a deep-water silhouette. The deep floor
+// (BEACH_DEEP_FLOOR_Z) runs far past it so it never floats over the void.
 //
 // `x/z` is the centre of the keep, exactly as BEACH_SANDCASTLE's is.
-export const BEACH_MERMAID_CASTLE = { x: 50, z: -450 };
+export const BEACH_MERMAID_CASTLE = { x: 50, z: -190 };
 // How much bigger than the drivable sand castle this one is. The sand castle is
 // already a full castle at the car's own scale; the giant one is nearly twice
 // it, so even through the water and at a distance it reads as a landmark rather
@@ -574,17 +584,72 @@ export const MERMAID_CASTLE_SCALE = 1.7;
 
 // ---- The wreck ----
 //
-// A huge 1800s sailing ship, broken and heeled right over on the sea floor, out
-// in the deep just short of the mermaids' castle so the two read together as the
-// drowned end of the cove. Like the castle it is scenery only - it sits in water
-// the car's rim collider can never let it reach, carries no collider and has
-// nothing to drive into; you only ever see it from the lip, down through the
-// water. `x/z` is the ship's midships point, `yaw` its heading (radians) and
-// `heel` how far it has rolled over (its 45-ish degree list).
-export const BEACH_SHIPWRECK = { x: 12, z: -415, yaw: 0.7, heel: Math.PI / 4 };
+// A huge 1800s sailing ship, broken and heeled right over on the sea floor,
+// just past the drop-off's toe so it is a landmark you can pick out from the
+// shore rather than a speck in the haze — the mermaids' castle stands further
+// out and off to the east, and the two read together as the drowned end of the
+// cove. The rim wall keeps the car landward of the lip, so the wreck is
+// scenery seen across the water. `x/z` is the ship's midships point, `yaw`
+// its heading (radians) and `heel` how far it has rolled over (its 45-ish
+// degree list). Yaw is deliberately 0: that squares the rotted bow (local +Z)
+// with the basin approach, so the open mouth faces back toward the beach.
+// The whole hull sits on the flat trench floor past the slope's toe (z -88),
+// because the model is built to one ground height at midships.
+export const BEACH_SHIPWRECK = { x: -40, z: -150, yaw: 0, heel: Math.PI / 4 };
 // Overall size knob for the whole wreck model, applied on top of a ship already
 // modelled at roughly the scale of the giant castle.
 export const SHIPWRECK_SCALE = 1.0;
+// The hull's plan dimensions, in world units. shipwreck.js builds the model to
+// these and the hull colliders in beachColliders() hug the same beam, so the
+// walls the car stops against and the planking it can see are the same surface.
+export const SHIPWRECK_LEN = 112;
+export const SHIPWRECK_BEAM = 28;
+
+// ---- The blue flag ----
+//
+// The mermaids, their drowned castle and the wreck are all BEHIND this flag.
+// It stands on the sea floor at the lip of the drop-off, in front of every one
+// of them, and it is NOT LIFTED until the player has actually gone under the
+// water: until then the pennant hangs limp down the post, and the deep behind
+// it is not drawn at all - from above the surface there is nothing out there
+// but a bare post standing in the sea.
+//
+// The post is tall enough to break the surface, so it IS a landmark from the
+// beach: a marker out in the water with a wet blue rag hanging on it. The flag
+// only flies once you have dived, and from then on it stays up.
+//
+// `x/z` is the foot of the post. It is a couple of units PAST the rim wall, so
+// the car can drive right up to the lip and stop against the invisible wall
+// with the flag just beyond it, and can never reach the flag itself.
+export const BEACH_BLUE_FLAG = {
+  x: 0,
+  z: BEACH_RIM_Z - 2,     // -70: just outside the rim wall, out of the car's reach
+  poleR: 0.55,
+  poleH: 28,              // tall enough to break the surface off the trench floor
+  yardY: 26,              // the spar the pennant hangs from, near the top of the post
+  flagW: 5.0,             // the fly: how far the cloth reaches out from the post
+  flagH: 3.2,             // the hoist: how much of the post it covers
+};
+
+// ---- The reveal ----
+//
+// Nothing in the deep is drawn while the player's view is above the water. The
+// rule is a function of the CAMERA's height and not the car's: the camera is
+// the eye, and if the eye is out of the water then the castle, the wreck and
+// the mermaids are not on the screen, whatever the car happens to be doing.
+//
+// The margin is deliberate and it only goes one way. Coming up hides the deep
+// the instant the eye breaks the surface - the sea closes over it and there is
+// nothing to see from up here - while going down needs the eye to be properly
+// under before the deep opens, so bobbing about on the waterline cannot make
+// the castle flicker on and off.
+export const BEACH_DEEP_DIVE_MARGIN = 0.25;
+
+export function beachDeepRevealed(camY, base = 0.15, wasOn = false) {
+  const surface = base + BEACH_SEA_Y;
+  if (wasOn) return camY < surface;
+  return camY < surface - BEACH_DEEP_DIVE_MARGIN;
+}
 
 // ---- The scale of the wildlife ----
 //

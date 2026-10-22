@@ -1,7 +1,8 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
   BEACH_SHIPWRECK, SHIPWRECK_SCALE, BEACH_SEA_Y, beachGroundOffsetAt,
-} from './layout.js?v=1800000000000';
+  SHIPWRECK_LEN as LEN, SHIPWRECK_BEAM as BEAM,
+} from './layout.js?v=1800000000003';
 
 // ===== The wreck =====
 //
@@ -54,9 +55,8 @@ const M = {
 };
 
 // The hull, in its own local frame: forward is +Z (bow at +LEN/2), the keel sits
-// on y = 0 and the weather deck is at y = DECK.
-const LEN = 112;
-const BEAM = 28;
+// on y = 0 and the weather deck is at y = DECK. LEN and BEAM come from layout.js,
+// so the model and the hull's collision walls cannot drift apart.
 const DECK = 17;
 const BULWARK = 5;
 // The forward quarter has rotted clean away. Everything in front of this line
@@ -269,13 +269,17 @@ export function buildShipwreck(base) {
 
 // ===== The treasure =====
 //
-// A chest burst open on the sea floor beside the wreck, spilling gold - coins
-// strewn across the sand, and jewels and pearls among them. Pure scenery, but it
-// is the reason to come all the way out here. Deterministic, like everything
-// else in the level.
+// A chest burst open INSIDE the wreck's open hull, on the sea floor under the
+// broken deck - gold coins strewn across the planking, and jewels and pearls
+// among them. That is the payoff for driving all the way out here and into the
+// ship: the wreck is not scenery you look at from the lip any more, it is a room
+// you drive into, and the gold is waiting at the back of it. Deterministic, like
+// everything else in the level.
 export function buildTreasureChest(base) {
   const group = new THREE.Group();
-  const site = { x: BEACH_SHIPWRECK.x + 26, z: BEACH_SHIPWRECK.z + 20 };
+  // Slightly forward of midships, so the chest sits in the light spilling in
+  // through the open bow rather than in the shadow under the stern.
+  const site = { x: BEACH_SHIPWRECK.x, z: BEACH_SHIPWRECK.z + 6 };
   const ground = beachGroundOffsetAt(site.x, site.z);
 
   const chest = new THREE.Group();
@@ -315,11 +319,13 @@ export function buildTreasureChest(base) {
     chest.add(pe);
   }
 
-  // ...and the coins strewn across the sand, as if the tide of the spill ran out
-  // across the floor. They lie flat, half-sunk, so they read as scattered.
+  // ...and the coins strewn across the floor, as if the tide of the spill ran
+  // out from the chest. They lie flat, half-sunk, so they read as scattered.
+  // The radii keep the spill on the hull's own planking (half-width 14, half-
+  // length 56) rather than washing it out through the sides of the wreck.
   for (let i = 0; i < 70; i++) {
     const a = rr(0, TAU);
-    const r = rr(2, 16);
+    const r = rr(1.5, 8);
     const coin = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.12, 8), M.gold);
     const cx = site.x + Math.cos(a) * r;
     const cz = site.z + Math.sin(a) * r;
@@ -329,7 +335,7 @@ export function buildTreasureChest(base) {
   }
   for (let i = 0; i < 6; i++) {
     const a = rr(0, TAU);
-    const r = rr(3, 13);
+    const r = rr(2.5, 7);
     const g = new THREE.Mesh(new THREE.OctahedronGeometry(0.5 + rr(0, 0.3), 0), i % 2 ? M.jewel : M.jewelWarm);
     const cx = site.x + Math.cos(a) * r;
     const cz = site.z + Math.sin(a) * r;
@@ -339,7 +345,7 @@ export function buildTreasureChest(base) {
   }
   for (let i = 0; i < 7; i++) {
     const a = rr(0, TAU);
-    const r = rr(2, 12);
+    const r = rr(2, 6);
     const pe = new THREE.Mesh(new THREE.SphereGeometry(0.3 + rr(0, 0.14), 6, 5), M.pearl);
     const cx = site.x + Math.cos(a) * r;
     const cz = site.z + Math.sin(a) * r;

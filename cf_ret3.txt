@@ -1,0 +1,27 @@
+﻿1395:     // car parked under the loft must not be lifted onto it.
+1396:     loftTopAt(x, z, carY) {
+1397:       const inLoft = x >= BARN.loftWest && x <= BARN.x + BARN.halfW &&
+1398:         Math.abs(z - BARN.z) <= BARN.halfD;
+1399:       return inLoft && carY > BARN.loftY - 2.5 ? BARN.loftY : 0;
+1400:     },
+1401:     // The flat top of the hill/embankment â€” again only for a car already up
+1402:     // there (its own loftTopAt, so a car at the foot of the slope is not lifted).
+1403:     plateauTopAt(x, z, carY) {
+1404:       return plateauTopAt(x, z, carY);
+1405:     },
+1406:     squirrel,
+1407:     farmTractor,
+1408:     truck,
+1409:     // Called each frame while the car is here. `car` = { x, y, z, heading, speed }.
+1410:     update(delta, car) {
+1411:       shimmerT += delta;
+1412:       returnTree.disc.material.opacity = 0.45 + 0.18 * Math.sin(shimmerT * 3.0);
+1413: 
+1414:       // ---- Corn knocking ----
+1415:       // The car's forward vector is (-cos(yaw), sin(yaw)) â€” see main.js.
+1416:       const hx = -Math.cos(car.heading), hz = Math.sin(car.heading);
+1417:       const moving = Math.abs(car.speed) > CORN.minSpeed;
+1418:       if (moving) {
+1419:         for (let i = 0; i < corn.count; i++) {
+1420:           if (corn.knocked[i]) continue;
+

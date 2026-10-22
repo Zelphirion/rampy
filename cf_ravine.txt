@@ -1,0 +1,226 @@
+﻿1059: function buildRavine(scene) {
+1060:   const { x0, x1 } = HILL;
+1061:   const z0 = HILL.zFar, z1 = HILL.ravine.z1, d = HILL.ravine.depth;
+1062:   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+1063:   const w = x1 - x0, len = z1 - z0;
+1064:   const wall = (ww, hh, dd, x, y, z) => {
+1065:     const m = new THREE.Mesh(new THREE.BoxGeometry(ww, hh, dd), M.dirt);
+1066:     m.position.set(x, y, z);
+1067:     m.receiveShadow = true;
+1068:     scene.add(m);
+1069:   };
+1070:   wall(w, 0.4, len, cx, -d, cz);                       // floor
+1071:   wall(w, d + HILL.topY, 0.4, cx, (HILL.topY - d) / 2, z0);   // near cliff (under the lip)
+1072:   wall(w, d, 0.4, cx, -d / 2, z1);                     // far wall
+1073:   wall(0.4, d, len, x0, -d / 2, cz);                   // west wall
+1074:   wall(0.4, d, len, x1, -d / 2, cz);                   // east wall
+1075: }
+1076: 
+1077: // ===== Tractor (1939 Farmall) + farmer dog =====
+1078: function makeFarmerDog() {
+1079:   const g = new THREE.Group();
+1080:   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.62, 0.4), M.dogFur);
+1081:   torso.position.y = 0.31;
+1082:   g.add(torso);
+1083:   // overall bib
+1084:   const bib = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.42, 0.06), new THREE.MeshStandardMaterial({ color: 0x3a5a8a, roughness: 0.9 }));
+1085:   bib.position.set(0, 0.34, 0.21);
+1086:   g.add(bib);
+1087:   const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), M.dogFur);
+1088:   head.position.set(0, 0.74, 0.02);
+1089:   g.add(head);
+1090:   const snout = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 0.24), M.dogDark);
+1091:   snout.position.set(0, 0.7, 0.22);
+1092:   g.add(snout);
+1093:   for (const sx of [-0.17, 0.17]) {
+1094:     const ear = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.14), M.dogDark);
+1095:     ear.position.set(sx, 0.72, 0);
+1096:     ear.rotation.z = sx > 0 ? 0.3 : -0.3;
+1097:     g.add(ear);
+1098:     const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.4, 0.12), M.dogFur);
+1099:     arm.position.set(sx * 1.1, 0.42, 0.14);
+1100:     arm.rotation.x = -0.7;
+1101:     g.add(arm);
+1102:   }
+1103:   // straw hat
+1104:   const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.05, 14), M.hat);
+1105:   brim.position.y = 0.92;
+1106:   g.add(brim);
+1107:   const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.24, 12), M.hat);
+1108:   crown.position.y = 1.05;
+1109:   g.add(crown);
+1110:   return g;
+1111: }
+1112: 
+1113: // A stand-alone 1939 Farmall: small steer wheels up front, huge knobby rears,
+1114: // tricycle stance, farmer dog at the wheel. Also the cornfield's AI tractor.
+1115: export function makeFarmallTractor() {
+1116:   const g = new THREE.Group();
+1117:   const wheels = [];
+1118:   const wheelPivots = [];
+1119: 
+1120:   const addWheel = (x, z, radius, width, lugs = 0) => {
+1121:     const pivot = new THREE.Group();
+1122:     pivot.position.set(x, radius, z);
+1123:     const tyre = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, width, 18), M.tire);
+1124:     tyre.rotation.x = Math.PI / 2;
+1125:     tyre.castShadow = true;
+1126:     // Knobby tread: lugs sit ON the tyre, so they inherit its roll about the axle.
+1127:     for (let i = 0; i < lugs; i++) {
+1128:       const a = (i / lugs) * Math.PI * 2;
+1129:       const lug = new THREE.Mesh(new THREE.BoxGeometry(0.16, width * 1.04, 0.26), M.tire);
+1130:       lug.position.set(Math.cos(a) * (radius + 0.02), 0, Math.sin(a) * (radius + 0.02));
+1131:       lug.rotation.y = -a;
+1132:       tyre.add(lug);
+1133:     }
+1134:     pivot.add(tyre);
+1135:     const hub = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.38, radius * 0.4, width * 1.06, 12), M.chrome);
+1136:     hub.rotation.x = Math.PI / 2;
+1137:     pivot.add(hub);
+1138:     g.add(pivot);
+1139:     wheels.push(tyre);
+1140:     wheelPivots.push(pivot);
+1141:     return pivot;
+1142:   };
+1143: 
+1144:   // Front steer wheels first â€” main.js steers wheelPivots[0] and [1].
+1145:   addWheel(-1.6, 0.35, 0.5, 0.3);              // front (tricycle stance)
+1146:   addWheel(-1.6, -0.35, 0.5, 0.3);
+1147:   addWheel(0.9, 0.78, 1.15, 0.6, 12);          // huge knobby rear
+1148:   addWheel(0.9, -0.78, 1.15, 0.6, 12);
+1149: 
+1150:   const body = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.7, 1.0), M.tractor);
+1151:   body.position.set(-0.4, 1.15, 0);
+1152:   body.castShadow = true;
+1153:   g.add(body);
+1154: 
+1155:   const hood = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 0.8), M.tractor);
+1156:   hood.position.set(-1.6, 1.35, 0);
+1157:   g.add(hood);
+1158:   const grille = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.7), M.chrome);
+1159:   grille.position.set(-2.35, 1.35, 0);
+1160:   g.add(grille);
+1161: 
+1162:   const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.1, 8), M.chrome);
+1163:   exhaust.position.set(-1.9, 2.05, 0.2);
+1164:   g.add(exhaust);
+1165: 
+1166:   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.14, 0.6), M.tire);
+1167:   seat.position.set(0.4, 1.75, 0);
+1168:   g.add(seat);
+1169:   const seatBack = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.6, 0.6), M.tire);
+1170:   seatBack.position.set(0.75, 2.0, 0);
+1171:   g.add(seatBack);
+1172: 
+1173:   // steering column + wheel
+1174:   const column = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6), M.metalDark);
+1175:   column.position.set(-0.8, 1.75, 0);
+1176:   column.rotation.x = 0.5;
+1177:   g.add(column);
+1178:   const steer = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.04, 6, 14), M.chrome);
+1179:   steer.position.set(-1.0, 2.05, 0);
+1180:   steer.rotation.x = 1.1;
+1181:   g.add(steer);
+1182: 
+1183:   const dog = makeFarmerDog();
+1184:   dog.position.set(0.4, 1.82, 0);
+1185:   dog.rotation.y = Math.PI / 2;
+1186:   g.add(dog);
+1187: 
+1188:   g.userData.wheels = wheels;
+1189:   g.userData.wheelPivots = wheelPivots;
+1190:   return g;
+1191: }
+1192: 
+1193: // ===== 1940s farm truck (round headlights, stake bed) =====
+1194: export function makeFarmTruckModel() {
+1195:   const g = new THREE.Group();
+1196:   const wheels = [];
+1197: 
+1198:   const chassis = new THREE.Mesh(new THREE.BoxGeometry(6.6, 0.5, 2.4), M.woodDark);
+1199:   chassis.position.set(0.2, 0.95, 0);
+1200:   g.add(chassis);
+1201: 
+1202:   const hood = new THREE.Mesh(new THREE.BoxGeometry(2.3, 1.1, 1.9), M.truck);
+1203:   hood.position.set(-1.9, 1.6, 0);
+1204:   hood.castShadow = true;
+1205:   g.add(hood);
+1206: 
+1207:   const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.5, 2.1), M.truck);
+1208:   cab.position.set(-0.35, 1.95, 0);
+1209:   g.add(cab);
+1210:   const roof = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 1.9), M.truck);
+1211:   roof.position.set(-0.35, 2.75, 0);
+1212:   g.add(roof);
+1213:   const glass = new THREE.Mesh(
+1214:     new THREE.BoxGeometry(0.1, 0.7, 1.7),
+1215:     new THREE.MeshStandardMaterial({ color: 0x223344, roughness: 0.3, metalness: 0.2, transparent: true, opacity: 0.6 })
+1216:   );
+1217:   glass.position.set(-1.22, 2.2, 0);
+1218:   g.add(glass);
+1219: 
+1220:   // round headlights
+1221:   for (const sz of [-0.68, 0.68]) {
+1222:     const hl = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshStandardMaterial({ color: 0xfff6d0, emissive: 0xffdd88, emissiveIntensity: 0.7 }));
+1223:     hl.position.set(-3.0, 1.65, sz);
+1224:     g.add(hl);
+1225:     const bez = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.07, 6, 14), M.chrome);
+1226:     bez.position.set(-3.0, 1.65, sz);
+1227:     bez.rotation.y = Math.PI / 2;
+1228:     g.add(bez);
+1229:   }
+1230:   const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.14, 1.9), M.chrome);
+1231:   bumper.position.set(-3.15, 1.0, 0);
+1232:   g.add(bumper);
+1233: 
+1234:   // stake bed: a flat bed with wooden rail fences
+1235:   const bed = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.24, 2.3), M.wood);
+1236:   bed.position.set(1.7, 1.25, 0);
+1237:   g.add(bed);
+1238:   const stakeMat = M.wood;
+1239:   for (const sz of [-1.12, 1.12]) {
+1240:     for (let i = 0; i < 4; i++) {
+1241:       const post = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.0, 0.1), stakeMat);
+1242:       post.position.set(0.65 + i * 0.75, 1.85, sz);
+1243:       g.add(post);
+1244:     }
+1245:     const rail = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.1, 0.1), stakeMat);
+1246:     rail.position.set(1.75, 2.28, sz);
+1247:     g.add(rail);
+1248:   }
+1249:   const back = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.0, 2.2), stakeMat);
+1250:   back.position.set(3.25, 1.85, 0);
+1251:   g.add(back);
+1252: 
+1253:   const wheelGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.4, 16);
+1254:   for (const [wx, wz] of [[-1.9, -1.15], [-1.9, 1.05], [1.9, -1.05], [1.9, 1.05]]) {
+1255:     const wheel = new THREE.Mesh(wheelGeo, M.tire);
+1256:     wheel.rotation.x = Math.PI / 2;
+1257:     wheel.position.set(wx, 0.55, wz);
+1258:     g.add(wheel);
+1259:     wheels.push(wheel);
+1260:   }
+1261: 
+1262:   g.userData.wheels = wheels;
+1263:   return g;
+1264: }
+1265: 
+1266: // ===== Builder =====
+1267: export function buildCornfieldWorld(scene) {
+1268:   scene.background = new THREE.Color(0x9fd0ff);
+1269:   scene.fog = new THREE.Fog(0xbcdcff, 120, 320);
+1270: 
+1271:   const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x5e6b3a, 1.25);
+1272:   scene.add(hemi);
+1273:   const sun = new THREE.DirectionalLight(0xfff3d8, 1.6);
+1274:   sun.position.set(60, 90, 40);
+1275:   sun.castShadow = true;
+1276:   sun.shadow.mapSize.set(2048, 2048);
+1277:   sun.shadow.camera.left = -140; sun.shadow.camera.right = 140;
+1278:   sun.shadow.camera.top = 140; sun.shadow.camera.bottom = -140;
+1279:   sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 320;
+1280:   sun.shadow.bias = -0.0004;
+1281:   scene.add(sun);
+1282:   scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+1283: 
+

@@ -1,28 +1,37 @@
-// The two suburban houses on the west side of the street, and their garages.
+// The two suburban houses, and their garages.
 //
-// There are two of them, and they have swapped jobs. They used to be:
+// There are two of them, and they have swapped jobs. They used to sit on the
+// west side of arterial-ns (z -49 / z -68); they now sit in a cul-de-sac in the
+// east outer belt, fronting a north-south street, still face 'E' and still 19
+// apart along z. They used to be:
 //
-//   houseGarage   (z -49,  gray shingle roof)  - PANELLED roller door, wound UP.
-//                                                You drove in through it, and the
-//                                                beckoning light and the pegboard
-//                                                of tools were waiting inside.
-//   houseStandard (z -68,  brown shingle roof) - no door at all, an open bay.
+//   houseGarage   (gray shingle roof)  - PANELLED roller door, wound UP.
+//                                        You drove in through it, and the
+//                                        beckoning light and the pegboard
+//                                        of tools were waiting inside.
+//   houseStandard (brown shingle roof) - no door at all, an open bay.
 //
 // Now the way into the house is the other way round, because the house's front
 // door is locked and the only way out of it is a dark garage off the kitchen:
 //
-//   houseStandard (z -68,  brown shingle roof) - the OPEN BAY. This is the way in,
-//                                                and the way you come back out to.
-//                                                It holds the beckoning light and
-//                                                the tools.
-//   houseGarage   (z -49,  gray shingle roof)  - a PANELLED roller door, SHUT, its
-//                                                three slats hung out flat. Nothing
-//                                                inside it, no light, no trigger.
+//   houseStandard (brown shingle roof) - the OPEN BAY. This is the way in,
+//                                        and the way you come back out to.
+//                                        It holds the beckoning light and
+//                                        the tools.
+//   houseGarage   (gray shingle roof)  - a PANELLED roller door, SHUT, its
+//                                        three slats hung out flat. Nothing
+//                                        inside it, no light, no trigger.
 //
 // The gray-roofed garage once had no front wall and no door hardware, just a bare
 // hole, which read as an unfinished building. The brown-roofed house once had a
 // door SHUT across a solid block with no room behind it. Both are fixed, and the
 // fix this time is that the roles changed rather than the styling.
+//
+// The brown house has since been made much bigger - 20 by 12 where it used to be
+// 11 by 11 - and given the house interior's own front door, scaled down to the
+// size of its garage bay and set down beside it exactly as it sits beside the
+// roller door inside. The bay is the way in; the door on the street is shut and
+// locked, and always was.
 //
 // Run: node --test src/suburbanGarages.test.mjs
 import test from 'node:test';
@@ -112,29 +121,72 @@ function consts(src) {
 // computed inside the loop. A test that only understands literal numbers cannot
 // tell a closed roller door from an open one, because none of those three are
 // written as numbers - so this walks the chain: `GDW` is `GW - 0.8`, `GW` is 7.
+//
+// The split is by precedence, not by position: the lowest-precedence operator
+// outside every bracket is the one that splits, and the last of them at that
+// level, so `GX - GW2 / 2` folds as GX - (GW2 / 2) and `(gx0 - W / 2) / 2`
+// folds as ((gx0 - W / 2) / 2) - the end-wall collider's half-width, which is
+// exactly the number this file needs to check. A bracket round the whole
+// expression is folded off first.
 function resolve(expr, defs, seen = new Set()) {
   const e = String(expr).trim();
   const lit = num(e);
   if (lit !== null) return lit;
 
-  // Split on the first operator both sides of which resolve, and apply it. This
-  // is a left-to-right fold rather than a precedence parser, which is the right
-  // trade for the handful of shapes these builders use: `GX - GW2 / 2` and
-  // `slatH - 0.03` both come out right. Each attempt gets its own copy of `seen`,
-  // so a branch that dead-ends on an unresolvable name does not poison the next.
-  for (let i = 1; i < e.length; i++) {
-    const op = e[i];
-    if (!'+-*/'.includes(op)) continue;
-    const left = e.slice(0, i).trim(), right = e.slice(i + 1).trim();
-    if (!left || !right) continue;
-    const a = resolve(left, defs, new Set(seen));
-    if (a === null) continue;
-    const b = resolve(right, defs, new Set(seen));
-    if (b === null) continue;
-    if (op === '-') return a - b;
-    if (op === '+') return a + b;
-    if (op === '*') return a * b;
-    return a / b;
+  // A bracket round the whole expression, and it is the outer pair: take it off
+  // and go again.
+  if (e.startsWith('(') && e.endsWith(')')) {
+    let d = 0, matched = true;
+    for (let i = 0; i < e.length; i++) {
+      if (e[i] === '(') d++;
+      else if (e[i] === ')') {
+        d--;
+        if (d === 0 && i !== e.length - 1) { matched = false; break; }
+      }
+    }
+    if (matched) return resolve(e.slice(1, -1), defs, seen);
+  }
+
+  // The lowest-precedence operator outside every bracket splits the expression:
+  // + and - bind loosest, * and / tighter, and the last one at that level goes
+  // last, which is the usual left-to-right reading.
+  //
+  // The scan starts at the FIRST character, not the second: a leading bracket
+  // has to be counted, or everything inside it is read as if it were at the top
+  // level. Skipping it made `(gx0 - W / 2) / 2` split at the minus INSIDE the
+  // brackets, which is how the bay's end-wall collider came back as null.
+  //
+  // A sign with nothing in front of it is a unary minus and not an operator,
+  // so `-8.6` is a number and not "nothing minus 8.6". (num() only reads
+  // unsigned literals, so a negative still comes back null - see the note on
+  // WIN_X below - but it must not be misread as an operator.)
+  let depth = 0, low = -1, high = -1;
+  for (let i = 0; i < e.length; i++) {
+    const c = e[i];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    else if (depth === 0 && (c === '+' || c === '-')) {
+      const prev = e.slice(0, i).trimEnd();
+      const unary = prev === '' || '+-*/('.includes(prev[prev.length - 1]);
+      if (!unary) low = i;
+    } else if (depth === 0 && (c === '*' || c === '/')) high = i;
+  }
+  const at = low >= 0 ? low : high;
+  if (at > 0) {
+    const op = e[at];
+    const left = e.slice(0, at).trim(), right = e.slice(at + 1).trim();
+    if (left && right) {
+      const a = resolve(left, defs, new Set(seen));
+      if (a !== null) {
+        const b = resolve(right, defs, new Set(seen));
+        if (b !== null) {
+          if (op === '-') return a - b;
+          if (op === '+') return a + b;
+          if (op === '*') return a * b;
+          return a / b;
+        }
+      }
+    }
   }
 
   const name = /^([A-Za-z_$][\w$]*)$/.exec(e);
@@ -343,13 +395,145 @@ test('addCityBuildings reads the trigger off the open bay, not the shut garage',
 
 test('the bay does not eat the front door or the windows', () => {
   // The bay's west edge has to clear the front-door glazing, or there is glass
-  // across the corner of a driveable opening.
-  const gx0 = num(/GX = ([\d.]+)/.exec(open)[1]) - num(/GW2 = ([\d.]+)/.exec(open)[1]) / 2;
-  for (const x of [-1.4, -4.4]) {
-    assert.ok(x + 0.65 <= gx0,
-      `the window at ${x} runs to ${(x + 0.65).toFixed(2)}, into the bay opening at ${gx0}`);
+  // across the corner of a driveable opening. The door is the interior house's
+  // own door, scaled, so its edges are derived from the builder's own constants
+  // rather than hard-coded: DOOR_X is written as a subtraction chain, which
+  // resolve() cannot fold correctly, so the chain is followed here by hand.
+  const gx0 = resolve('gx0', openDefs);
+  const K = resolve('K', openDefs);
+  const doorW = resolve('DOOR_W', openDefs);
+  const doorGap = resolve('DOOR_GAP', openDefs);
+  // WIN_X is negative, and resolve() only understands unsigned literals.
+  const winX = n2(/WIN_X = (-?[\d.]+)/.exec(open)[1]);
+  assert.ok([gx0, K, doorW, doorGap, winX].every((v) => v !== null),
+    'could not resolve the house front from the builder');
+
+  const doorX = gx0 - doorGap - doorW / 2;      // 13 clear of the bay, in scaled units
+  const doorEast = doorX + doorW / 2;
+  assert.ok(doorEast <= gx0 - doorGap + 1e-6,
+    `the door runs to ${doorEast.toFixed(2)}, inside the bay opening at ${gx0}`);
+  assert.ok(doorX - doorW / 2 >= -10,
+    'the door hangs off the west end of the house');
+
+  // The one window on the west end of the elevation: 1.7 wide, so half of it.
+  assert.ok(winX + 0.85 <= gx0,
+    `the window at ${winX} runs to ${(winX + 0.85).toFixed(2)}, into the bay opening at ${gx0}`);
+
+  // And the two of them must not be on top of each other either.
+  assert.ok(winX + 0.85 <= doorX - doorW / 2,
+    `the window at ${winX} runs into the door at ${doorX.toFixed(2)}`);
+});
+
+
+test("the brown house's front door is a normal leaf, scaled to the bay", () => {
+  // The house level has two doors of this kind, and they are now the same door:
+  // a normal single leaf, 12 wide and 22 tall. They used to be 20 wide - as
+  // wide as they were tall, which reads as a barn opening rather than as a
+  // door - and the interior's front door has been narrowed to match its back
+  // one. The city house wears a scaled copy of the interior's FRONT door.
+  //
+  // The scale comes off the bay's HEIGHT: the leaf's head sits three quarters
+  // of the way up the opening, so the door is a door under the lintel rather
+  // than a slab as tall as the garage beside it.
+  const interior = fs.readFileSync(path.join(here, 'levels', 'house', 'layout.js'), 'utf8');
+  const fd = /export const FRONT_DOOR = \{([\s\S]*?)\n\};/.exec(interior);
+  const bd = /export const BACK_DOOR = \{([\s\S]*?)\n\};/.exec(interior);
+  const ex = /export const HOUSE_EXIT = \{([\s\S]*?)\n\};/.exec(interior);
+  assert.ok(fd && bd && ex, 'could not read the interior house layout');
+  const fdZ0 = n2(/z0: (-?[\d.]+)/.exec(fd[1])[1]);
+  const fdZ1 = n2(/z1: (-?[\d.]+)/.exec(fd[1])[1]);
+  const fdH = n2(/h: (-?[\d.]+)/.exec(fd[1])[1]);
+  const bdX0 = n2(/x0: (-?[\d.]+)/.exec(bd[1])[1]);
+  const bdX1 = n2(/x1: (-?[\d.]+)/.exec(bd[1])[1]);
+  const bdH = n2(/h: (-?[\d.]+)/.exec(bd[1])[1]);
+  const exZ0 = n2(/z0: (-?[\d.]+)/.exec(ex[1])[1]);
+  const interiorFrontW = fdZ1 - fdZ0;            // 12 - the front door's leaf
+  const interiorLeafW = bdX1 - bdX0;             // 12 - the back door's leaf
+  const interiorGap = exZ0 - fdZ1;               // 13 - the door's stand-off
+
+  const GX = resolve('GX', openDefs);
+  const GW2 = resolve('GW2', openDefs);
+  const GH2 = resolve('GH2', openDefs);
+  const K = resolve('K', openDefs);
+  const doorW = resolve('DOOR_W', openDefs);
+  const doorH = resolve('DOOR_H', openDefs);
+  const doorGap = resolve('DOOR_GAP', openDefs);
+  assert.ok([GX, GW2, GH2, K, doorW, doorH, doorGap].every((v) => v !== null),
+    'could not resolve the scaled door out of the builder');
+
+  // The interior's own front door has to be a door too: it is what the city
+  // house copies, and a leaf as wide as it is tall reads as a barn opening.
+  assert.ok(interiorFrontW < fdH,
+    `the interior front door is ${interiorFrontW} wide and ${fdH} tall - that is a barn opening`);
+  assert.ok(Math.abs(interiorFrontW - interiorLeafW) < 1e-9,
+    `the interior's front door is ${interiorFrontW} wide and its back door ${interiorLeafW}; they should be the same door`);
+  assert.ok(Math.abs(fdH - bdH) < 1e-9,
+    `the interior's front door is ${fdH} tall and its back door ${bdH}; they should be the same door`);
+
+  // The scale factor is set by the bay's height and the leaf's head height:
+  // the leaf's head is three quarters of the way up the opening.
+  assert.ok(Math.abs(K - GH2 * 0.75 / fdH) < 1e-9,
+    `the scale factor K is ${K}, but the bay is ${GH2} high and the leaf ${fdH} tall`);
+  // Everything else is the interior's own numbers, times that factor.
+  assert.ok(Math.abs(doorW - interiorFrontW * K) < 1e-9,
+    `the city door is ${doorW} wide; the interior leaf is ${interiorFrontW}, so it should be ${interiorFrontW * K}`);
+  assert.ok(Math.abs(doorH - fdH * K) < 1e-9,
+    `the city door is ${doorH} tall; the interior leaf is ${fdH}, so it should be ${fdH * K}`);
+  assert.ok(Math.abs(doorGap - interiorGap * K) < 1e-9,
+    `the gap to the bay is ${doorGap}; the interior's is ${interiorGap}, so it should be ${interiorGap * K}`);
+  // And it keeps the interior leaf's proportions.
+  assert.ok(Math.abs(doorH / doorW - fdH / interiorFrontW) < 1e-9,
+    'the city door has lost the interior leaf\'s proportions');
+
+  // The whole point of the change: it is a DOOR, not a barn opening. It is
+  // taller than it is wide, and its head is below the bay's head.
+  assert.ok(doorH > doorW,
+    `the door is ${doorW} wide and ${doorH} tall - that is a barn opening, not a door`);
+  assert.ok(doorH < GH2,
+    `the door is ${doorH} tall, taller than the ${GH2}-high bay it stands beside`);
+  assert.ok(doorW < GW2,
+    `the door is ${doorW} wide; the bay opening is ${GW2}`);
+});
+
+test('the bay mouth is not sealed by a collider', () => {
+  // The end walls beside the bay carry colliders so the house is solid, but
+  // they have to stop AT the bay's edges. Measured the other way round - from
+  // the house's edge to its centre - the east wall's collider reached back
+  // across the mouth and sealed the bay shut, which is what the resize did.
+  const GX = resolve('GX', openDefs);
+  const GW2 = resolve('GW2', openDefs);
+  const gx0 = GX - GW2 / 2;
+  const gx1 = GX + GW2 / 2;
+  assert.ok(gx0 !== null && gx1 !== null, 'could not resolve the bay opening');
+
+  const cols = [...open.matchAll(/colliders\.push\(\{([^}]*)\}/g)].map((m) => {
+    const parts = Object.fromEntries([...m[1].matchAll(/(\w+): ([^,]+)/g)]
+      .map((p) => [p[1], p[2].trim()]));
+    return {
+      x: resolve(parts.x, openDefs),
+      z: resolve(parts.z, openDefs),
+      halfW: resolve(parts.halfW, openDefs),
+      halfD: resolve(parts.halfD, openDefs),
+    };
+  });
+  assert.equal(cols.length, 3, 'the bay should be enclosed by exactly three colliders');
+  for (const c of cols) {
+    assert.ok([c.x, c.z, c.halfW, c.halfD].every((v) => v !== null),
+      `could not resolve a collider: ${JSON.stringify(c)}`);
   }
-  assert.ok(-3.2 + 0.5 <= gx0, 'the front door runs into the bay opening');
+
+  // Nothing may stand across the mouth itself.
+  for (const c of cols) {
+    if (c.z + c.halfD <= 1e-9) continue;              // behind the bay's back wall
+    assert.ok(c.x + c.halfW <= gx0 + 1e-6 || c.x - c.halfW >= gx1 - 1e-6,
+      `a collider runs from ${(c.x - c.halfW).toFixed(2)} to ${(c.x + c.halfW).toFixed(2)}, across the bay mouth at ${gx0}..${gx1}`);
+  }
+
+  // The free span has to take the car: 2.2 either side of its centre.
+  const free = gx1 - gx0;
+  assert.ok(free / 2 > 2.2, `the gap between the end walls is ${free} wide; the car needs more than 4.4`);
+  assert.ok(free / 2 - 2.2 >= 0.4,
+    `only ${(free / 2 - 2.2).toFixed(2)} of slack either side of the car; it will not go in`);
 });
 
 test('the two houses really do have different roof colours', () => {
@@ -363,16 +547,16 @@ test('the two houses really do have different roof colours', () => {
 
 // ---- The streetlights in front of the two garages ----
 //
-// props.js runs a lamp-post row down x = -17, which is the front plane of both
-// houses, and two of its posts landed in a garage mouth: the open bay (the way
-// into the house) and the shut roller door. props.js knows nothing about
-// buildings, so it declares the two frontage bands itself; these tests re-derive
-// those bands from cityBuildings.js and prove the row skips them and puts the
-// replacements on the verge instead.
+// props.js runs a short lamp-post row down the verge of the east outer-belt
+// cul-de-sac, in front of the two houses, and it must not drop a post in either
+// garage mouth: the open bay (the way into the house) and the shut roller door.
+// props.js knows nothing about buildings, so it declares the two frontage bands
+// itself; these tests re-derive those bands from cityBuildings.js and prove the
+// row skips them and still lights the front doors.
 
 // World z of a house's garage opening, from the builder + LAYOUT numbers.
 function garageMouthZ(builderSrc, entryName) {
-  // Every one of these numbers is negative, and the suite's `num` only parses
+  // Several of these numbers are signed, and the suite's `num` only parses
   // unsigned literals, so this reads its own.
   const n = (s) => {
     assert.match(String(s), /^-?\d+(\.\d+)?$/, `cannot read the number "${s}" out of the source`);
@@ -403,6 +587,10 @@ const frontages = /const HOUSE_FRONTAGES = \[([\s\S]*?)\n  \];/.exec(PROPS);
 assert.ok(frontages, 'props.js no longer declares HOUSE_FRONTAGES');
 const declared = [...frontages[1].matchAll(/z0: (-?[\d.]+),\s*z1: (-?[\d.]+)/g)]
   .map((m) => ({ z0: n2(m[1]), z1: n2(m[2]) }));
+// The two door lamps, one by each front door.
+const doorLampsDecl = /const DOOR_LAMPS = \[([^\]]*)\];/.exec(PROPS);
+assert.ok(doorLampsDecl, 'props.js no longer declares DOOR_LAMPS');
+const doorLamps = [...doorLampsDecl[1].matchAll(/(-?[\d.]+)/g)].map((m) => n2(m[1]));
 
 test('the streetlight frontage bands match where the garages actually are', () => {
   // If a house is nudged along the street, the light exclusion has to follow it.
@@ -421,31 +609,56 @@ test('the streetlight frontage bands match where the garages actually are', () =
   }
 });
 
-test('no streetlight stands in a garage mouth, and the replacements are on the verge', () => {
-  // Reproduce the x = -17 lamp-post row the same way props.js does, then check it
-  // against the two frontage bands.
+test('no streetlight stands in a garage mouth, and the front doors are lit', () => {
+  // Reproduce the culs-de-sac verge row the same way props.js does, then check
+  // it against the two frontage bands. The row skips a post that would land on
+  // a garage mouth AND a post that would land on one of the door lamps.
   const row = [];
-  for (let z = -70; z <= 70; z += 14) if (!declared.some((f) => z > f.z0 && z < f.z1)) row.push(z);
+  for (let z = 44; z <= 84; z += 6) {
+    if (declared.some((f) => z > f.z0 && z < f.z1)) continue;
+    if (doorLamps.some((d) => Math.abs(z - d) < 1.5)) continue;
+    row.push(z);
+  }
   for (const z of row) {
     for (const [i, f] of declared.entries()) {
       assert.ok(!(z > f.z0 && z < f.z1),
-        `a lamp post still stands at x -17, z ${z}, inside garage mouth ${i}`);
+        `a lamp post still stands on the culs-de-sac verge at z ${z}, inside garage mouth ${i}`);
+    }
+    for (const d of doorLamps) {
+      assert.ok(Math.abs(z - d) >= 1.5,
+        `a lamp post stands on top of the door lamp at z ${d}`);
     }
   }
-  // The two posts that used to be there must not simply have been deleted: the
-  // frontages still need lighting, so they are re-placed on the grass verge
-  // between the houses' front faces and the arterial-ns kerb.
-  const replacements = [...PROPS.matchAll(/makeLampPost\(scene, (-?[\d.]+), (-?[\d.]+)\)/g)]
-    .map((m) => ({ x: n2(m[1]), z: n2(m[2]) }))
-    .filter((p) => p.x !== 17 && p.x !== -17 && Math.abs(p.x) > 12);
-  assert.ok(replacements.length >= 2,
-    `expected the two garage-frontage lamp posts to be replaced on the verge, found ${replacements.length}`);
-  for (const p of replacements) {
-    assert.ok(p.x > -17.5 && p.x < -12,
-      `the replacement lamp at x ${p.x} is not on the verge between the houses and the kerb`);
+  // The skipped posts must not simply have been deleted: each frontage still
+  // needs lighting, so a post stands on the verge (x ~110.5) by each front door.
+  assert.ok(doorLamps.length >= 2,
+    `expected a lamp by each front door, found ${doorLamps.length}`);
+  assert.match(PROPS, /for \(const z of DOOR_LAMPS\) makeLampPost\(scene, 110\.5, z\);/,
+    'the door lamps are not being built');
+  for (const d of doorLamps) {
+    // Both lamps stand on the same stretch of street the two houses front.
+    assert.ok(d > 42 && d < 82,
+      `the culs-de-sac lamp at z ${d} is not on the street the two houses front`);
     for (const [i, f] of declared.entries()) {
-      assert.ok(!(p.z > f.z0 && p.z < f.z1),
-        `the replacement lamp at (${p.x}, ${p.z}) is inside garage mouth ${i}`);
+      assert.ok(!(d > f.z0 && d < f.z1),
+        `the culs-de-sac lamp at z ${d} is inside garage mouth ${i}`);
     }
   }
+});
+
+test('the brown house has a lamp at its own front door', () => {
+  // The brown house got bigger and its door moved with it, so its lamp has to
+  // move too. The door's world z is derived from the builder's own numbers: the
+  // house faces EAST, so world z = entry z - local x.
+  const entry = /\{ name: 'houseStandard',[^}]*?z: (-?[\d.]+),/.exec(SRC);
+  assert.ok(entry, 'could not find the LAYOUT entry for houseStandard');
+  const entryZ = n2(entry[1]);
+  const gx0 = resolve('gx0', openDefs);
+  const K = resolve('K', openDefs);
+  const doorW = resolve('DOOR_W', openDefs);
+  const doorGap = resolve('DOOR_GAP', openDefs);
+  const doorX = gx0 - doorGap - doorW / 2;
+  const doorWorldZ = entryZ - doorX;
+  assert.ok(doorLamps.some((d) => Math.abs(d - doorWorldZ) < 0.1),
+    `the brown house's door is at world z ${doorWorldZ.toFixed(2)}, but the door lamps are at ${doorLamps.join(', ')}`);
 });

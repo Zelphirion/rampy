@@ -8,8 +8,9 @@ import {
   BEACH_PALMS, BEACH_ROCKS, BEACH_REEFS, clamp01, courseInset, CLIFF_REACH,
   PERSON_H, ANIMAL_SCALE, animalSize, BEACH_TRENCH_Y, BEACH_DEEP_FLOOR_Z,
   BEACH_MERMAID_CASTLE, MERMAID_CASTLE_SCALE, BEACH_SHIPWRECK, SHIPWRECK_SCALE,
-  BEACH_DEEP_Z,
-} from './layout.js?v=1800000000000';
+  SHIPWRECK_LEN, SHIPWRECK_BEAM, BEACH_DEEP_Z,
+  BEACH_BLUE_FLAG, BEACH_DEEP_DIVE_MARGIN, beachDeepRevealed,
+} from './layout.js?v=1800000000003';
 import { rectCircleIntersect } from '../../modules/world.js';
 
 const inRange = (v, lo, hi) => v >= lo && v <= hi;
@@ -30,10 +31,10 @@ test('you are let off between the cliffs and the water, on dry sand, facing the 
 
 test('the sand is continuous under the wheels - no cliff anywhere on a driving line', () => {
   // Walk everywhere the car can actually get to, at a resolution finer than a
-  // wheel, on several lines across the cove AND down the drop-off into the deep,
-  // and reject any step big enough to stop the car dead. The drop-off is now a
-  // drivable ramp rather than a wall, so the scan runs all the way to the far end
-  // of the deep - the wreck and the mermaids' castle both lie on this line.
+  // wheel, on several lines across the cove AND down the (now walled-off)
+  // drop-off face, and reject any step big enough to stop the car dead. The
+  // floor beyond the rim wall is scenery, but it is still meshed smoothly -
+  // the same profile the wreck and the castle stand on.
   let worst = 0;
   let worstAt = null;
   for (const x of [-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50]) {
@@ -63,21 +64,26 @@ test('the profile runs sand -> sea -> basin -> drop-off -> trench, once and in o
   assert.ok(at(BEACH_TRENCH_Z) < at(BEACH_RIM_Z) - 10, 'past the rim it plunges');
 });
 
-test('the drop-off is a drivable slope, and the deep is closed off around it', () => {
+test('the invisible rim wall is back on the drop-off lip, and the deep is closed off around it', () => {
   const cs = beachColliders();
-  // There is NO wall on the drop-off lip any more: the car drives over it.
+  // The car is contained landward of the lip: an invisible wall runs the full
+  // width of the map right on BEACH_RIM_Z, so the wreck and the mermaids'
+  // castle are sights across the water, not destinations.
   const rim = cs.find((c) => c.halfW !== undefined && Math.abs(c.z - BEACH_RIM_Z) < 0.5);
-  assert.equal(rim, undefined, 'nothing walls off the drop-off lip');
-  // ...and the grade over the drop-off is gentle enough to drive.
+  assert.ok(rim, 'there is a wall on the drop-off lip');
+  assert.ok(rim.halfW >= BEACH_HALF_W, 'it spans the whole map width');
+  assert.equal(rim.noRoof, true, 'the rim wall is a barrier');
+  // The ground still eases gently to the lip — the car can nose right up to
+  // the invisible stop rather than slamming a real cliff.
   const grade = Math.abs(beachGroundOffsetAt(0, BEACH_RIM_Z) - beachGroundOffsetAt(0, BEACH_TRENCH_Z)) /
     (BEACH_RIM_Z - BEACH_TRENCH_Z);
-  assert.ok(grade < 1.2, `the drop-off grade is drivable (${grade.toFixed(2)})`);
+  assert.ok(grade < 1.2, `the (now walled) drop-off face is a smooth slope (${grade.toFixed(2)})`);
   // The deep run is closed at its far end, past the wreck and the castle.
   const far = cs.find((c) => c.halfW !== undefined && Math.abs(c.z - BEACH_DEEP_Z) < 0.5);
   assert.ok(far, 'there is a wall at the far end of the deep');
   assert.ok(far.halfW >= BEACH_HALF_W, 'it spans the deep channel');
   assert.ok(far.noRoof, 'the far wall is a barrier');
-  // ...and along both flanks, so the car cannot drive off the edge of the sand.
+  // ...and along both flanks, so nothing can drive off the edge of the sand.
   for (const sx of [1, -1]) {
     const flank = cs.find((c) => c.halfW !== undefined && Math.sign(c.x) === sx &&
       Math.abs(Math.abs(c.x) - (BEACH_HALF_W + 8)) < 0.5);
@@ -86,18 +92,24 @@ test('the drop-off is a drivable slope, and the deep is closed off around it', (
   }
 });
 
-test('the car can drive from the basin out to the wreck and the mermaids\' castle', () => {
+test('any line out of the basin toward the wreck or the castle is stopped by the rim wall', () => {
   const cs = beachColliders();
   const CAR = 2.2;
   const sx = 6, sz = BEACH_RIM_Z + 10;   // a spot in the basin, past the reefs
   for (const target of [BEACH_SHIPWRECK, BEACH_MERMAID_CASTLE]) {
     const label = target === BEACH_SHIPWRECK ? 'the wreck' : 'the castle';
-    for (let t = 0.1; t <= 1; t += 0.01) {
+    let stopped = null;
+    for (let t = 0.05; t <= 1; t += 0.01) {
       const x = sx + (target.x - sx) * t;
       const z = sz + (target.z - sz) * t;
       const hit = cs.find((c) => rectCircleIntersect(x, z, c, CAR));
-      assert.ok(!hit, `the drive out to ${label} is clear (blocked at ${x.toFixed(0)}, ${z.toFixed(0)})`);
+      if (hit) { stopped = hit; break; }
     }
+    assert.ok(stopped, `the run out toward ${label} hits something`);
+    assert.ok(Math.abs(stopped.z - BEACH_RIM_Z) < 0.5,
+      `${label} is stopped by the rim wall, not by ${stopped.x},${stopped.z}`);
+    // ...and the landmark itself is well beyond the wall, visible across the water.
+    assert.ok(target.z < BEACH_RIM_Z - 20, `${label} stands well past the lip`);
   }
 });
 
@@ -382,10 +394,13 @@ test('the mermaids\' castle is out past the mermaids, off to the side, and unrea
   // Off to the side: well clear of the mermaids' patrol, which never leaves
   // x = +-15, so a large |x| is the whole point.
   assert.ok(Math.abs(C.x) > 20, `the castle is off to the side (x=${C.x})`);
-  // Out PAST them: seaward of the drop-off's lip, in water the rim collider
-  // keeps the car out of.
+  // Out PAST them: seaward of the drop-off's lip, behind the rim wall, in
+  // water the car can never reach.
   assert.ok(C.z < BEACH_RIM_Z, 'the castle is seaward of the drop-off lip');
   assert.ok(C.z < BEACH_TRENCH_Z, 'the castle is out on the trench floor, past the drop-off face');
+  // Close enough inshore to be a landmark from the beach, not a speck in the
+  // haze at the camera's far plane.
+  assert.ok(C.z > -260, `the castle is close inshore (z=${C.z})`);
   // It stands on the sea floor, not in mid-water: at the trench depth.
   const floor = beachGroundOffsetAt(C.x, C.z);
   assert.ok(floor <= BEACH_TRENCH_Y + 0.5, `the castle sits on the trench floor (got ${floor.toFixed(2)})`);
@@ -408,11 +423,21 @@ test('the seafloor is built out under and past the mermaids\' castle', () => {
   }
 });
 
-test('the wreck is a huge broken ship, out past the drop-off, beside the castle', () => {
+test('the wreck is a broken ship on the trench floor, left of the castle, close inshore', () => {
   const W = BEACH_SHIPWRECK;
-  // Out PAST the drop-off, in water the rim collider keeps the car out of.
+  // Out PAST the drop-off, behind the rim wall, on the flat trench floor.
   assert.ok(W.z < BEACH_RIM_Z, 'the wreck is seaward of the drop-off lip');
   assert.ok(W.z < BEACH_TRENCH_Z, 'the wreck is out on the trench floor, past the drop-off face');
+  // Close enough inshore to read from the beach — the whole point of moving it.
+  assert.ok(W.z > -260, `the wreck is close inshore (z=${W.z})`);
+  // The WHOLE hull rests on the flat trench floor: the model is built to one
+  // ground height at midships, so the bow must clear the slope's toe (the
+  // point where the floor goes flat at BEACH_TRENCH_Z).
+  assert.ok(W.z + SHIPWRECK_LEN / 2 < BEACH_TRENCH_Z,
+    'the whole hull stays past the slope, on the flat floor');
+  // Square to the basin approach: the rotted bow faces back up the line the car
+  // comes in on (which is what the hull colliders are squared to).
+  assert.equal(W.yaw, 0, 'the bow faces straight up the basin approach');
   // It rests on the sea floor, not floating in mid-water.
   const floor = beachGroundOffsetAt(W.x, W.z);
   assert.ok(floor <= BEACH_TRENCH_Y + 0.5, `the wreck sits on the trench floor (got ${floor.toFixed(2)})`);
@@ -426,4 +451,109 @@ test('the wreck is a huge broken ship, out past the drop-off, beside the castle'
   // Its footprint stays inside the built sea floor in x, so it does not float off
   // the edge of the sand.
   assert.ok(Math.abs(W.x) < BEACH_HALF_W, 'the wreck is within the sand grid');
+});
+
+test('the wreck\'s rotted bow is an open mouth, and the hull walls box the hull in', () => {
+  const cs = beachColliders();
+  const W = BEACH_SHIPWRECK;
+  const CAR = 2.2;   // playerCarRadius, same as the rim-wall test above
+
+  // A wall down each side of the hull, running nearly the ship's whole length.
+  for (const sgn of [1, -1]) {
+    const side = cs.find((c) => c.halfD >= 45 &&
+      Math.abs(Math.abs(c.x - W.x) - 13) < 0.5 &&
+      Math.sign(c.x - W.x) === sgn);
+    assert.ok(side, `there is a hull wall on the ${sgn > 0 ? 'east' : 'west'} side of the wreck`);
+    assert.ok(side.noRoof, 'the hull wall is a barrier');
+    // It hugs the hull surface: the wall face lands exactly on the beam, and the
+    // car's disc stops flush with the planking rather than in mid-water.
+    assert.ok(13 + side.halfW <= SHIPWRECK_BEAM / 2, 'the wall face sits on the hull beam');
+    // ...and it stops short of the rotted cut, because the bow is the way in.
+    assert.ok(side.halfD < SHIPWRECK_LEN / 2, 'the wall stops short of the bow cut');
+  }
+
+  // A stern, so the car cannot simply drive out the back of the wreck.
+  const stern = cs.find((c) => Math.abs(c.z - (W.z - 52)) < 0.5 && c.halfW >= 10);
+  assert.ok(stern, 'the wreck is walled off at the stern');
+
+  // Nothing out past the rim may stand forward of the rotted cut: the bow stays
+  // an open mouth. This is the assertion that fails loudly if anyone ever walls
+  // the bow shut.
+  const blockers = cs.filter((c) => c.z < BEACH_RIM_Z &&
+    c.z >= W.z + SHIPWRECK_LEN / 4 &&
+    Math.abs(c.x - W.x) < 30);
+  assert.equal(blockers.length, 0,
+    `the rotted bow is an open mouth (blocked at ${blockers.map((c) => `${c.x},${c.z}`).join(' and ')})`);
+
+  // ...and the mouth is wider than the car, so the car fits through it: hull
+  // face to hull face at the wall faces (13 +- 1) leaves 24 across the opening.
+  const mouth = 2 * (13 - 1);
+  assert.ok(mouth > 2 * CAR, `the bow mouth is wider than the car (${mouth} vs ${2 * CAR})`);
+});
+
+// ---- The blue flag ----
+//
+// The gate to the deep. The mermaids, their castle and the wreck all sit
+// BEHIND this post, and the post says so: the pennant is furled against the
+// wood until the player has actually gone under the water.
+
+test('the blue flag stands at the lip of the drop-off, out of the car\'s reach', () => {
+  const F = BEACH_BLUE_FLAG;
+  // Seaward of the lip, and right out at it: this is the threshold of the
+  // deep, not a post standing somewhere out in the middle of the sea.
+  assert.ok(F.z < BEACH_RIM_Z, 'the flag is seaward of the drop-off lip');
+  assert.ok(F.z > BEACH_RIM_Z - 4, `the flag is right out at the lip (z=${F.z})`);
+  // The rim wall is what keeps the car off it, and the wall stops the car well
+  // short of the post.
+  const cs = beachColliders();
+  const CAR = 2.2;
+  const sx = 6, sz = BEACH_RIM_Z + 10;
+  let stopped = null;
+  for (let t = 0.05; t <= 1; t += 0.01) {
+    const x = sx + (F.x - sx) * t;
+    const z = sz + (F.z - sz) * t;
+    const hit = cs.find((c) => rectCircleIntersect(x, z, c, CAR));
+    if (hit) { stopped = hit; break; }
+  }
+  assert.ok(stopped, 'the run out toward the flag hits something');
+  assert.ok(Math.abs(stopped.z - BEACH_RIM_Z) < 0.5,
+    `the flag is stopped by the rim wall, not by ${stopped.x},${stopped.z}`);
+  assert.ok(F.z < stopped.z - 1, 'the post itself is out past the wall');
+});
+
+test('the blue flag stands in front of everything drowned', () => {
+  const F = BEACH_BLUE_FLAG;
+  // The wreck and the castle are far further out to sea than the post, so from
+  // the beach the flag is between the player and both of them.
+  assert.ok(F.z > BEACH_SHIPWRECK.z, 'the flag stands in front of the wreck');
+  assert.ok(F.z > BEACH_MERMAID_CASTLE.z, 'the flag stands in front of the castle');
+  // It is planted on the sea floor, and it is tall enough to break the surface,
+  // so it reads as a marker standing out in the sea.
+  const floor = beachGroundOffsetAt(F.x, F.z);
+  assert.ok(floor < BEACH_SEA_Y, 'the post is planted underwater');
+  assert.ok(floor + F.poleH > BEACH_SEA_Y + 3, 'the post breaks the surface');
+  // The pennant is big enough to be read at that distance.
+  assert.ok(F.flagW >= 3 && F.flagH >= 2, 'the flag is a flag');
+});
+
+test('the deep opens only for an eye that is under the water', () => {
+  const base = 0.15;
+  const surface = base + BEACH_SEA_Y;
+  // Above the surface: nothing in the deep is on the screen, whether the deep
+  // was already open or not.
+  assert.equal(beachDeepRevealed(surface + 1, base, false), false);
+  assert.equal(beachDeepRevealed(surface + 1, base, true), false);
+  // Exactly at the surface: still shut.
+  assert.equal(beachDeepRevealed(surface, base, false), false);
+  // Just under the surface, coming down: STILL shut. The margin is on the way
+  // in, so bobbing about on the waterline cannot make the castle flicker.
+  assert.equal(beachDeepRevealed(surface - BEACH_DEEP_DIVE_MARGIN * 0.5, base, false), false);
+  // Properly under: open.
+  assert.equal(beachDeepRevealed(surface - 1, base, false), true);
+  // Coming up, the deep shuts the moment the eye breaks the surface - the sea
+  // closes over it - but a hair under it is still open.
+  assert.equal(beachDeepRevealed(surface + 0.01, base, true), false);
+  assert.equal(beachDeepRevealed(surface - 0.01, base, true), true);
+  // The margin is a small one: deep enough to be a real dive, not a token.
+  assert.ok(BEACH_DEEP_DIVE_MARGIN > 0 && BEACH_DEEP_DIVE_MARGIN < 1);
 });

@@ -1,0 +1,61 @@
+﻿281: // A terraced earthen embankment the car can climb: a straight slope from the
+282: // yard (z = zNear, y = 0) up to a flat top (zTop..zFar, y = topY). Beyond the
+283: // far edge a fence guards the drop into a ravine. The 1940s farm truck is parked
+284: // up on top; bump it and it rolls off through the fence into the ravine.
+285: export const HILL = {
+286:   x0: 52, x1: 98,
+287:   zNear: 18, zTop: 42, zFar: 58,
+288:   topY: 8,
+289:   ravine: { z1: 96, depth: 7 },
+290: };
+291: // Faces +Z (toward the ravine): forward is (-cos yaw, sin yaw), so yaw PI/2.
+292: export const FARM_TRUCK = { x: 76, z: 50, yaw: Math.PI / 2 };
+293: 
+294: // The slope, as a ramp def main.js's cornfield overlay already understands.
+295: export function hillRamp() {
+296:   return {
+297:     x: (HILL.x0 + HILL.x1) / 2,
+298:     z: (HILL.zNear + HILL.zTop) / 2,
+299:     runX: 0, runZ: 1,
+300:     len: HILL.zTop - HILL.zNear,
+301:     width: HILL.x1 - HILL.x0,
+302:     height: HILL.topY, baseY: 0, boost: 0,
+303:   };
+304: }
+305: 
+306: // The flat top of the embankment, for a car already up at the top (mirrors
+307: // barn loftTopAt so a ground-floor car is never lifted onto it).
+308: export function plateauTopAt(x, z, carY) {
+309:   const on = x >= HILL.x0 && x <= HILL.x1 && z >= HILL.zTop && z <= HILL.zFar;
+310:   return on && carY > HILL.topY - 2.5 ? HILL.topY : 0;
+311: }
+312: 
+313: // Walls that keep the car on the embankment (its two flanks) and the fence
+314: // across the far edge that the truck breaks through. `truckFence` marks the
+315: // fence so index.js can hide it when the truck crashes.
+316: export function hillColliders() {
+317:   const h = HILL.topY + 2;
+318:   const wall = 0.5;
+319:   const zMid = (HILL.zNear + HILL.zFar) / 2;
+320:   const zHalf = (HILL.zFar - HILL.zNear) / 2;
+321:   const fenceH = HILL.topY + 1.6;
+322:   return [
+323:     { x: HILL.x0, z: zMid, halfW: wall, halfD: zHalf, h, top: h },
+324:     { x: HILL.x1, z: zMid, halfW: wall, halfD: zHalf, h, top: h },
+325:     {
+326:       x: (HILL.x0 + HILL.x1) / 2, z: HILL.zFar,
+327:       halfW: (HILL.x1 - HILL.x0) / 2, halfD: 0.5,
+328:       h: fenceH, top: fenceH, truckFence: true,
+329:     },
+330:   ];
+331: }
+332: 
+333: // ===== Farm boundary =====
+334: // A wooden perimeter fence, so you cannot drive off the flat ground into the
+335: // void. Returned as four long wall colliders (the rails are drawn in index.js).
+336: export const FARM_BOUNDS = { x0: -118, x1: 126, z0: -104, z1: 126 };
+337: export function farmBoundsColliders() {
+338:   const t = 0.5, h = 2.0;
+339:   const { x0, x1, z0, z1 } = FARM_BOUNDS;
+340:   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+

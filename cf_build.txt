@@ -1,0 +1,87 @@
+﻿1721:       truck.mesh.position.set(truck.x, truck.y, truck.z);
+1722:       truck.mesh.rotation.set(0, FARM_TRUCK.yaw, 0);
+1723:       hill.fence.visible = true;
+1724:       if (colliders.indexOf(truckCollider) < 0) colliders.push(truckCollider);
+1725:       if (colliders.indexOf(truckFence) < 0) colliders.push(truckFence);
+1726:     },
+1727:   };
+1728: }
+1729: 
+1730: // ---- silo spiral ramp meshes (the def list is also returned for physics) ----
+1731: function buildSiloRamp(scene) {
+1732:   const defs = spiralRampSegments({
+1733:     cx: SILO.x, cz: SILO.z, startAngle: SILO.gapAngle,
+1734:     r: 3.2, y0: 0, y1: 12, turns: 2.2, segsPerTurn: 18, width: 3.4,
+1735:   });
+1736:   return defs.map((s) => {
+1737:     const run = Math.max(0.001, s.len);
+1738:     const shape = new THREE.Shape();
+1739:     shape.moveTo(0, 0);
+1740:     shape.lineTo(run, 0);
+1741:     shape.lineTo(run, s.height);
+1742:     shape.closePath();
+1743:     const geo = new THREE.ExtrudeGeometry(shape, { depth: s.width, bevelEnabled: false });
+1744:     geo.translate(-run / 2, 0, -s.width / 2);
+1745:     const m = new THREE.Mesh(geo, M.wood);
+1746:     m.rotation.y = Math.atan2(-s.runZ, s.runX);
+1747:     m.position.set(s.x, s.baseY, s.z);
+1748:     m.castShadow = true; m.receiveShadow = true;
+1749:     scene.add(m);
+1750:     return s;
+1751:   });
+1752: }
+1753: 
+1754: // ---- standalone models for the object browser (each built into its own group) -
+1755: export function makeBarnModel() {
+1756:   const g = new THREE.Group();
+1757:   buildBarn(g);
+1758:   return g;
+1759: }
+1760: export function makeSiloModel() {
+1761:   const g = new THREE.Group();
+1762:   buildSilo(g);
+1763:   return g;
+1764: }
+1765: export function makeWaterTowerModel() {
+1766:   const g = new THREE.Group();
+1767:   buildWaterTower(g);
+1768:   return g;
+1769: }
+1770: export function makePumpkinModel() {
+1771:   const g = new THREE.Group();
+1772:   const r = 1.6;
+1773:   const body = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), M.pumpkin);
+1774:   body.scale.set(1, 0.72, 1);
+1775:   g.add(body);
+1776:   const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 0.5, 6), M.stem);
+1777:   stem.position.set(0, r * 0.72 + 0.2, 0);
+1778:   stem.rotation.z = 0.15;
+1779:   g.add(stem);
+1780:   return g;
+1781: }
+1782: export function makeCornStalkModel() {
+1783:   return new THREE.Mesh(buildCornStalkGeometry(2.7), M.cornStalk);
+1784: }
+1785: export function makeAppleTreeModel() {
+1786:   return makeAppleTree().group;
+1787: }
+1788: export function makeBarrelModel() {
+1789:   return makeBarrel(true, 1.1, 0.55);
+1790: }
+1791: export function makeStookModel() {
+1792:   const g = new THREE.Group();
+1793:   const n = 7;
+1794:   for (let i = 0; i < n; i++) {
+1795:     const a = (i / n) * Math.PI * 2;
+1796:     const stalk = new THREE.Mesh(new THREE.ConeGeometry(0.16, 2.4, 5), i % 2 ? M.husk : M.stalk);
+1797:     stalk.position.set(Math.cos(a) * 0.35, 1.2, Math.sin(a) * 0.35);
+1798:     g.add(stalk);
+1799:   }
+1800:   const tie = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.08, 5, 10), M.woodDark);
+1801:   tie.rotation.x = Math.PI / 2;
+1802:   tie.position.y = 1.0;
+1803:   g.add(tie);
+1804:   return g;
+1805: }
+1806: 
+

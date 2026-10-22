@@ -1,0 +1,12 @@
+﻿14610: 
+14611:   // Cornfield: flatten corn, roll pumpkins, blow hay off the loft. The level
+14612:   // owns all of it; we just hand it the car and the frame time.
+14613:   if (worldState === 'cornfield') {
+14614:     cornfieldWorld.update(delta, {
+14615:       x: car.position.x, y: car.position.y, z: car.position.z,
+14616:       heading: car.rotation.y, speed: velocity.value,
+14617:       // An apple that connects knocks you sideways, cat-style.
+14618:       onAppleHit: (nx, nz) => cornSquirrelKnock(
+14619:         nx, nz, cornfieldWorld.squirrel.x, cornfieldWorld.squirrel.z),
+14620:     });
+

@@ -1,18 +1,19 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1800000000003';
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
-import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, POTHOLE,
-LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1799999999999';
+import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, updateMerryGoRound, POTHOLE,
+LAKE, standingCones, MINE_ADIT_PROFILE } from './props.js?v=1800000000014';
 import { createCar, createLittleCar, createChevy57Taxi, createSteamroller, createVWBug, createMonsterTruck, createSchoolBus, createIndyCar, createSkateboarder, createRaccoonHotRod, createTacoTruck, createFiretruck, createJeep, addTrafficCars } from './cars.js?v=1799999999999';
 import { addFiretruck } from './firetruck.js?v=1799999999999';
-import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger, cityPowerOut } from './cityBuildings.js?v=1800000000003';
+import { cityFireSpots, cityFireStationBay, updateCityBuildings, houseGarageTrigger, cityPowerOut } from './cityBuildings.js?v=1800000000004';
 import { addPeople } from './people.js?v=1799999999999';
 import { addRobot, buildRobotModel } from './robot.js?v=1791700000000';
 import { addTrain, makeLocomotive, buildFreightCars, SPACING } from './train.js?v=1791996942783';
-import { createSpaceport } from './spaceport.js?v=1799999999999';
+import { createSpaceport } from './spaceport.js?v=1800000000004';
 import { rideStateAt, RIDE_CYCLE, RIDE_CAR_SCALE } from './rocketRidePhases.js?v=1799999999999';
-import { buildSpaceWorld } from './levels/space/index.js?v=1799900000000';
-import { createRingState, stepRing, ringPose, ringWrapS, RING_R, RING_CIRC, RING_LANE, RING_MAX, RING_REVERSE } from './spaceRing.js';
+import { buildSpaceWorld } from './levels/space/index.js?v=1800000000015';
+import { buildCornfieldWorld, makePortalTree, makeFarmallTractor } from './levels/cornfield/index.js?v=1800000000019';
+import { createRingState, stepRing, ringPose, ringWrapS, RING_R, RING_CIRC, RING_LANE, RING_MAX, RING_REVERSE, RING_ACCEL, RING_TURN } from './spaceRing.js';
 import { addLizard } from './lizard.js?v=1800000000000';
 import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1791479956919';
 import { updateKnockables, knockAt, resetKnockables, snapKnockables, triggerKnockable } from './physics.js?v=1800000000002';
@@ -34,6 +35,14 @@ import {
   wrapCoordZ,
   wrappedDeltaX,
   wrappedDeltaZ,
+  wrapTorusX,
+  wrapTorusZ,
+  RAMP_XLO,
+  RAMP_XHI,
+  RAMP_ZLO,
+  RAMP_ZHI,
+  RAMP_XHALF,
+  RAMP_ZHALF,
   ROAD_SPAN,
   ROAD_HALF,
   wrapRoad,
@@ -47,14 +56,14 @@ import {
   isInUndergroundReturnZone,
 } from './modules/portalRules.js?v=1791479956919';
 import { resolveStuck, wallNormal, collidersToSolids } from './modules/unstick.js?v=1791700000000';
-import { gfxQualCreate, gfxQualTick } from './modules/gfxQualityWalk.js?v=1800000000000';
+import { gfxQualCreate, gfxQualTick } from './modules/gfxQualityWalk.js?v=1800000000001';
 import { makePlayer, readInput } from './modules/player.js?v=1791800000000';
 import { tryClaim, makeClaimState, cancelClaims, claimStatePlayers, MAX_PLAYERS } from './modules/claim.js?v=1799999999999';
 import { splitViewports, SPLIT_FOV } from './modules/splitViewports.js?v=1791700000000';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js';
-import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, ROOM_LABELS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1800000000001';
+import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, ROOM_LABELS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1800000000022';
 import { houseSurfaceY, houseLandingY } from './levels/house/surfaces.js';
-import { createTrackState, stepTrack, sampleTrack, poseOnTrack, nearestTrackS, trackStick, releaseYaw, TRACK_CAPTURE, TRACK_LIFT } from './levels/house/hotwheels.mjs';
+import { createTrackState, stepTrack, sampleTrack, poseOnTrack, nearestTrackS, trackStick, releaseYaw, launchRampStart, createLaunchFlight, stepLaunchFlight, TRACK_CAPTURE, TRACK_LIFT } from './levels/house/hotwheels.mjs?v=1800000000020';
 import { addCat } from './cat.js?v=1791479956919';
 import { makeAsh, inHearth, stepAsh, ashBlack, ashFlakeRate } from './ash.js';
 import { addUnderground, UNDERGROUND_Y, TUNNEL, tunnelPoint, CEIL_Y } from   './levels/underground/index.js?v=1799999999999';
@@ -62,10 +71,10 @@ import {
   createBeachWorld, beachGroundOffsetAt, BEACH_START, BEACH_SHELL, BEACH_SHORE_Z,
   BEACH_HALF_W, BEACH_CLIFF_Z, BEACH_RIM_Z, BEACH_MAP_Z0, BEACH_MAP_Z1, BEACH_TRENCH_Z,
   BEACH_SEA_Y, BEACH_DEEP_Z, BEACH_CAMPFIRE, makeCrab,
-} from './levels/beach/index.js?v=1800000000000';
+} from './levels/beach/index.js?v=1800000000003';
 // The object catalogue: every level's categories and the small standalone
 // models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1799900000000';
+import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1800000000023';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -767,6 +776,35 @@ function toggleTopDownCamera() {
   topDown.target = Math.max(TOPDOWN_ZOOM_MIN, Math.min(TOPDOWN_ZOOM_MAX, cameraOrbit.radius));
 }
 
+// The Camera tab names the three views directly, so it needs two things the C
+// key never did: a way to READ which view is up, and a way to JUMP straight to
+// one. The jump is deliberately built on top of the same cycle the C key walks,
+// rather than setting the state flags itself — the enter/exit arms above stash
+// and restore the chase framing, and a second code path that flipped the flags
+// would drift from them. We just walk the cycle until it lands where we asked.
+function currentCameraView() {
+  if (topDown.active) return 'plan';
+  if (cineCam.active) return 'cine';
+  return 'chase';
+}
+function setCameraView(name) {
+  // The cycle is exactly three long (chase -> plan -> cine -> chase), so any
+  // target is at most two steps away. The guard is only a stuck-loop safety net.
+  for (let guard = 0; guard < 3 && currentCameraView() !== name; guard++) {
+    toggleTopDownCamera();
+  }
+}
+// Paint the Camera tab's buttons to match the live view. Called when the tab
+// opens (which may be mid-plan-view if the player pressed C before opening the
+// gear) and after each button click.
+function refreshCameraTabUI() {
+  const view = currentCameraView();
+  for (const [id, name] of [['cam-view-chase', 'chase'], ['cam-view-plan', 'plan'], ['cam-view-cine', 'cine']]) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', view === name);
+  }
+}
+
 // ===== Cinematic camera (the C key's third view) =====
 // A fixed tripod dropped at a random spot around the car — normally about
 // fifteen car lengths out, but walked in closer when the surroundings leave no
@@ -989,6 +1027,42 @@ let holeFallTimer = 0;
 const HOLE_FALL_CAM_RADIUS = 3.0;   // tight close-up while falling
 const HOLE_FALL_CAM_PHI = 1.38;     // tilt down to watch the drop
 const HOLE_FALL_MAX_TIME = 6;       // safety: force end after this long
+
+// Squirrel apple-hit cinematic: every apple that connects with the car cuts to
+// a brief slow-motion close-up of the impact — the world eases to a crawl, the
+// camera snaps in tight on the impact point, holds the beat, then eases back
+// out to the chase view. Purely a camera + time-scale flourish; the car keeps
+// driving (slowly) throughout, so it never steals control.
+let appleCineActive = false;
+let appleCineTimer = 0;             // real seconds since the cut
+let appleCineBlend = 0;             // 0..1 how "in" the shot we are
+const APPLE_CINE_TIME = 1.5;        // total length of the cut (real seconds)
+const APPLE_CINE_EASE = 0.28;       // ease-in / ease-out fraction
+const APPLE_CINE_SLOWMO = 0.22;     // world time scale at the peak of the shot
+const APPLE_CINE_RADIUS = 6.0;      // close-up orbit radius
+const APPLE_CINE_PHI = 1.15;        // low, dramatic tilt
+const _appleCinePoint = new THREE.Vector3();  // the impact point the shot frames
+let _appleCineThetaBase = 0;                  // orbit angle at the cut
+let _appleCineThetaSpin = 0;                  // slow drift added while the shot runs
+
+function cornAppleHitCinematic(x, y, z) {
+  appleCineActive = true;
+  appleCineTimer = 0;
+  appleCineBlend = 0;
+  _appleCinePoint.set(x, y, z);
+  _appleCineThetaBase = Math.atan2(camera.position.x - x, camera.position.z - z);
+  _appleCineThetaSpin = 0;
+}
+
+// The slow-motion time scale for the current frame (1 when no cut is running).
+function appleCineTimeScale() {
+  if (!appleCineActive) return 1;
+  // Dip to APPLE_CINE_SLOWMO at the centre of the shot, ease back to full speed.
+  const t = Math.min(1, appleCineTimer / APPLE_CINE_TIME);
+  const dip = Math.sin(Math.PI * t);       // 0 -> 1 -> 0
+  return 1 - (1 - APPLE_CINE_SLOWMO) * dip;
+}
+
 const _lookTarget = new THREE.Vector3(0, 0.6, 0);      // persistent across frames
 const _mineCamTarget = new THREE.Vector3();   // reused each frame during mine dive
 const _mineLookTarget = new THREE.Vector3();
@@ -1105,15 +1179,19 @@ scene.add(dirLight);
 await __loaderYield(0.04, 'the city streets');
 const { buildingColliders, ramps } = buildMap(scene);
 await __loaderYield(0.08, 'the traffic lights');
-const { trafficLights, fountains, mineColliders, mineGems, clamShell } = addProps(scene);
+const { trafficLights, fountains, mineColliders, mineGems, clamShell, parkRamps, parkColliders } = addProps(scene);
+// The park's playground ramps (the drive-up slide) join the shared ramp list so
+// rampInfoAt sees them; its colliders (the merry-go-round deck) join the city
+// colliders below with the buildings and the mine.
+ramps.push(...parkRamps);
 await __loaderYield(0.12, 'the traffic cars');
 const traffic = addTrafficCars(scene);
 await __loaderYield(0.16, 'the pedestrians');
 const { people, update: updatePeople } = addPeople(scene);
 await __loaderYield(0.18, 'the spaceport');
-// The "Intergalactic Spaceship Transport Company" tucked into the city's
-// south-east corner (world ~(64,-59)). Its colliders join the city set so the
-// torus ghost pass below wraps them across the map edges just like buildings.
+// The "Intergalactic Spaceship Transport Company" now sits out in the south-west
+// outer belt (world ~(-120,-110)), beyond the railway ring. Its colliders join
+// the city set so it is a solid, drivable-to landmark on the new outer road.
 const spaceport = createSpaceport(scene);
 buildingColliders.push(...spaceport.colliders);
 
@@ -1121,12 +1199,12 @@ buildingColliders.push(...spaceport.colliders);
 // The minimap renders north (+z) up and east (+x) LEFT — a true view-from-
 // above, so turns match the driving (see drawMinimap). On that layout the
 // corner players read as "northwest" is the TOP-LEFT one: world
-// (worldXHi, worldZHi) = (90, 123), the far corner of the mega-ramp grass
-// field. The marker lies directly ON the ground there: a dart-like arrow
+// (worldXHi, worldZHi), the far corner of the map. The marker lies directly ON
+// the ground just inside the new brick boundary wall there: a dart-like arrow
 // whose tip touches the exact corner point, tail raised just enough to clear
 // the grass, spinning on its own long axis. Its materials ignore the fog so
 // it stays visible from anywhere on the map.
-const nwCornerAim = new THREE.Vector3(worldXHi, 0, worldZHi);   // the exact corner, at grass level
+const nwCornerAim = new THREE.Vector3(worldXHi - 6, 0, worldZHi - 6);   // just inside the wall, at grass level
 const nwArrowTailDir = new THREE.Vector3(-2.8, 0.7, -2.8);      // from the tip toward the tail: into the map & slightly up
 function createNwCornerArrow() {
   const group = new THREE.Group();
@@ -1176,20 +1254,11 @@ function updateNwCornerArrow(delta) {
   nwArrow.rotateY(delta * 2.4);
 }
 
-// The map is a full torus — there are NO invisible edge walls bumping you back;
-// drive off any side and you wrap around to the opposite edge. Ghost building
-// colliders across the wrap seams (the 8 neighboring copies of the world) keep
-// collisions continuous at the edges: x ghosts are spaced one x-span (180)
-// apart, z ghosts one z-span (213).
-const colliders = [...buildingColliders, ...mineColliders];
-for (const c of buildingColliders) {
-  for (const ox of [-worldSizeX, 0, worldSizeX]) {
-    for (const oz of [-worldSizeZ, 0, worldSizeZ]) {
-      if (ox === 0 && oz === 0) continue;
-      colliders.push({ x: c.x + ox, z: c.z + oz, halfW: c.halfW, halfD: c.halfD, h: c.h });
-    }
-  }
-}
+// The map is a finite box now: a solid brick boundary wall (built in
+// cityOuter.js) rings the whole playable rectangle, so there are no wrap seams
+// and no ghost building copies — the wall is an ordinary collider and
+// everything else sits inside it.
+const colliders = [...buildingColliders, ...mineColliders, ...parkColliders];
 
 // ===== Collision helpers =====
 const playerCarRadius = 2.2;
@@ -1210,6 +1279,7 @@ let beachCollidersNoCrabs = null;
 function activeColliders() {
   if (worldState === 'underground') return ugColliders;
   if (worldState === 'house') return houseColliders;
+  if (worldState === 'cornfield') return cornfieldWorld.colliders;
   if (worldState === 'beach') return playerCrab ? beachCollidersNoCrabs : beachWorld.colliders;
   // Space has no wall colliders: the wheel's corridor is enforced by the ring
   // drive itself, so the ordinary block/unstick machinery never runs there.
@@ -1805,7 +1875,7 @@ const pickPadSteer = [];             // per-pad last steer sign (edge-cycles on 
 let car2 = null;                    // Player 2's car, built on beginSplit
 let camB = null;                    // Player 2's camera, built on beginSplit
 let _sp2Dir = null;                 // scratch vector (stepTwoPlayer)
-let _camTwTarget = null, _camTwFwd = null, _camTwLook = null, _camTwDesired = null; // scratch for followCameraTwo
+let _camTwTarget = null, _camTwFwd = null, _camTwUp = null, _camTwLook = null, _camTwDesired = null; // scratch for followCameraTwo
 
 // Flatten one raw Gamepad snapshot into the object readInput expects. Mirrors
 // the single-player flattening in pollGamepad (stick up = go, triggers, D-pad;
@@ -1830,7 +1900,7 @@ function flattenGamepad(g) {
 // The scene the active world renders into — P2's car is reparented here
 // whenever a portal changes world so it never vanishes with its old scene.
 function activeWorldScene() {
-  return worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : scene;
+  return worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene;
 }
 
 // ===== The pairing screen (claim) =====
@@ -2241,7 +2311,7 @@ function beginSplit() {
   // exitSelectMode early-returns when the settings modal is already closed, so
   // its body-class teardown is repeated here (defensively) or a claim/pick
   // overlay could stay stuck over the running game.
-  document.body.classList.remove('select-mode', 'tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open', 'claim-active', 'pick-active');
+  document.body.classList.remove('select-mode', 'tab-levels', 'tab-objects', 'tab-controls', 'tab-camera', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open', 'claim-active', 'pick-active');
   // Exit settings modal so the split view takes over the whole screen.
   exitSelectMode(false);
   const devs = claimStatePlayers(claimState);
@@ -2299,8 +2369,42 @@ function beginSplit() {
   ghostRide2T = 0;
   suppressChaseCar(true);
   document.body.classList.add('split-on');
+  // If a shared cinematic owned the single-player frame when the split began,
+  // it still owns it — and the split render draws P1 through `camera`, which
+  // never picked up the halved aspect. Retune it so the cinematic is not
+  // stretched across the left half (the case that matters: someone launches on
+  // the spaceport pad and their partner joins mid-ride).
+  syncSplitCameraAspect();
   // Touch split: show the two on-screen joysticks, one per player.
   if (splitTouch) document.body.classList.add('split-touch');
+}
+
+// The main `camera` normally owns the WHOLE canvas at its un-halved aspect,
+// while split mode renders an intrinsically half-width viewport into each half
+// and compensates with a wider vertical FOV (SPLIT_FOV). Most of the time the
+// split teardown (endSplit) puts the full-screen aspect back, so the two never
+// disagree for long. But a CINEMATIC can be running when the split starts (and
+// can outlive it): its own camera override fires every frame and would render
+// into the left half at the wrong aspect. These two keep `camera` in sync with
+// whichever mode is live, on the split edges AND on a mid-cinematic resize.
+function syncSplitCameraAspect() {
+  const w = window.innerWidth, h = window.innerHeight;
+  const right = splitActive ? SPLIT_FOV : 60;
+  if (camera.aspect !== (w / 2) / h) {
+    camera.aspect = (w / 2) / h;
+    camera.updateProjectionMatrix();
+  }
+  if (camera.fov !== right) {
+    camera.fov = right;
+    camera.updateProjectionMatrix();
+  }
+}
+function syncCameraAspect() {
+  if (splitActive && camB) syncSplitCameraAspect();
+  else {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+  }
 }
 
 function endSplit() {
@@ -2337,8 +2441,9 @@ function endSplit() {
   if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
   // beginSplit halved the main camera's aspect for the left viewport; give the
   // full-width single-player view its aspect back or the picture stays squashed.
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  // If a shared cinematic is still running it owns `camera` — syncCameraAspect
+  // restores the full-screen aspect/60deg FOV it needs, exactly as here.
+  syncCameraAspect();
   // The split loop leaves the renderer's viewport on the last half; put it back
   // on the whole canvas right away so the very next frame (picker / showroom /
   // single-player) is not drawn into one side. Drop the pick stage too, so a
@@ -2432,6 +2537,19 @@ function stepTwoPlayer(p, dt) {
     carTwo.rotation.x *= 0.5;
     return;
   }
+  // The spaceport rocket ride owns the frame for both players: the rider's car
+  // is posed by updateRocketRide / the arrival cinematic, and the passenger's
+  // car is parked at the station. Freeze the twin so its physics cannot drag it
+  // across the apron or off the ring pose. (P1's own step is gated off by
+  // `!rocketRide.active` in the main block; this is the twin's equivalent, and
+  // it also covers the P1-as-rider / P2-as-passenger case where P2 must hold a
+  // still pose rather than drive.)
+  if (rocketRide.active || spaceArrival.active) {
+    p.velocity.value = 0;
+    p.steering.value = 0;
+    if (p.jump) { p.jump.inAir = false; p.jump.yVelocity = 0; }
+    return;
+  }
   const accel2 = 10 * dt;
   const turnRate2 = 1.7 * dt;
   // A touch player reads the SECOND on-screen stick (bottom-right) and no
@@ -2447,6 +2565,74 @@ function stepTwoPlayer(p, dt) {
   const forward = inp.forward;
   const reverse = inp.reverse;
   const boost = inp.boost ? 2 : 1;
+
+  // ===== The wheel station =====
+  // On the rim the whole drive is ring coordinates (src/spaceRing.js): the
+  // twin gets its own ring state and the same corridor step P1's
+  // updateSpaceDrive runs, posed onto the wheel with ringPose. The ground-style
+  // step below would drag it across a flat plane that does not exist out here.
+  if (worldState === 'space') {
+    // The arrival / departure cuts own Player 1's car; the twin waits off-stage
+    // (its mesh is only in the rendered scene once the wheel drive starts, because
+    // the reparent below is skipped too). A vent whose SUBJECT is the twin also
+    // parks it — its ring is being driven by the cut — but a vent flung on P1
+    // deliberately leaves the twin free to keep driving the ship and watch.
+    if (spaceArrival.active || spaceDeparture.active || (spaceVent.active && spaceVent.subject === 1)) {
+      p.velocity.value = 0;
+      p.steering.value = 0;
+      return;
+    }
+    // Fresh state one lane over from wherever P1 spawned (finishSpaceArrival
+    // clears it on every world change; this also covers a mid-visit split).
+    if (!p.ring) {
+      const tw = spaceTwinSpawn();
+      p.ring = createRingState(tw.s, tw.w, spaceDrive.heading);
+    }
+    const throttle2 = Math.max(-1, Math.min(1, forward - reverse));
+    // Same left-positive convention as everywhere else; stepRing wants right
+    // positive, so it is negated on the way in (see updateSpaceDrive).
+    let steer2 = (inp.wantLeft ? 1 : 0) - (inp.wantRight ? 1 : 0);
+    if (inp.joyActive) steer2 -= inp.joyX;
+    if (inp.steerPad) steer2 -= inp.steerPad;
+    if (spaceStun > 0) steer2 = 0;
+    // Apply the same hazards to P2's ring (boosts, conveyors, geysers, plasma,
+    // compactors, tugs, lifts, decon, barriers). Some effects (vents) are global
+    // cinematics triggered by zone entry.
+    updateSpaceHazardsForRing(p.ring, dt);
+    // Widen the +w lane at the dock and the side decon/vent bay exactly as P1's
+    // drive does, so the twin can leave the road and drive into the chamber mouth
+    // (otherwise the cut can never be triggered from its half).
+    const dock2 = spaceWorld.dock;
+    const decon2 = spaceWorld.decon;
+    const nearDock2 = dock2 && (p.ring.s <= dock2.s || p.ring.s >= RING_CIRC - dock2.s);
+    const nearDecon2 = decon2 && Math.abs(spaceWrapDelta(p.ring.s - decon2.s)) < decon2.arc;
+    let laneHi2 = nearDock2 ? dock2.lane : RING_LANE;
+    if (nearDecon2) laneHi2 = Math.max(laneHi2, decon2.lane);
+    stepRing(p.ring, { throttle: throttle2, steer: -steer2 * 0.9, laneHi: laneHi2, grip: spaceSurfaceGrip(p.ring) }, dt);
+    const pr2 = ringPose(p.ring.s, p.ring.w, p.ring.heading, SPACE_CAR_LIFT + spaceLift);
+    carTwo.position.set(pr2.px, pr2.py, pr2.pz);
+    _spaceBasis.makeBasis(
+      _spaceX.set(pr2.xx, pr2.xy, pr2.xz),
+      _spaceY.set(pr2.yx, pr2.yy, pr2.yz),
+      _spaceZ.set(pr2.zx, pr2.zy, pr2.zz),
+    );
+    carTwo.quaternion.setFromRotationMatrix(_spaceBasis);
+    carTwo.scale.setScalar(portalCarScale);
+    p.velocity.value = p.ring.speed;
+    p.steering.value = steer2;
+    // Wheels + steering pivots, driven by the ring speed like P1's rim drive.
+    const spin2r = p.ring.speed * dt * 2.6;
+    if (carTwo.userData.wheels) for (const w of carTwo.userData.wheels) w.rotation.y += spin2r;
+    const pivs2r = carTwo.userData.wheelPivots;
+    if (pivs2r) for (let i = 0; i < Math.min(2, pivs2r.length); i++) pivs2r[i].rotation.y = steer2 * 0.55;
+    // Keep the twin in the station scene (portals reparent P1 only).
+    const scR2 = activeWorldScene();
+    if (carTwo.parent !== scR2) {
+      if (carTwo.parent) carTwo.parent.remove(carTwo);
+      scR2.add(carTwo);
+    }
+    return;
+  }
 
   if (forward > 0) {
     p.velocity.value = Math.min(p.velocity.value + accel2 * 2.2 * forward * boost, 14 * boost);
@@ -2536,6 +2722,10 @@ function stepTwoPlayer(p, dt) {
     if (k.t <= 0) p.knock = null;
   }
 
+  // The twin rides the spinning decks (city merry-go-round, underground
+  // platter) by the same shared carry both single-player cars use.
+  carryOnTurntable(carTwo, dt);
+
   // Ground height by world. These reuse the levels' own height queries so the
   // twin car sits on the same terrain P1 does.
   let groundY2 = groundHeight;
@@ -2566,6 +2756,75 @@ function stepTwoPlayer(p, dt) {
     // rides the flat floor in v1. The walls still block (above), so the twin
     // stays inside the shell.
     groundY2 = groundHeight;
+  } else if (worldState === 'cornfield') {
+    // The farm's own surface families — the same queries P1's Y branch uses:
+    // barn ramp + silo spiral (rampInfoAt, baseY-aware), the rounded mound, the
+    // sloped river bank/bed, the hayloft and the porch deck. buildingTopAt is
+    // not consulted, exactly as on P1's side.
+    const gy2 = cornfieldWorld.groundY;
+    const rv2 = cornfieldWorld.riverAt(carTwo.position.x, carTwo.position.z);
+    const rampC2 = cornfieldWorld.rampInfoAt(carTwo.position.x, carTwo.position.z);
+    const hillC2 = cornfieldWorld.hillHeightAt(carTwo.position.x, carTwo.position.z);
+    if (rampC2) {
+      groundY2 = rampC2.baseY + rampC2.height * rampC2.s;
+      onRamp2 = true;
+      rampDef2 = rampC2;
+    } else if (hillC2 > 0.001) {
+      // Ride the mound in BOTH directions, like P1: every side is a gentle curve.
+      groundY2 = hillC2;
+    } else if (rv2) {
+      // In the river the bank/bed surface is the floor (it meets the grass at
+      // every bank, so there is no lip to fall over).
+      const rvY2 = cornfieldWorld.riverSurfaceY(carTwo.position.x, carTwo.position.z);
+      groundY2 = rvY2 !== null ? rvY2 : gy2;
+    } else {
+      const topC2 = Math.max(
+        cornfieldWorld.loftTopAt(carTwo.position.x, carTwo.position.z, carTwo.position.y),
+        cornfieldWorld.porchTopAt(carTwo.position.x, carTwo.position.z)
+      );
+      if (topC2 > 0) {
+        groundY2 = Math.max(carTwo.position.y, topC2);
+      } else if (carTwo.position.y > gy2 + 1) {
+        // Just drove off the loft's (or the mound's) open edge — fall.
+        const pj2 = p.jump || (p.jump = { inAir: false, yVelocity: 0 });
+        pj2.inAir = true;
+        pj2.yVelocity = 0;
+        groundY2 = gy2;
+      } else {
+        groundY2 = gy2;
+      }
+    }
+    // Body pitch from a two-point surface sample, like P1's terrainPitch —
+    // the mound and the banks rock the twin nose-up/nose-down.
+    if (!(p.jump && p.jump.inAir)) {
+      const surfC2 = (x, z) => {
+        if (cornfieldWorld.riverAt(x, z)) {
+          const ry = cornfieldWorld.riverSurfaceY(x, z);
+          if (ry !== null) return ry;
+        }
+        return Math.max(
+          gy2,
+          cornfieldWorld.rampSurfaceY(x, z),
+          cornfieldWorld.loftTopAt(x, z, carTwo.position.y),
+          cornfieldWorld.hillHeightAt(x, z),
+          cornfieldWorld.porchTopAt(x, z)
+        );
+      };
+      const halfB2 = 1.35;
+      const frontH2 = surfC2(carTwo.position.x + _sp2Dir.x * halfB2, carTwo.position.z + _sp2Dir.z * halfB2);
+      const rearH2 = surfC2(carTwo.position.x - _sp2Dir.x * halfB2, carTwo.position.z - _sp2Dir.z * halfB2);
+      p.terrainPitch2 = -Math.atan2(frontH2 - rearH2, halfB2 * 2);
+    }
+    // The current: it shoves anything afloat downstream (-Z) and bleeds speed,
+    // so steering in the water is a fight, exactly like P1's block.
+    if (rv2) {
+      const flow2 = cornfieldWorld.riverFlowAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
+      if (flow2) {
+        carTwo.position.x += flow2.dx * dt;
+        carTwo.position.z += flow2.dz * dt;
+        p.velocity.value *= Math.max(0, 1 - flow2.drag * dt);
+      }
+    }
   } else {
     // City: flat ground, but the city launch ramps lift P2 just like P1.
     const cityRamp = rampInfoAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
@@ -2617,14 +2876,21 @@ function stepTwoPlayer(p, dt) {
     carTwo.position.y = groundY2;
   }
 
-  // Torus wrap, same rule as P1's block: everything except the enclosed
-  // underground cavern and the boxed house wraps across the seam.
-  if (worldState !== 'underground' && worldState !== 'house') {
-    if (carTwo.position.x > worldXHi || carTwo.position.x < worldXLo) {
-      carTwo.position.x = wrapCoordX(carTwo.position.x);
+  // Boundary rule, same as P1's block: the city is a finite box (clamp at the
+  // brick wall), the boxed house and the enclosed underground cavern do not
+  // move, and the ramp world still wraps because its terrain is periodic. The
+  // farm has its own fence boundary and the wheel's corridor is enforced by
+  // stepRing, so neither falls under the city clamp.
+  if (worldState !== 'underground' && worldState !== 'house' && worldState !== 'beach' && worldState !== 'cornfield') {
+    const px2 = carTwo.position.x;
+    const pz2 = carTwo.position.z;
+    if (worldState === 'ramp') {
+      if (px2 > RAMP_XHI || px2 < RAMP_XLO) carTwo.position.x = wrapTorusX(px2);
+      if (pz2 > RAMP_ZHI || pz2 < RAMP_ZLO) carTwo.position.z = wrapTorusZ(pz2);
+    } else {
+      if (px2 > worldXHi || px2 < worldXLo) carTwo.position.x = wrapCoordX(px2);
+      if (pz2 > worldZHi || pz2 < worldZLo) carTwo.position.z = wrapCoordZ(pz2);
     }
-    if (carTwo.position.z > worldZHi) carTwo.position.z = wrapCoordZ(carTwo.position.z);
-    else if (carTwo.position.z < worldZLo) carTwo.position.z = wrapCoordZ(carTwo.position.z);
   }
 
   // Keep the twin in whatever world is currently active (portals reparent P1).
@@ -2645,6 +2911,13 @@ function stepTwoPlayer(p, dt) {
     const rampPitch = -slopeAngle * Math.sign(alongRun);
     carTwo.rotation.z += (rampPitch - carTwo.rotation.z) * 0.28;
     carTwo.rotation.x += (0 - carTwo.rotation.x) * 0.12;
+  } else if (worldState === 'cornfield' && !j2.inAir && p.terrainPitch2 !== undefined) {
+    // Farm terrain: the mound and the river banks are heightfields, so pitch
+    // the twin to the two-point sample from the Y branch (rampDef2 takes
+    // precedence above for the loft ramp and silo spiral).
+    const accelPitch2 = THREE.MathUtils.clamp(p.velocity.value, -7, 14) * -0.004;
+    carTwo.rotation.z += (p.terrainPitch2 - carTwo.rotation.z) * 0.25;
+    carTwo.rotation.x += (accelPitch2 - carTwo.rotation.x) * 0.12;
   } else if (!j2.inAir) {
     const roll2 = -p.steering.value * 0.1;
     const accelPitch2 = THREE.MathUtils.clamp(p.velocity.value, -7, 14) * -0.004;
@@ -2663,12 +2936,81 @@ function stepTwoPlayer(p, dt) {
 // A condensed twin of updateCamera's core chase shot: target the car, offset
 // behind it by the same spherical (radius, phi, yaw) maths, damp the same way.
 // No top-down, no cinematics, no holes/trains/flight — v1 keeps the twin shot
-// simple, and gfx.far is applied so the draw distance matches the primary.
+// simple. Draw distance matches the primary: gfx.far on flat worlds,
+// SPACE_VIEW_FAR inside the wheel station.
 function followCameraTwo(p, dt) {
   if (!camB || !p || !p.car) return;
+  const wantFar = worldState === 'space' ? SPACE_VIEW_FAR : gfx.far;
+  // P2 is the rider of the house watch: use the same fixed tripod as P1
+  // would, so P2's split view sees the doorway shot instead of a chase cam.
+  if (housePortal.watch.active && housePortal.rider === 1 && housePortal.watch.hasCam) {
+    const w = housePortal.watch;
+    camB.up.set(0, 1, 0);
+    camB.position.copy(w.cam);
+    camB.lookAt(p.car.position.x, p.car.position.y + 0.6, p.car.position.z);
+    if (camB.far !== wantFar) {
+      camB.far = wantFar;
+      camB.updateProjectionMatrix();
+    }
+    return;
+  }
   const pcar = p.car;
   const c = p.cam;
-  if (!_camTwTarget) { _camTwTarget = new THREE.Vector3(); _camTwFwd = new THREE.Vector3(); _camTwLook = new THREE.Vector3(); _camTwDesired = new THREE.Vector3(); }
+  if (!_camTwTarget) {
+    _camTwTarget = new THREE.Vector3();
+    _camTwFwd = new THREE.Vector3();
+    _camTwUp = new THREE.Vector3();
+    _camTwLook = new THREE.Vector3();
+    _camTwDesired = new THREE.Vector3();
+  }
+
+  // ===== Wheel station =====
+  // Inside the rim "up" is the hub direction, not world +Y, and the car is
+  // posed by ringPose all the way round the loop — so the flat-world chase below
+  // (forward flattened onto the XZ plane, look target clamped to y >= 0.8) picks
+  // a garbage heading the moment the car leaves the near-horizontal stretch of
+  // the ring and drags the aim toward world Y. Mirror P1's ring-frame rig from
+  // updateCamera instead: forward = local -X of the car's own basis, up = local
+  // +Y (toward the hub), right = forward x up, and the orbit knobs swing the
+  // camera around those axes rather than around world Y.
+  if (worldState === 'space') {
+    _camTwFwd.set(-1, 0, 0).applyQuaternion(pcar.quaternion);
+    _camTwUp.set(0, 1, 0).applyQuaternion(pcar.quaternion);
+    const fx = _camTwFwd.x, fy = _camTwFwd.y, fz = _camTwFwd.z;
+    const ux = _camTwUp.x, uy = _camTwUp.y, uz = _camTwUp.z;
+    const rx = fy * uz - fz * uy;
+    const ry = fz * ux - fx * uz;
+    const rz = fx * uy - fy * ux;
+    const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
+    const bx = -fx * cy - rx * sy;
+    const by = -fy * cy - ry * sy;
+    const bz = -fz * cy - rz * sy;
+    // Same stretch and hub cap as the primary rig, so both halves frame the
+    // station identically when scrolled out.
+    const zoomRad = c.orbit.radius * (1 + c.orbit.radius * 0.004);
+    const back = zoomRad * Math.sin(c.orbit.phi);
+    const upMax = (RING_R - SPACE_CAR_LIFT) - (spaceWorld.coreRadius + 2.0);
+    const rise = Math.min(zoomRad * Math.cos(c.orbit.phi) + 2.2, upMax);
+    camB.up.set(ux, uy, uz);          // "sky" is toward the hub: roll with the rim
+    camB.position.set(
+      pcar.position.x + bx * back + ux * rise,
+      pcar.position.y + by * back + uy * rise,
+      pcar.position.z + bz * back + uz * rise,
+    );
+    if (camB.far !== wantFar) {
+      camB.far = wantFar;
+      camB.updateProjectionMatrix();
+    }
+    _camTwLook.set(
+      pcar.position.x + fx * 3 + ux * 1.2,
+      pcar.position.y + fy * 3 + uy * 1.2,
+      pcar.position.z + fz * 3 + uz * 1.2,
+    );
+    camB.lookAt(_camTwLook);
+    return;
+  }
+
+  camB.up.set(0, 1, 0);   // undo a previous rim visit's rolled up-vector
   if (!c.offset) {
     // First frame: park the camera directly on the chase offset so there is no
     // slide-in from the origin.
@@ -2697,8 +3039,8 @@ function followCameraTwo(p, dt) {
   c.offset.lerp(_camTwDesired, damp);
 
   camB.position.copy(target).add(c.offset);
-  if (camB.far !== gfx.far) {
-    camB.far = gfx.far;
+  if (camB.far !== wantFar) {
+    camB.far = wantFar;
     camB.updateProjectionMatrix();
   }
   _camTwLook.copy(target).addScaledVector(_camTwFwd, THREE.MathUtils.clamp(p.velocity.value, 0, 14) * 0.12);
@@ -2806,6 +3148,7 @@ function cityGroundHeightAt(x, z) {
 const minePortal = {
   active: false,       // true when the car is inside the trigger zone
   timer: 0,            // counts up once active — teleport at diveTotal
+  rider: 0,            // which player's car drives down the adit (0 = P1, 1 = the twin)
   baseY: 0,            // car's ground height when the dive started
   diveTotal: 3.1,      // seconds of visible forward-and-down travel (2× speed)
   // Descending-adit path (world coords, matches MINE_ADIT_PROFILE):
@@ -3147,6 +3490,22 @@ function updateFlatCar2State(delta) {
 // world we stop rendering the city and switch the car over to this scene. On
 // the way back we just switch it again.
 let worldState = 'city'; // 'city' | 'ramp' | 'underground' | 'house' | 'beach' | 'space'
+// ===== World changes restore flat mode — for BOTH players =====
+// The pancake (boulder / monster truck / steamroller / steam press squash) is
+// debris from the world you were just in, so it never travels with you: every
+// portal and level jump hands both cars back at full height. All `worldState`
+// writes go through here so a transition cannot forget Player 2 — the twin's
+// flat state was only cleared by placePlayerTwoNearP1, which several exit
+// paths do not call, and that is how P2 ended up stuck flat on the far side
+// of a portal. (Assigning `worldState` directly is now the bug; use this.)
+function setWorldState(next) {
+  if (worldState === next) return;
+  worldState = next;
+  flatCarState = createFlatCarState(false);
+  flatCar2State = createFlatCarState(false);
+  if (car) car.scale.setScalar(portalCarScale);
+  if (car2) car2.scale.setScalar(1);
+}
 // Seconds to ignore portal triggers right after a teleport, so the car isn't
 // instantly re-caught by the portal it just emerged from.
 let portalGrace = 0;
@@ -3189,6 +3548,22 @@ const beachShell = beachWorld.shell;
 // level module's meshes; main.js only owns the drive and the arrival cinematic.
 const spaceScene = new THREE.Scene();
 const spaceWorld = buildSpaceWorld(spaceScene);
+
+// ===== The cornfield =====
+// Its own scene, built once, reached by driving through the arch cut in the
+// giant tree out in the city's outer belt. main.js owns the scene move and the
+// car's Y here; the level module owns the meshes and its own small update().
+const cornfieldScene = new THREE.Scene();
+const cornfieldWorld = buildCornfieldWorld(cornfieldScene);
+
+// The giant tree is planted against the city's outer brick wall, in the belt
+// west of the park. Its arch faces +X (east), so the car drives WEST into it
+// to travel; you can see the portal disc and sparkles through the trunk's
+// opening. A fat trunk collider stops you driving through the trunk itself.
+const CORN_TREE = { x: -174, z: 60, faceAngle: Math.PI / 2 };
+const CORN_TREE_PORTAL = { x0: -168, x1: -161, z0: 56, z1: 64 };
+makePortalTree(scene, CORN_TREE.x, CORN_TREE.z, CORN_TREE.faceAngle);
+colliders.push({ x: CORN_TREE.x, z: CORN_TREE.z, halfW: 5.2, halfD: 5.2, h: 6, noRoof: true });
 // The way home is the giant scallop bedded in the sand east of the spawn, and
 // nothing else: no threshold to cross, no water to fall into. You drive down
 // into the dish and the valves come together over you, exactly as they do in
@@ -3799,6 +4174,7 @@ const housePortal = {
   trigger: null,     // world-space box, from houseGarageTrigger()
   side: null,        // null | 'in' | 'out'
   swapping: false,
+  rider: 0,          // which player's car rolls the watch shot (0 = P1, 1 = the twin)
   // The entry/exit watch: on both transitions, the camera leaves the car, holds a
   // fixed spot and watches it roll through the doorway. Going IN it stands out on
   // the driveway watching the car back up into the bay; coming OUT it stands
@@ -3868,22 +4244,56 @@ const houseTrackState = createTrackState();
 // ===== House Hot Wheels loop-de-loop cinematic =====
 // While the car rides the playroom track's stacked loops the normal chase cam
 // swings around and over with it (it is glued behind the car's heading, which
-// inverts at the top of the loop), so the loop reads as a blur. Instead a FIXED
-// side vantage takes over: it only turns to keep the car framed, so the viewer
-// sees the little car go right the way round without the camera ever orbiting
-// or rolling. When the car fires off the launch ramp the shot cuts to a low,
-// epic angle by the mouth of the playroom and then drifts back onto the chase
-// cam (via the shared post-cinematic ease). `phase` is 'loop' | 'launch'.
+// inverts at the top of the loop), so the loop reads as a blur. Instead a LOCKED
+// OFF side vantage takes over: the camera is bolted down and aimed at the loops,
+// so the shot is a steady frame and the little car goes right the way round
+// through it. It neither dollies nor pans — the viewer watches the loops from
+// the one spot, the way a camera on a tripod would see it. When the car fires
+// off the launch ramp the shot cuts to a low, epic angle by the mouth of the
+// playroom and then drifts back onto the chase cam (via the shared
+// post-cinematic ease). `phase` is 'loop' | 'ramp' | 'launch'.
 const houseLoopCine = {
   active: false,
   phase: 'idle',
   t: 0,
   loops: undefined,                    // { s0, s1 } arc window; computed once
+  ramp: undefined,                     // arc length where the launch ramp starts
   camPos: new THREE.Vector3(),
+  fromPos: new THREE.Vector3(),        // where the camera was when the shot began
+  look: new THREE.Vector3(),           // the fixed point the loop shot holds
 };
 const HOUSE_LOOP_CAM = { x: -44, y: 8.5, z: -69 };    // west of the loop plane, face-on
+// Fallback aim for the loop shot (the track's own geometry replaces it once the
+// level has built): the middle of the loop structure.
+const HOUSE_LOOP_AIM = { x: -24.5, y: 5.8, z: -69 };
+// The ramp shot: a camera that rides beside the car. `x` and `z` are offsets
+// from the car; `y` is an ABSOLUTE height, so the camera holds its level in
+// the playroom and looks down on the car at the foot of the ramp and up at it
+// at the lip. Riding beside the car is the point: a fixed vantage would let
+// the climbing car shrink away to nothing, which is what read as a stall.
+const HOUSE_RAMP_CAM = { x: -14, y: 9, z: -4 };
+const HOUSE_RAMP_BLEND = 0.35;                        // seconds to catch up with the car
 const HOUSE_LAUNCH_CAM = { x: 0, y: 11, z: -6 };      // east of the flight line, raised, in the living room
 const HOUSE_LAUNCH_TIME = 2.2;                        // seconds of the launch shot
+// ===== House Hot Wheels launch flight =====
+// Once the car leaves the lip of the launch ramp it is a projectile, and the
+// house's driving model is a flat yaw-only car on a floor: it has no way to
+// express "keep going, in the air, at this speed". The launch cinematic takes
+// the frame away from the drive block as well (that block is the only thing in
+// the house that moves the car sideways), so the flight is integrated here
+// instead — the pure ballistic maths is in house/hotwheels.mjs.
+//
+// This is the state of that flight: where the car is, how fast it is going in
+// each axis, and the pitch its body should be at.
+const houseLaunch = {
+  active: false,
+  x: 0, y: 0, z: 0,
+  vx: 0, vy: 0, vz: 0,
+  yaw: 0,
+  speed: 0,
+  t: 0,
+  pitch: 0,
+};
 // Furniture footprints, for the cat. The car's collider list is walls only: the
 // car rides over furniture via the surface list. The cat is a walking animal and
 // has to go around the sofa, so it gets this second, cat-only list, measured off
@@ -4211,6 +4621,7 @@ function emitAshFlakes(n) {
     : worldState === 'ramp' ? rampScene
     : worldState === 'underground' ? undergroundScene
     : worldState === 'house' ? houseRoot
+    : worldState === 'cornfield' ? cornfieldScene
     : scene;
   if (wantRoot !== ashFlakeRootRef) {
     for (const f of ashFlakes) wantRoot.add(f.sprite);
@@ -4847,7 +5258,7 @@ function rampInfoAt(px, pz, py, onRampDef) {
         const tol = onRampDef === r ? r.stayTol : r.enterTol;
         if (py < surf - tol) return null;   // driving UNDER the plank
       }
-      return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, def: r };
+      return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, slide: r.slide, def: r };
     }
   }
   return null;
@@ -5138,6 +5549,19 @@ const bumperResumeDistance = 4.6;   // drive past this and it chases you again
 let bumperInRamp = false;
 let bumperRampTimer = 20;   // seconds after entering the ramp world before it shows up
 const BUMPER_RAMP_DELAY = 20;
+// Cornfield: the blue car shows up in the rows after a while and chases you
+// through the farm — it flattens stalks, rolls pumpkins and shoves barrels
+// along with you (it rides the farm as one of cornfieldWorld.update's actors).
+let bumperInCorn = false;
+let bumperCornTimer = 0;
+const BUMPER_CORN_DELAY = 16;
+// Space: same story on the wheel's rim, but it drives the ring with its OWN
+// ring state (bumperSpaceRing) instead of the ground — it can never chase you
+// down the corridor otherwise, since both cars share the loop.
+let bumperInSpace = false;
+let bumperSpaceTimer = 0;
+const BUMPER_SPACE_DELAY = 16;
+let bumperSpaceRing = null;
 // Ramp world: a wild monster truck roams the hills, launches off the ramps
 // and flattens the player when it drives over them. It never chases and
 // never knocks props over.
@@ -5177,7 +5601,7 @@ const potholeWobble = { active: false, t: 0, zone: null };
 
 // ===== Park lake splashes =====
 // Tiny water droplets spat up when the car drives into the shallow lake in the
-// NE park. Each droplet is a small sphere with its own velocity + gravity and
+// park. Each droplet is a small sphere with its own velocity + gravity and
 // fades out as it falls; a drop that lands on the "water" bounces once and
 // slows. They live in the city scene and are cleared on world swaps.
 const splashDrops = [];
@@ -5328,6 +5752,72 @@ function catSwipeAway(nx, nz, catX, catZ) {
   k.confine = true;
 }
 
+// ===== The squirrel's apple =====
+// An apple to the windscreen is the cat's swat in farmyard dress: the same
+// sideways knock away from the hitter, ending up facing it. Only the hitter and
+// the numbers differ — a thrown apple should not carry quite the punch of a paw,
+// and there is no house to be confined to out in the cornfield.
+const SQUIRREL_HIT_POWER = 58;
+const SQUIRREL_HIT_HOP = 2.4;
+function cornSquirrelKnock(nx, nz, squirrelX, squirrelZ) {
+  knockPlayerAway(nx, nz, SQUIRREL_HIT_POWER, 0, SQUIRREL_HIT_HOP);
+  const k = playerKnock;
+  if (!k) return;
+  let ux, uz;
+  if (squirrelX === undefined) {
+    ux = -nx; uz = -nz;
+  } else {
+    const dx = squirrelX - car.position.x, dz = squirrelZ - car.position.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) { ux = 0; uz = 0; } else { ux = dx / len; uz = dz / len; }
+  }
+  if (ux || uz) car.rotation.y = Math.atan2(uz, -ux);
+}
+
+// A bull horn under the sill is a much bigger event than an apple: the car is
+// thrown clear, with real air under it, and keeps some forward speed so the
+// landing is a slide rather than a dead stop. Three of these and he loses
+// interest (see the cornfield bull state machine).
+// The bull's horn hit is a vertical launch, not a horizontal shove: most of the
+// energy goes into the hop (gravity is 18, so ~30 u/s peaks at 25 units — a
+// proper 25-foot toss), with just enough power to spin the car as it flies.
+// The farm's boundary colliders tower to catch the landing.
+const BULL_HIT_POWER = 45;
+const BULL_HIT_HOP = 30;
+function cornBullThrow(nx, nz) {
+  knockPlayerAway(nx, nz, BULL_HIT_POWER, 0.8, BULL_HIT_HOP);
+  velocity.value = Math.max(velocity.value, 12);
+  shake.intensity = Math.max(shake.intensity, 0.8);
+}
+function cornBullBreak() {
+  shake.intensity = Math.max(shake.intensity, 0.4);
+}
+// Player 2's twins of the farm knocks: identical forces and the same end-on
+// facing, but they land on the twin's own knock slot (knockPlayerTwoAway), so
+// a hit on the second car never moves Player 1. The apple hit carries no
+// cinematic — that cut is a Player 1 camera and would yank the view away from
+// the split.
+function cornSquirrelKnockTwo(nx, nz, squirrelX, squirrelZ) {
+  knockPlayerTwoAway(nx, nz, SQUIRREL_HIT_POWER, 0, SQUIRREL_HIT_HOP);
+  const p2 = players[1];
+  if (!p2 || !p2.car) return;
+  let ux, uz;
+  if (squirrelX === undefined) {
+    ux = -nx; uz = -nz;
+  } else {
+    const dx = squirrelX - p2.car.position.x, dz = squirrelZ - p2.car.position.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) { ux = 0; uz = 0; } else { ux = dx / len; uz = dz / len; }
+  }
+  if (ux || uz) p2.car.rotation.y = Math.atan2(uz, -ux);
+}
+function cornBullThrowTwo(nx, nz) {
+  knockPlayerTwoAway(nx, nz, BULL_HIT_POWER, 0.8, BULL_HIT_HOP);
+  const p2 = players[1];
+  if (p2) p2.velocity.value = Math.max(p2.velocity.value, 12);
+  shake.intensity = Math.max(shake.intensity, 0.8);
+}
+
 // Keep a swipe inside the plaster. Two layers, because one is not enough:
 //
 //   - The collider bounce uses the same wallNormal/resolveStuck maths as normal
@@ -5408,6 +5898,7 @@ function respawnPlayer() {
   expressCinT = 0;
   houseLoopCine.active = false;
   houseLoopCine.phase = 'idle';
+  houseLaunch.active = false;
   houseTrackState.active = false;
   houseTrackState.speed = 0;
   bubbleWobble = 0;
@@ -5445,7 +5936,7 @@ function respawnBumper() {
 function enterRampWorld() {
   scene.remove(car);
   rampScene.add(car);
-  worldState = 'ramp';
+  setWorldState('ramp');
   // Leaving the city: stand every knocked-over prop back up (lamp posts,
   // benches, barrels, parked cars, ...) so the streets are tidy when you
   // come back through the portal.
@@ -5461,7 +5952,20 @@ function enterRampWorld() {
   playerKnock = null;
   flatCarState = createFlatCarState(false);
   clearLakeSplashes();   // no water left in the ramp world
-  // The blue car will chase you in here after ~20 seconds.
+  // The blue car will chase you in here after ~20 seconds. If a menu jump
+  // arrived from the farm or the wheel, bring it home first so its world flags
+  // don't stay stuck on a scene it is no longer in.
+  if (bumperInCorn) {
+    cornfieldScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInCorn = false;
+  }
+  if (bumperInSpace) {
+    spaceScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInSpace = false;
+    bumperSpaceRing = null;
+  }
   bumperInRamp = false;
   bumperRampTimer = BUMPER_RAMP_DELAY;
   bumperKnock = null;
@@ -5488,7 +5992,7 @@ function enterRampWorld() {
 // `phase` is the exit cinematic: after a trip we drop the car back in the bowl
 // already facing out and let it DRIVE clear of the trigger before the lid lifts
 // behind it, so the car never re-trips the portal the moment control returns.
-const shellPortal = { armed: false, fadeTimer: -1, phase: null, exitTimer: 0 };
+const shellPortal = { armed: false, fadeTimer: -1, phase: null, exitTimer: 0, rider: 0 };
 
 function resetShellTripPhysics() {
   velocity.value = 0;
@@ -5506,7 +6010,7 @@ function resetShellTripPhysics() {
 function enterBeachWorld() {
   scene.remove(car);
   beachScene.add(car);
-  worldState = 'beach';
+  setWorldState('beach');
   resetKnockables();
   resetHydrantSprays();
   resetShellTripPhysics();
@@ -5516,8 +6020,11 @@ function enterBeachWorld() {
   resetHouseAsh();
   minePortal.active = false;
   minePortal.timer = 0;
+  minePortal.rider = 0;
   housePortal.watch.active = false;
+  housePortal.rider = 0;
   shellPortal.armed = false;
+  shellPortal.rider = 0;
   beachShellPortal.armed = false;
   beachShellPortal.fadeTimer = -1;
   beachShellPortal.rider = 0;
@@ -5539,7 +6046,7 @@ function enterBeachWorld() {
 function returnToPark() {
   beachScene.remove(car);
   scene.add(car);
-  worldState = 'city';
+  setWorldState('city');
   resetKnockables();
   resetHydrantSprays();
   // Off the campfire, same as off the house hearth: the soot is dropped here
@@ -5551,11 +6058,14 @@ function returnToPark() {
   applyGlobalDarkness();
   resetShellTripPhysics();
   minePortal.active = false;
+  minePortal.rider = 0;
   housePortal.watch.active = false;
+  housePortal.rider = 0;
   beachShellPortal.armed = false;
   beachShellPortal.fadeTimer = -1;
   beachShellPortal.rider = 0;
   shellPortal.armed = false;
+  shellPortal.rider = 0;
   // Back down in the bowl you left from, which is exactly where the trip began.
   // Full size again - the shrink only ever belonged to the cut - and DRIVING
   // out: the shell stays shut and lifts behind the car once it has cleared the
@@ -5571,6 +6081,106 @@ function returnToPark() {
   placePlayerTwoNearP1();
 }
 
+// ============================================================================
+// City ? Cornfield (through the arch cut in the giant tree)
+// ============================================================================
+// The level browser and the ?debug helper jump straight in; the only drive-in
+// door is the arch in the giant tree out west. You arrive just south of the
+// corn rows facing north, so the first thing you do is flatten a trail. Coming
+// back you land just east of the tree, facing the way you came, already clear
+// of the trigger box.
+function enterCornfieldWorld() {
+  scene.remove(car);
+  cornfieldScene.add(car);
+  setWorldState('cornfield');
+  resetKnockables();
+  resetHydrantSprays();
+  resetHouseAsh();
+  globalDarkness = false;
+  applyGlobalDarkness();
+  minePortal.active = false;
+  minePortal.timer = 0;
+  minePortal.rider = 0;
+  housePortal.watch.active = false;
+  housePortal.rider = 0;
+  shellPortal.armed = false;
+  shellPortal.rider = 0;
+  beachShellPortal.armed = false;
+  beachShellPortal.fadeTimer = -1;
+  portalCarScale = 1;
+  portalGrace = 1.6;
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  const s = cornfieldWorld.spawn;
+  car.position.set(s.x, cornfieldWorld.groundY, s.z);
+  car.rotation.set(0, s.yaw, 0);
+  car.visible = true;
+  shake.intensity = Math.max(shake.intensity, 0.35);
+  // The blue car may have been left parked in another world by a menu jump;
+  // bring it home so the farm's own summon timer below starts from the city
+  // copy (Three's add() reparents, but the world flags must be cleared).
+  if (bumperInRamp) {
+    rampScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInRamp = false;
+    reparentChaseTrainConsist();
+  }
+  if (bumperInSpace) {
+    spaceScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInSpace = false;
+    bumperSpaceRing = null;
+  }
+  // The little blue car turns up in the corn rows after a while.
+  bumperInCorn = false;
+  bumperCornTimer = BUMPER_CORN_DELAY;
+  placePlayerTwoNearP1();
+}
+
+function leaveCornfield() {
+  cornfieldScene.remove(car);
+  scene.add(car);
+  setWorldState('city');
+  resetKnockables();
+  resetHydrantSprays();
+  resetHouseAsh();
+  globalDarkness = false;
+  applyGlobalDarkness();
+  portalGrace = 1.6;
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  // East of the tree, facing +X (forward = (-cos(pi), sin(pi))) back into town,
+  // and clear of the trigger box so we don't bounce straight back in.
+  car.position.set(CORN_TREE.x + 15, groundHeight, CORN_TREE.z);
+  car.rotation.set(0, Math.PI, 0);
+  car.visible = true;
+  shake.intensity = Math.max(shake.intensity, 0.35);
+  // The blue car stayed behind in the farm — bring it back and drop it in a
+  // quiet city corner (same dance the ramp world does on the way home).
+  if (bumperInCorn) {
+    cornfieldScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInCorn = false;
+    respawnBumper();
+    reparentChaseTrainConsist();
+  }
+  placePlayerTwoNearP1();
+}
+
 // Global darkness is a CITY-only effect - the ramp, underground, house and
 // beach keep their own fixed lighting, so this deliberately touches nothing but
 // the city's two lights. Reset whenever the car arrives back in the city.
@@ -5583,7 +6193,7 @@ function applyGlobalDarkness() {
 function enterCityWorld() {
   rampScene.remove(car);
   scene.add(car);
-  worldState = 'city';
+  setWorldState('city');
   // The rocket ride hides the little blue chaser car for its whole cinematic. If
   // the player came back to the city (a menu jump) the chaser belongs back on the
   // streets, so make sure it and its train are visible again.
@@ -5638,7 +6248,7 @@ function enterCityWorld() {
 function enterUndergroundWorld() {
   scene.remove(car);
   undergroundScene.add(car);
-  worldState = 'underground';
+  setWorldState('underground');
   resetKnockables();
   resetHydrantSprays();
   globalDarkness = false;
@@ -5777,7 +6387,7 @@ function startTunnelAscentCine() {
 function startMineAscent() {
   undergroundScene.remove(car);
   scene.add(car);
-  worldState = 'city';
+  setWorldState('city');
   resetKnockables();
   resetHydrantSprays();
   // The little car stays behind in the underground — it doesn't follow you
@@ -5924,29 +6534,68 @@ function houseFadeSwap(toHouse) {
 // The half of the swap that actually moves the car, called once the screen is
 // black (or, on the way in, once the watch shot has played out).
 function completeHouseSwap(toHouse) {
+  const riderIsP2 = housePortal.rider === 1 && car2;
+  const riderCar = riderIsP2 ? car2 : car;
+  const hsStart = (typeof HOUSE_START !== 'undefined' && HOUSE_START) ? HOUSE_START : { x: -50, z: 72, yaw: Math.PI };
+  const hFloorY = (typeof HOUSE !== 'undefined' && HOUSE && typeof HOUSE.floorY === 'number') ? HOUSE.floorY : 0;
+  const riderYaw = toHouse ? hsStart.yaw : (housePortal.trigger ? housePortal.trigger.exitYaw : 0);
+  const riderPos = toHouse
+    ? { x: hsStart.x, y: hFloorY, z: hsStart.z }
+    : (housePortal.trigger ? { x: housePortal.trigger.apronX, y: (typeof groundHeight === 'number' ? groundHeight : 0), z: housePortal.trigger.apronZ } : { x: (car && car.position ? car.position.x : 0), y: (typeof groundHeight === 'number' ? groundHeight : 0), z: (car && car.position ? car.position.z : 0) });
+
   if (toHouse) {
-    scene.remove(car);
-    houseScene.add(car);
-    worldState = 'house';
-    car.position.set(HOUSE_START.x, HOUSE.floorY, HOUSE_START.z);
-    car.rotation.set(0, HOUSE_START.yaw, 0);
-    car.visible = true;
+    setWorldState('house');
     houseCat.reset();
   } else {
-    houseScene.remove(car);
-    scene.add(car);
-    worldState = 'city';
-    // Back out on the apron in front of the garage, facing away from it, so the
-    // car is already pointed down the street when control returns.
-    const t = housePortal.trigger;
-    if (t) {
-      car.position.set(t.apronX, groundHeight, t.apronZ);
-      car.rotation.set(0, t.exitYaw, 0);
-    }
-    car.visible = true;
+    setWorldState('city');
     // The city keeps per-frame state that would otherwise be left mid-thought.
     resetKnockables();
     resetHydrantSprays();
+  }
+  const target = toHouse ? houseScene : scene;
+
+  // Move whichever car took the ride into the destination scene at the primary
+  // spot, then bring the other car into the same scene beside it (mirroring
+  // placePlayerTwoNearP1's side-by-side placement, but anchored on the rider).
+  const placeIn = (c, pos, yaw) => {
+    if (!c) return;
+    if (c.parent !== target) {
+      if (c.parent) c.parent.remove(c);
+      if (target) target.add(c);
+    }
+    if (c.position && typeof c.position.set === 'function') c.position.set(pos.x, pos.y, pos.z);
+    else if (c.position) { c.position.x = pos.x; c.position.y = pos.y; c.position.z = pos.z; }
+    if (c.rotation && typeof c.rotation.set === 'function') c.rotation.set(0, yaw, 0);
+    else if (c.rotation) c.rotation.y = yaw;
+    c.visible = true;
+    if (c.scale && typeof c.scale.setScalar === 'function') c.scale.setScalar(1);
+    else if (c.scale && typeof c.scale.set === 'function') c.scale.set(1, 1, 1);
+  };
+  placeIn(riderCar, riderPos, riderYaw);
+  if (splitActive && car2 && players[1] && riderIsP2) {
+    // P2 rode in: park P1 beside the rider.
+    const fx = -Math.cos(riderYaw), fz = Math.sin(riderYaw);
+    const rx = -fz, rz = fx;
+    placeIn(car, { x: riderPos.x + rx * 4, y: riderPos.y, z: riderPos.z + rz * 4 }, riderYaw);
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+    wasOnRamp = null;
+    currentRamp = null;
+    playerKnock = null;
+    flatCarState = createFlatCarState(false);
+    const p2 = players[1];
+    p2.velocity.value = 0;
+    p2.steering.value = 0;
+    p2.knock = null;
+    if (p2.jump) { p2.jump.inAir = false; p2.jump.yVelocity = 0; }
+    p2.wasOnRamp2 = false;
+    flatCar2State = createFlatCarState(false);
+    p2.spawn = car2.position.clone();
+  } else if (splitActive && car2 && players[1]) {
+    // P1 rode in: the existing helper brings the twin in beside P1.
+    placePlayerTwoNearP1();
   }
   velocity.value = 0;
   steering.value = 0;
@@ -5958,6 +6607,7 @@ function completeHouseSwap(toHouse) {
   flatCarState = createFlatCarState(false);
   // The garage shrink was cinematic-only - full size in both worlds.
   portalCarScale = 1;
+  if (car2) car2.scale.setScalar(1);
   // Leaving the house means leaving the fire. Whatever soot was on the car is
   // dropped here rather than carried into the city — and the car's own colours
   // are put back, because the materials are shared with the city scenes and a
@@ -5974,7 +6624,6 @@ function completeHouseSwap(toHouse) {
     _fadeOverlay.style.opacity = '0';
     housePortal.swapping = false;
   }, 190);
-  placePlayerTwoNearP1();
 }
 
 // Enter: the car is in the suburban garage box.
@@ -5998,6 +6647,11 @@ function updateHousePortal(delta) {
   if (housePortal.watch.active) {
     const w = housePortal.watch;
     w.t += delta;
+    // The shot follows whichever car actually tripped the box: normally P1, but
+    // in split-screen the twin can roll in on its own.
+    const riderIsP2 = housePortal.rider === 1 && car2;
+    const shotCar = riderIsP2 ? car2 : car;
+    const svel = riderIsP2 ? players[1].velocity : velocity;
     // Keep it rolling into the garage under its own momentum - the driver is
     // not steering, but the car must not stop dead in the doorway. The speed is
     // pinned (not just raised) so the shot lasts exactly the hold computed in
@@ -6005,10 +6659,15 @@ function updateHousePortal(delta) {
     // off in the control block; this guards against speed carried in from the
     // approach, and the inAir reset stops a cat swat from lifting the car out of
     // the shot.
-    velocity.value = w.speed;
-    steering.value = 0;
-    jumpState.inAir = false;
-    jumpState.yVelocity = 0;
+    svel.value = w.speed;
+    if (riderIsP2) players[1].steering.value = 0;
+    else steering.value = 0;
+    if (riderIsP2) {
+      if (players[1].jump) { players[1].jump.inAir = false; players[1].jump.yVelocity = 0; }
+    } else {
+      jumpState.inAir = false;
+      jumpState.yVelocity = 0;
+    }
     // Drive the car down the shot axis. The normal driving block (which owns
     // position integration) is gated OFF while the watch is live, so without
     // this the car would just sit on the spot and shrink. Easing the heading
@@ -6016,19 +6675,22 @@ function updateHousePortal(delta) {
     // crab sideways, and the wheels spin to match so it reads as driving rather
     // than sliding. The camera is pinned to the shot spot, so the car is what
     // moves across frame.
-    const dy = Math.atan2(Math.sin(w.heading - car.rotation.y), Math.cos(w.heading - car.rotation.y));
-    car.rotation.y += dy * Math.min(1, 10 * delta);
+    const dy = Math.atan2(Math.sin(w.heading - shotCar.rotation.y), Math.cos(w.heading - shotCar.rotation.y));
+    shotCar.rotation.y += dy * Math.min(1, 10 * delta);
     const step = w.speed * delta;
-    car.position.x += w.dir.x * step;
-    car.position.z += w.dir.z * step;
-    const wheels = car.userData && car.userData.wheels;
+    shotCar.position.x += w.dir.x * step;
+    shotCar.position.z += w.dir.z * step;
+    const wheels = shotCar.userData && shotCar.userData.wheels;
     if (wheels) for (const wh of wheels) wh.rotation.y += step * 2.6;
     // Rolling INTO the garage, shrink the car as it noses into the dark bay, so
     // it reads as fitting through the doorway and down the shaft. Coming OUT,
-    // it stays full size.
+    // it stays full size. P1's scale runs through the frame loop's
+    // portalCarScale; a twin rider needs a direct write.
     if (w.toHouse) {
       const p = Math.min(1, w.t / Math.max(0.001, w.hold));
-      portalCarScale = 1 - p * (1 - PORTAL_CAR_SHRINK);
+      const shrink = 1 - p * (1 - PORTAL_CAR_SHRINK);
+      if (riderIsP2) car2.scale.setScalar(shrink);
+      else portalCarScale = shrink;
     }
     if (w.t >= w.hold) {
       w.active = false;
@@ -6044,16 +6706,20 @@ function updateHousePortal(delta) {
 
   // The trigger box is only meaningful in the city; the house has its own.
   if (worldState === 'city') {
-    const inGarage = houseGarageInCity()
-      || (splitActive && car2 && houseGarageInCity(car2.position));
-    if (!housePortal.side && inGarage) enterHouseWorld();
-    else if (housePortal.side === 'out' && !inGarage) housePortal.side = null;
+    const p1In = houseGarageInCity();
+    const p2In = splitActive && car2 && houseGarageInCity(car2.position);
+    if (!housePortal.side && (p1In || p2In)) {
+      housePortal.rider = (p2In && !p1In) ? 1 : 0;   // P1 preferred if both inside
+      enterHouseWorld();
+    } else if (housePortal.side === 'out' && !p1In && !p2In) housePortal.side = null;
   } else if (worldState === 'house') {
     const e = HOUSE_EXIT;
-    const inside = (car.position.x > e.x0 && car.position.x < e.x1 && car.position.z > e.z0 && car.position.z < e.z1)
-      || (splitActive && car2 && car2.position.x > e.x0 && car2.position.x < e.x1 && car2.position.z > e.z0 && car2.position.z < e.z1);
-    if (!housePortal.side && inside) exitHouseWorld();
-    else if (housePortal.side === 'in' && !inside) housePortal.side = null;
+    const p1In = car.position.x > e.x0 && car.position.x < e.x1 && car.position.z > e.z0 && car.position.z < e.z1;
+    const p2In = splitActive && car2 && car2.position.x > e.x0 && car2.position.x < e.x1 && car2.position.z > e.z0 && car2.position.z < e.z1;
+    if (!housePortal.side && (p1In || p2In)) {
+      housePortal.rider = (p2In && !p1In) ? 1 : 0;
+      exitHouseWorld();
+    } else if (housePortal.side === 'in' && !p1In && !p2In) housePortal.side = null;
   }
 }
 
@@ -6065,6 +6731,10 @@ function finishMineAscent() {
   const landZ = 34 - mineAscent.launchVh * mineAscent.launchTotal;
   car.position.set(mineAscent.triggerX, groundHeight, landZ);
   car.rotation.set(0, -Math.PI / 2, 0);
+  // This is the far side of the tunnel portal: the twin waited out the ascent
+  // and must land here too — beside P1, in the city scene, at full height
+  // (placePlayerTwoNearP1 clears its pancake state along with the placement).
+  placePlayerTwoNearP1();
   // Extra step: keep the car level as it drives away from the shaft — the
   // body-lean code would otherwise pitch the hood down under acceleration.
   mineAscentSettle = 4.0;
@@ -6245,6 +6915,7 @@ const rocketRide = {
   active: false,
   timer: 0,
   armed: true,                  // must leave the pad before triggering again
+  rider: 0,                     // which player's car is aboard (0 = P1, 1 = the twin)
   yaw: 0,                       // parked heading on the stage
   homeWorld: new THREE.Vector3(),
   pickupWorld: new THREE.Vector3(),
@@ -6265,6 +6936,7 @@ const _rrCam = new THREE.Vector3();
 const _rrLook = new THREE.Vector3();
 const _rrShip = new THREE.Vector3();
 const _rrFocus = new THREE.Vector3();
+const _rrSeatCarQ = new THREE.Quaternion();
 const rrSmooth = (u) => u * u * (3 - 2 * u);
 
 // Measure whatever car the player is driving so the boarding hand can be fitted
@@ -6274,18 +6946,21 @@ const rrSmooth = (u) => u * u * (3 - 2 * u);
 // the giant robot. Done in the car's own frame at the ride's mini scale, so it is
 // independent of the car's position, heading and the frame-loop scale.
 const _rrBox = new THREE.Box3();
-function measureBoardingCar(scale) {
-  const rx = car.rotation.x, ry = car.rotation.y, rz = car.rotation.z;
-  const px = car.position.x, py = car.position.y, pz = car.position.z;
-  const sx = car.scale.x, sy = car.scale.y, sz = car.scale.z;
-  car.rotation.set(0, 0, 0);
-  car.position.set(0, 0, 0);
-  car.scale.setScalar(scale);
-  car.updateWorldMatrix(true, true);
-  _rrBox.setFromObject(car);
-  car.rotation.set(rx, ry, rz);
-  car.position.set(px, py, pz);
-  car.scale.set(sx, sy, sz);
+// `which` is the car being lifted this run — Player 1's `car` in single-player,
+// or the twin's `car2` when Player 2 boarded (see startRocketRide(rider)).
+function measureBoardingCar(scale, which = car) {
+  const obj = which || car;
+  const rx = obj.rotation.x, ry = obj.rotation.y, rz = obj.rotation.z;
+  const px = obj.position.x, py = obj.position.y, pz = obj.position.z;
+  const sx = obj.scale.x, sy = obj.scale.y, sz = obj.scale.z;
+  obj.rotation.set(0, 0, 0);
+  obj.position.set(0, 0, 0);
+  obj.scale.setScalar(scale);
+  obj.updateWorldMatrix(true, true);
+  _rrBox.setFromObject(obj);
+  obj.rotation.set(rx, ry, rz);
+  obj.position.set(px, py, pz);
+  obj.scale.set(sx, sy, sz);
   // `top` = roof height above the car's origin; `half` = its half-width across
   // (the jaws close along the car's own side-to-side axis).
   return {
@@ -6311,12 +6986,29 @@ const _rideFlipY = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 
 // little car already parked, with no big target circle under it.
 const RIDE_INTRO_FADE = 0.65;
 
-function startRocketRide() {
+// `rider` is the player whose car the company actually loads (their car drives
+// onto the pad). Everyone else is a passenger who reappears at the station: in
+// split-screen the OTHER player is parked at the arrival ring on the far end
+// (see startSpaceArrival/finishSpaceArrival) — the same "magically appears at
+// the destination" trick used by every other portal (placePlayerTwoNearP1).
+function startRocketRide(rider = 0) {
   const b = spaceport.boarding;
   rocketRide.active = true;
   rocketRide.timer = 0;
   rocketRide.armed = false;
+  rocketRide.rider = rider === 1 ? 1 : 0;
   b.setActive(true);
+
+  // The rider's car is the one lifted; the non-rider is torn out of the shot
+  // (its physics would wander across the apron otherwise) and reappears at the
+  // station once the ride lands.
+  const rideCar = rideCarFor(rocketRide.rider);
+  if (rideCar && rideCar !== car) {
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+  }
 
   // The hand is re-measured and re-fitted for whatever car is being lifted this
   // run, and the car-vs-hand yaw offset is re-captured fresh.
@@ -6332,11 +7024,24 @@ function startRocketRide() {
   // Park the car on the plain apron, OFF the glowing pad, facing the ship. The
   // ride shrinks it here, where there is no big target circle to give the shrink
   // away, and the big arm lifts it from THIS spot.
+  //
+  // In split-screen the NON-riding car is HIDDEN for the whole ride (the intro
+  // black covers the change): it is a passenger here, and its physics would
+  // otherwise wander across the apron behind the arm. It reappears at the wheel
+  // station on the cut (startSpaceArrival / finishSpaceArrival).
+  const other = otherCarOf(rocketRide.rider);
+  if (other && other !== rideCar) other.visible = false;
+
   velocity.value = 0;
   steering.value = 0;
   jumpState.yVelocity = 0;
   jumpState.inAir = false;
   portalCarScale = 1;
+  if (car2) car2.scale.setScalar(1);
+  // Boarding is the start of a portal: nobody rides the ship as a pancake, so
+  // the squash is dropped here as well as on arrival (setWorldState).
+  flatCarState = createFlatCarState(false);
+  flatCar2State = createFlatCarState(false);
   const stage = spaceport.stage;
   rocketRide.pickupWorld.set(stage.x, 0.62, stage.z);
 
@@ -6345,10 +7050,26 @@ function startRocketRide() {
   rocketRide.homeWorld.y += 6;
   rocketRide.yaw = Math.atan2(rocketRide.homeWorld.z - stage.z, -(rocketRide.homeWorld.x - stage.x));
 
-  car.position.copy(rocketRide.pickupWorld);
-  car.rotation.set(0, rocketRide.yaw, 0);
+  rideCar.visible = true;
+  rideCar.position.copy(rocketRide.pickupWorld);
+  rideCar.rotation.set(0, rocketRide.yaw, 0);
+  rideCar.scale.setScalar(1);
   _fadeOverlay.style.transition = 'none';
   _fadeOverlay.style.opacity = '1';   // hidden: the stage move + shrink happen behind black
+}
+
+// Which car is being lifted this run.
+function rideCarFor(rider) {
+  return (rider === 1 && car2) ? car2 : car;
+}
+// The other car, the one that waits off-stage / reappears at the station.
+function otherCarOf(rider) {
+  return (rider === 1) ? car : (car2 || null);
+}
+// The player record whose car is being lifted.
+function riderPlayer() {
+  const r = rocketRide.rider || 0;
+  return players[r] || players[0] || null;
 }
 
 // Advance the ride by one frame. Pure branch-and-set, safe to run before the
@@ -6361,13 +7082,14 @@ function updateRocketRide(delta) {
     _fadeOverlay.style.opacity = String(Math.max(0, 1 - rocketRide.timer / RIDE_INTRO_FADE));
   }
   const st = rideStateAt(rocketRide.timer);
+  const rideCar = rideCarFor(rocketRide.rider);
 
   // Fit the hand to the car the moment the ride starts: the palm stops on the
   // roof (so tall rides like the monster truck are not gripped through the body)
   // and the jaws close just outside the flanks.
   if (!rocketRide.measured) {
-    car.scale.setScalar(st.carScale);
-    const m = measureBoardingCar(st.carScale);
+    rideCar.scale.setScalar(st.carScale);
+    const m = measureBoardingCar(st.carScale, rideCar);
     rocketRide.top = m.top;
     rocketRide.half = m.half;
     rocketRide.hold = m.top + 0.12;    // a hair of clearance so the palm rests on it
@@ -6425,17 +7147,47 @@ function updateRocketRide(delta) {
   const held = st.phase === 'carry' || st.phase === 'insert' ||
     (st.phase === 'grab' && st.local > 0.9);
   if (st.attached) {
-    b.seatWorld(car.position);
-    b.shipQuat(car.quaternion);
-    car.quaternion.multiply(_rideFlipY);   // hood faces the nose, not the tail
+    b.seatWorld(rideCar.position);
+    b.shipQuat(_rrSeatCarQ);
+    _rrSeatCarQ.multiply(_rideFlipY);   // hood faces the nose, not the tail
+    rideCar.quaternion.copy(_rrSeatCarQ);
   } else if (held) {
-    car.position.set(claw.x, claw.y - hold, claw.z);
-    car.rotation.set(0, heldYaw, 0);
+    rideCar.position.set(claw.x, claw.y - hold, claw.z);
+    rideCar.rotation.set(0, heldYaw, 0);
+    if (st.phase === 'insert') {
+      // The insert is also the turn: the claw rolls the hood round to face the
+      // nose as it lowers the car in, so it is already forward before release.
+      b.shipQuat(_rrSeatCarQ);
+      _rrSeatCarQ.multiply(_rideFlipY);
+      rideCar.quaternion.slerp(_rrSeatCarQ, rrSmooth(st.local));
+    }
   } else {
-    car.position.copy(pad);
-    car.rotation.set(0, rocketRide.yaw, 0);
+    rideCar.position.copy(pad);
+    rideCar.rotation.set(0, rocketRide.yaw, 0);
   }
-  portalCarScale = st.carScale;
+  // The frame loop applies `portalCarScale` to Player 1 only, so the twin's
+  // scale is written directly when IT is the one aboard. Park the OTHER car
+  // out of shot so it neither crosses the lens nor fights the arm.
+  if (rideCar === car) {
+    portalCarScale = st.carScale;
+    if (car2) car2.scale.setScalar(0.0001);
+  } else {
+    rideCar.scale.setScalar(st.carScale);
+    portalCarScale = 0.0001;
+  }
+
+  // The two yard handlers flank the car while it is loaded, then walk to the
+  // pad and face the hull while the tugs push it upright and onto the pad.
+  const handlerLoad = st.phase === 'establish' ? st.local
+    : (st.phase === 'grab' || st.phase === 'carry') ? 1
+      : st.phase === 'insert' ? 1 - st.local : 0;
+  const crewRocket = st.phase === 'erect' || st.phase === 'taxi' || st.phase === 'ignite';
+  if (crewRocket) {
+    _rrFocus.set(spaceport.pad.x, 0, spaceport.pad.z);
+    b.poseHandlers(_rrFocus, 1);
+  } else {
+    b.poseHandlers(rideCar.position, handlerLoad);
+  }
 
   // Fade to black over the launch tail, then hand control back.
   if (st.phase === 'fade') {
@@ -6447,7 +7199,8 @@ function updateRocketRide(delta) {
 
 function finishRocketRide() {
   // The launch was real: hand off to the arrival at the wheel station instead
-  // of putting the car back on the pad.
+  // of putting the car back on the pad. rocketRide.rider (whoever boarded)
+  // stays set through the arrival so it can park the right car at the far end.
   spaceport.boarding.setActive(false);
   rocketRide.active = false;
   rocketRide.timer = 0;
@@ -6478,59 +7231,72 @@ const _spaceRoofH = new THREE.Vector3();     // hand above the roof opening
 const _spaceSeatH = new THREE.Vector3();     // hand above the seat (in the hold)
 const _spaceHand = new THREE.Vector3();      // hand target this frame
 const _spaceQ2 = new THREE.Quaternion();     // the berthed hangar's world rotation
+const _spaceSeatCarQ = new THREE.Quaternion(); // car orientation seated in the hold
 const _spaceTmp = new THREE.Vector3();       // scratch for the stowed-perch offset
 const _spaceUp = new THREE.Vector3();        // the hangar's "up" in world space
 const _spaceSmooth = (u) => u * u * (3 - 2 * u);
 const spaceClamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 // The arrival rocket's flight: it sweeps in from deep space on a quadratic
-// Bezier that ends lined up RADIALLY with the dock, so the nose points straight
-// into the hangar's circular airlock at theta = 0. The path deliberately SWINGS
-// PAST the fixed exterior camera (SPACE_ARRIVAL_CAM) near the start so the whole
-// trip reads from one still lens: rocket off in the distance, small car visible
-// through the glass as it clips by, then away into the dock. It IS the launch
-// rocket (the spaceport's own ship model, reused verbatim), and the car rides
-// the hold at the same miniature scale as the launch - so the whole trip is one
-// thread: the ride fades out a moment after the rocket clears the city, the
-// arrival fades back in (the screen is NEVER held black across the flight) and
-// plays the approach live - doors slide open, the rocket (car visible through
+// Bezier that ends lined up AXIALLY with the eye-port at the STATION CENTRE —
+// coming down the wheel's own axis (+Z), the way a rider's eye looks out from
+// the middle of a ferris wheel, so the nose slides straight into the iris as the
+// lids open like an eye for it and shut around it once it is home. The path
+// deliberately SWINGS PAST the fixed exterior camera (SPACE_ARRIVAL_CAM) midway
+// so the whole trip reads from one still lens: rocket off in the distance, small
+// car visible through the glass as it clips by, then away into the centre of the
+// wheel. It IS the
+// launch rocket (the spaceport's own ship model, reused verbatim), and the car
+// rides the hold at the same miniature scale as the launch - so the whole trip
+// is one thread: the ride fades out a moment after the rocket clears the city,
+// the arrival fades back in (the screen is NEVER held black across the flight)
+// and plays the approach live - the eye opens, the rocket (car visible through
 // the glass) crosses the void and swings past the lens before the fade hands
 // the wheel back.
 //
-// P2 = RING_R + 8 puts the PARKED ship fully inside the hangar (nose tip 4
-// ahead of the origin, so it stops at x = 44+, the mouth plane is x = 59):
-// the car boards it there, and the departure backs it out again.
-const SPACE_SHIP_P0 = { x: 240, y: 55, z: 105 };   // deep space, far +z
-const SPACE_SHIP_P1 = { x: 175, y: 22, z: 13 };      // swing-in control
-const SPACE_SHIP_P2 = { x: RING_R + 8, y: 0, z: 13 }; // parked nose-in at the dock
-function spaceShipPoint(u, out) {
+// P2 is the APPROACH hold: the ship lines up NOSE-TO-THE-CORE on the axle but
+// still sits outside the eye. A second, short insert beat then slides it the
+// rest of the way in along -Z (through the open lids and the new throat), so
+// the hold ends up INSIDE the station instead of leaving the hull parked
+// outside a painted-on door. The DEPARTURE does not start from there — behind
+// the board fade the ship waits out on the ring at the dock spur
+// (SPACE_SHIP_P2D), by the arm that loads it, and flies the same curve
+// backwards from there.
+const SPACE_SHIP_P0 = { x: 150, y: 70, z: 290 };   // deep space, far out along the eye's axis
+const SPACE_SHIP_P1 = { x: 6, y: 3, z: 175 };      // swing-in control (keeps the run out on +Z)
+const SPACE_SHIP_P2 = { x: 0, y: 0, z: 27.0 };     // lined up outside the eye (the +Z axle)
+// How far the insert pushes the ship in from the approach hold. The final park
+// is z ~16.3: nose deep in the throat, tail at ~19.8 — behind the lid slot
+// (z 20.98..21.48) so the doors shut cleanly in front of it.
+const SPACE_ARRIVAL_INSERT_DEPTH = 10.7;
+const SPACE_SHIP_P2D = { x: RING_R + 8, y: 0, z: 13 }; // departure park, out on the ring
+function spaceShipPoint(u, out, p2 = SPACE_SHIP_P2) {
   const m = 1 - u;
   const a = m * m, b = 2 * m * u, c = u * u;
-  out.x = a * SPACE_SHIP_P0.x + b * SPACE_SHIP_P1.x + c * SPACE_SHIP_P2.x;
-  out.y = a * SPACE_SHIP_P0.y + b * SPACE_SHIP_P1.y + c * SPACE_SHIP_P2.y;
-  out.z = a * SPACE_SHIP_P0.z + b * SPACE_SHIP_P1.z + c * SPACE_SHIP_P2.z;
+  out.x = a * SPACE_SHIP_P0.x + b * SPACE_SHIP_P1.x + c * p2.x;
+  out.y = a * SPACE_SHIP_P0.y + b * SPACE_SHIP_P1.y + c * p2.y;
+  out.z = a * SPACE_SHIP_P0.z + b * SPACE_SHIP_P1.z + c * p2.z;
   return out;
 }
-function spaceShipVel(u, out) {
+function spaceShipVel(u, out, p2 = SPACE_SHIP_P2) {
   const m = 1 - u;
-  out.x = 2 * m * (SPACE_SHIP_P1.x - SPACE_SHIP_P0.x) + 2 * u * (SPACE_SHIP_P2.x - SPACE_SHIP_P1.x);
-  out.y = 2 * m * (SPACE_SHIP_P1.y - SPACE_SHIP_P0.y) + 2 * u * (SPACE_SHIP_P2.y - SPACE_SHIP_P1.y);
-  out.z = 2 * m * (SPACE_SHIP_P1.z - SPACE_SHIP_P0.z) + 2 * u * (SPACE_SHIP_P2.z - SPACE_SHIP_P1.z);
+  out.x = 2 * m * (SPACE_SHIP_P1.x - SPACE_SHIP_P0.x) + 2 * u * (p2.x - SPACE_SHIP_P1.x);
+  out.y = 2 * m * (SPACE_SHIP_P1.y - SPACE_SHIP_P0.y) + 2 * u * (p2.y - SPACE_SHIP_P1.y);
+  out.z = 2 * m * (SPACE_SHIP_P1.z - SPACE_SHIP_P0.z) + 2 * u * (p2.z - SPACE_SHIP_P1.z);
   return out;
 }
-function spaceShipYaw(u) {
+function spaceShipYaw(u, p2 = SPACE_SHIP_P2) {
   const m = 1 - u;
-  const dx = 2 * m * (SPACE_SHIP_P1.x - SPACE_SHIP_P0.x) + 2 * u * (SPACE_SHIP_P2.x - SPACE_SHIP_P1.x);
-  const dz = 2 * m * (SPACE_SHIP_P1.z - SPACE_SHIP_P0.z) + 2 * u * (SPACE_SHIP_P2.z - SPACE_SHIP_P1.z);
+  const dx = 2 * m * (SPACE_SHIP_P1.x - SPACE_SHIP_P0.x) + 2 * u * (p2.x - SPACE_SHIP_P1.x);
+  const dz = 2 * m * (SPACE_SHIP_P1.z - SPACE_SHIP_P0.z) + 2 * u * (p2.z - SPACE_SHIP_P1.z);
   return Math.atan2(-dz, dx);
 }
-function spaceShipYawDep(u) {
-  // Heading for the DEPARTURE. It flies the arrival path backwards (P2 -> P0),
-  // so the ship's progress u samples the arrival tangent at (1 - u); the nose
-  // leads along that reversed velocity so the rocket exits the mouth nose-first
-  // and then climbs away. (Equal to spaceShipYaw(1-u) with the velocity from the
-  // matching point on the path.)
-  spaceShipVel(1 - u, _spaceVel);
+function spaceShipYawDep(u, p2 = SPACE_SHIP_P2D) {
+  // Heading for the DEPARTURE. It flies the chosen park curve backwards
+  // (p2 -> P0), so the ship's progress u samples that curve's tangent at
+  // (1 - u); the nose leads along that reversed velocity so the rocket climbs
+  // away nose-first out over the void.
+  spaceShipVel(1 - u, _spaceVel, p2);
   return Math.atan2(_spaceVel.z, -_spaceVel.x);
 }
 function lerpAngle(a, b, t) {
@@ -6541,14 +7307,16 @@ function lerpAngle(a, b, t) {
   return a + d * t;
 }
 // The fixed exterior lens used by BOTH the arrival and the departure. It hangs
-// out in deep space, about mid-way along the rocket's inbound run and lifted a
-// little above the flight path, and it NEVER MOVES — the whole approach plays
+// close above the flight path, about mid-way along the rocket's inbound run and
+// lifted clear of the station, and it NEVER MOVES — the whole approach plays
 // from one still tripod that only turns to keep the rocket in frame. From here
 // the ship does not come straight at the camera: it begins as a far speck, then
 // sweeps RIGHT PAST the lens (roof glass toward us, the miniature car plain to
-// see in the hold), and only then carries on down into the dock while the gaze
-// swings round and the whole wheel station comes into view behind it.
-const SPACE_ARRIVAL_CAM = { x: 180, y: 90, z: 50 };
+// see in the hold), and only then carries on down into the eye while the gaze
+// swings round and the whole wheel station comes into view behind it. It sits
+// OUT on the +Z side — well past the wheel's end cap — so the sight line to the
+// eye-port (also +Z, on the core's axle) never crosses the rim floor or hull.
+const SPACE_ARRIVAL_CAM = { x: 62, y: 42, z: 158 };
 // The star field / sun / planets live 800-1300 units out (see buildSpaceSky),
 // which is well beyond the normal gfx.far (300-500). While the wheel station is
 // up, widen the far plane so the void is not clipped; every other world keeps
@@ -6562,22 +7330,25 @@ const _spaceVel = new THREE.Vector3();
 const _spaceLook = new THREE.Vector3();
 
 // The approach: fade up, a dramatic flyby past the lens (car plain to see in the
-// hold), then a slide into the open bay — and finally a lingering beat held on
-// the whole station as it turns.
+// hold), then line up outside the eye, hold for a beat, slide the rest of the
+// way in, and finally linger on the whole station as it turns.
 const SPACE_ARRIVAL_FADE_IN = 0.35;            // lift the launch's fade-to-black
 const SPACE_ARRIVAL_TRANSIT = 0.15;            // the ship starts to move
 const SPACE_ARRIVAL_TRANSIT_DUR = 6.0;         // the flyby run (long, so the car reads clearly in the glass)
 const SPACE_ARRIVAL_DOORS = SPACE_ARRIVAL_TRANSIT + SPACE_ARRIVAL_TRANSIT_DUR * 0.8;   // doors open as it nears the dock
 const SPACE_ARRIVAL_ENTER = SPACE_ARRIVAL_TRANSIT + SPACE_ARRIVAL_TRANSIT_DUR * 0.92;   // fully open before it slips in
-const SPACE_ARRIVAL_SETTLE = SPACE_ARRIVAL_TRANSIT + SPACE_ARRIVAL_TRANSIT_DUR; // docked
-// The bay doors are automatic: they start to shut the instant the rocket is all
-// the way in, and we cut away from the shot once they are 75% closed.
-const SPACE_ARRIVAL_CLOSE = SPACE_ARRIVAL_SETTLE;      // auto-shut begins the moment it's fully in
+const SPACE_ARRIVAL_SETTLE = SPACE_ARRIVAL_TRANSIT + SPACE_ARRIVAL_TRANSIT_DUR; // lined up outside the eye
+// The ship hangs on the axle for a beat so the open eye reads, then pushes the
+// last stretch straight in. Only once it is fully inside do the lids shut.
+const SPACE_ARRIVAL_INSERT_HOLD = 0.5;
+const SPACE_ARRIVAL_INSERT_START = SPACE_ARRIVAL_SETTLE + SPACE_ARRIVAL_INSERT_HOLD;
+const SPACE_ARRIVAL_INSERT_DUR = 2.4;
+const SPACE_ARRIVAL_CLOSE = SPACE_ARRIVAL_INSERT_START + SPACE_ARRIVAL_INSERT_DUR; // fully in, auto-shut begins
 const SPACE_ARRIVAL_CLOSE_DUR = 0.9;                   // quick automatic shutter
 const SPACE_ARRIVAL_CUT_FRACTION = 0.75;               // leave the shot at 75% shut
 const SPACE_ARRIVAL_FADE_OUT = 0.4;                    // fade that ends the scene
 const SPACE_ARRIVAL_LINGER = Math.max(0, SPACE_ARRIVAL_CUT_FRACTION * SPACE_ARRIVAL_CLOSE_DUR - SPACE_ARRIVAL_FADE_OUT);
-const SPACE_ARRIVAL_END = SPACE_ARRIVAL_SETTLE + SPACE_ARRIVAL_LINGER + SPACE_ARRIVAL_FADE_OUT;   // = 75% shut
+const SPACE_ARRIVAL_END = SPACE_ARRIVAL_CLOSE + SPACE_ARRIVAL_LINGER + SPACE_ARRIVAL_FADE_OUT;   // = 75% shut
 
 // The ship sweeps the whole path at ONE constant speed. `s` is the fraction of
 // the transit window elapsed and maps straight onto the Bezier parameter u, so
@@ -6588,34 +7359,39 @@ function spaceArrivalU(s) {
   return spaceClamp(s, 0, 1);
 }
 
-// ===== Departure: drive into the dock, ride the rocket home =====
-// Boarding is offered when the car has driven off the main road onto the dock
-// spur and is sitting at the berth. The rocket then backs out of the bay and
-// flies the arrival path in reverse, watched from the same still lens, before a
-// fade hands the car back to the city pad.
+// ===== Departure: load at the dock, then burst out of the eye =====
+// The car is loaded into the rocket at the ring berth (the arm shot, seen), then
+// the ship is cut to the pod bay behind a short black beat. The iris opens
+// WIDER than it does on arrival, the rocket bursts out nose-first through the
+// eye, and a quick climb carries it past the still exterior lens before the
+// fade hands the car back to the city pad. This keeps the load visible but cuts
+// the old 20s ring-park climb down to a short eye launch.
 const SPACE_DEPART_FADE_IN = 0.9;              // reveal the berthed ship after the board-fade
-// The big hangar loading arm lifts the car off the berth and tucks it into the
-// berthed rocket's open hold - seen, not hidden behind black - before the ship
-// seals up and flies home. `SPACE_DEPART_TRANSIT` is pushed past this so the ship
-// stays parked (u=0) for the whole load.
 const SPACE_DEPART_LOAD_GRAB = 1.2;
 const SPACE_DEPART_LOAD_CARRY = 2.2;
 const SPACE_DEPART_LOAD_INSERT = 1.5;
 const SPACE_DEPART_LOAD_RETRACT = 1.0;
 const SPACE_DEPART_LOAD = SPACE_DEPART_LOAD_GRAB + SPACE_DEPART_LOAD_CARRY + SPACE_DEPART_LOAD_INSERT + SPACE_DEPART_LOAD_RETRACT;
-const SPACE_DEPART_TRANSIT = SPACE_DEPART_LOAD + 0.5;   // a beat once the arm has stowed
-const SPACE_DEPART_TRANSIT_DUR = 20.0;         // the slow climb away
-const SPACE_DEPART_DOORS = SPACE_DEPART_TRANSIT + 1.2;   // bay shut once the ship has cleared the mouth
-const SPACE_DEPART_DOORS_DUR = 2.0;
-const SPACE_DEPART_FADE = SPACE_DEPART_TRANSIT + SPACE_DEPART_TRANSIT_DUR * 0.74;   // begin the fade to black
-const SPACE_DEPART_END = SPACE_DEPART_TRANSIT + SPACE_DEPART_TRANSIT_DUR + 1.0;
+const SPACE_DEPART_TRANSIT = SPACE_DEPART_LOAD + 0.4;   // arm stowed; the cut starts
+const SPACE_DEPART_BLACK = 0.3;                          // quick black beat to the eye
+const SPACE_DEPART_DOOR = SPACE_DEPART_TRANSIT + SPACE_DEPART_BLACK;  // reveal on the eye
+const SPACE_DEPART_REVEAL = 0.7;                         // fade back up
+const SPACE_DEPART_DOOR_DUR = 1.4;                       // iris draws wide
+const SPACE_DEPART_WIDE = 1.15;                          // wider than the arrival's full open
+const SPACE_DEPART_LAUNCH = SPACE_DEPART_DOOR + SPACE_DEPART_REVEAL + SPACE_DEPART_DOOR_DUR * 0.7 + 0.5;
+const SPACE_DEPART_FLY_DUR = 8.0;                        // the short climb away
+const SPACE_DEPART_FADE = SPACE_DEPART_LAUNCH + SPACE_DEPART_FLY_DUR * 0.8;
+const SPACE_DEPART_END = SPACE_DEPART_LAUNCH + SPACE_DEPART_FLY_DUR + 0.8;
+// The rocket waits hidden inside the core, nose just behind the iris, then
+// slides out along +Z (the eye's axis) as the lids draw back.
+const SPACE_DEPART_EYE_PARK = { x: 0, y: 0, z: 16.5 };
 
 let spaceDrive = createRingState();
 const spaceArrival = { active: false, timer: 0 };
 const spaceDeparture = {
   active: false, timer: 0,
   measured: false, half: null, top: null, hold: 1.25,
-  yawOffset: null, heading: 0,
+  yawOffset: null, heading: 0, atEye: false,
 };
 // Extra radial lift (inward) applied to the car this frame, so pneumatic lift
 // plates and the magnetic tugs can pop it off the floor. Decays back to zero.
@@ -6623,10 +7399,24 @@ let spaceLift = 0;
 let spaceLiftTarget = 0;
 let spaceStun = 0;               // seconds of dead steering after an arc jolt
 let spaceVentArmed = true;       // re-arm the vent only after leaving its grate
+let spaceVentArmed2 = true;      // ...and the same gate for Player 2's own bay visit
 // Depressurization-vent cinematic: the car is blasted off the rim into the void
 // and the jib crane rescues it. Only the BLAST is shown twice, from two angles —
 // the drive, the wind-up and the rescue are never repeated.
-const spaceVent = { active: false, timer: 0, s: 0, w: 0, s2: 0, w2: 0, heading: 0, out: 0, grabbed: false, roll: 0, rollV: 0, half: 1.35, top: 2, act: 0 };
+// `subject` is which player the cut owns (0 = P1, 1 = the split twin). The SAME
+// cinematic serves either player: whoever drives into the bay gets flung out and
+// reeled home, while the other player stays on the ship and watches from their
+// own half of the split view.
+const spaceVent = { active: false, subject: 0, timer: 0, s: 0, w: 0, s2: 0, w2: 0, heading: 0, out: 0, grabbed: false, roll: 0, rollV: 0, half: 1.35, top: 2, act: 0, frozen: false };
+// The ring/car the vent cut is currently owning. P1 rides `spaceDrive`/`car`; the
+// split twin rides `players[1].ring`/`car2`. Both are module-level, so this stays
+// valid across world changes (the cut is only ever live inside the space station).
+function spaceVentRing(subject) {
+  return subject === 1 ? (players[1] ? players[1].ring : null) : spaceDrive;
+}
+function spaceVentCar(subject) {
+  return subject === 1 ? car2 : car;
+}
 // Act 0 — the interior lens: drive in, wind the chamber up, then cut away
 // mid-blast while the car is still only a few car lengths past the port.
 const SPACE_VENT_DRIVE = 1.1;    // the car drives into the chamber and faces the port
@@ -6648,14 +7438,51 @@ const SPACE_VENT_DIST = 30;      // how far out the car is fired (world units, +
 const SPACE_VENT_OVERSHOOT = 6;  // how far past the car the cable is first cast before it is pulled back
 const SPACE_VENT_CHAMBER_Y = 2.7;  // the port's height: the car is held at the chamber's mid, not its floor
 // The exterior vantage for act 1: a cinematic angle OFF the blast line and close
-// in over the shoulder of the station, high on the +Y side so the lens looks DOWN
-// onto that corner of the wheel instead of up at it from below. The car sails
-// along +w straight toward the lens while the far side of the station falls out
-// of frame, so only the near quarter is ever seen.
-const SPACE_VENT_EXT_CAM = { x: 52, y: 16, z: 68 };
-// Boarding dwell: the car must sit still at the berth for a beat before the
-// rocket takes it, so simply clipping the corner does not launch you home.
-const spaceDock = { dwell: 0 };
+// in over the shoulder of the station, dropping BELOW the wheel so the lens looks
+// UP and across that corner instead of down onto it. There is only ONE camera
+// outside the station across the whole escape, and it never cuts to a second —
+// its POSITION is recomputed every frame as this fixed OFFSET from the moving
+// look anchor the cine already tracks (0.35 * the car, plus any pan), so the
+// tuned framing (cam 57.6,-8.9,63.6 / look 25.3,-24.4,16.1 ? r 59.5, phi 1.31)
+// is held while the car sails out along +w toward the lens and is reeled back.
+const SPACE_VENT_EXT_OFF = new THREE.Vector3(32.3, 15.5, 47.5);
+// The look anchor's own bias: the tune HUD's 2/4/6/8 pan is baked in here when
+// "Use this camera" is pressed, so replay aims at the same spot of the frame.
+// At the tuned 'cast' freeze the car sits at world ?(38.0, -12.5, 49.0), so the
+// live HUD look of (25.3, -24.4, 16.1) minus 0.35 * car leaves this bias. Without
+// it replay framed off the un-panned anchor (0.35 * car) and missed the shot.
+const SPACE_VENT_EXT_LOOK_OFF = new THREE.Vector3(12.0, -20.0, -1.05);
+// Boarding: pull into an open flank of the road-centre lift and the deck climbs
+// with the car. `entered` latches on the flank hit; `boarding` freezes the drive
+// while the lift rises; `rise` is 0..1.
+const spaceDock = { dwell: 0, rise: 0, boarding: false, entered: false };
+// The road lift: how long the platform takes to climb a full car height, and how
+// high it lifts the car (level with the rocket's open hold).
+const SPACE_DOCK_RISE_TIME = 1.6;
+const SPACE_DOCK_LIFT = 2.6;
+// Object-explorer camera tuning for the rescue grab: "View in context" on the
+// Rescue Crane freezes the REAL vent timeline at a chosen frame (default: the
+// claw's full cast) and hands the camera over with a live coordinate HUD, so
+// the act-1 exterior angle (SPACE_VENT_EXT_OFF) can be framed against that
+// exact moment. az0 is the saved shot's azimuth — the orbit knobs' yaw base.
+const ventCamTune = { active: false, az0: 0, frame: 'cast', savedMinPhi: 0.6, savedMaxPhi: 1.45 };
+// The freeze instants, act-local: `cast` is the seam at the end of the cast-out
+// (reach = DIST + OVERSHOOT, rope at full wave, jaws open, claw its furthest);
+// `oncar` is the claw eased back onto the car with the jaws still open a beat
+// before they snap; `grip` is mid-reel with the line taut around the flanks.
+const VENT_TUNE_FRAMES = {
+  cast: () => SPACE_VENT_ACT + SPACE_VENT_FLY_B + SPACE_VENT_FLOAT + SPACE_VENT_GRAB * 0.55,
+  oncar: () => SPACE_VENT_ACT + SPACE_VENT_FLY_B + SPACE_VENT_FLOAT + SPACE_VENT_GRAB * 0.8,
+  grip: () => SPACE_VENT_ACT + SPACE_VENT_FLY_B + SPACE_VENT_FLOAT + SPACE_VENT_GRAB + SPACE_VENT_REEL * 0.3,
+};
+const _ventLook = new THREE.Vector3();   // the animation's own look target (0.35 * car)
+// Screen-space pan of that look anchor while the vent-cam tune is up: number
+// keys 2/4/6/8 slide it across THIS frame's view plane, so the orbit focal
+// point can be re-aimed at any part of the frozen shot.
+const _ventLookOff = new THREE.Vector3();
+const _ventFwd = new THREE.Vector3();
+const _ventRight = new THREE.Vector3();
+const _ventUp = new THREE.Vector3();
 
 // Turn a ring state into the car's world transform.
 function applyRingPose(st) {
@@ -6671,20 +7498,47 @@ function applyRingPose(st) {
 }
 
 function startSpaceArrival() {
-  if (car.parent) car.parent.remove(car);
-  spaceScene.add(car);
-  worldState = 'space';
+  // Whoever boarded rides the hold: P1's `car`, or the twin's `car2` when
+  // Player 2 took the launch. The NON-rider is a passenger who reappears at the
+  // station "by magic" — the same trick every other portal uses
+  // (placePlayerTwoNearP1). It is moved out of the city scene now and parked at
+  // the arrival ring in finishSpaceArrival, so the swap happens behind the
+  // launch's fade-to-black and is never seen.
+  //
+  // NOTE the ring drive itself is Player 1's: after the cut P1 always drives
+  // `car` on `spaceDrive` and the twin drives `car2` on players[1].ring, no
+  // matter who rode the rocket. The rider only decides whose car is aboard
+  // during the flight.
+  const rider = rocketRide.rider || 0;
+  const rideCar = rideCarFor(rider);
+  const other = otherCarOf(rider);
+
+  if (rideCar.parent) rideCar.parent.remove(rideCar);
+  spaceScene.add(rideCar);
+  setWorldState('space');
   velocity.value = 0;
   steering.value = 0;
   jumpState.inAir = false;
   jumpState.yVelocity = 0;
   playerKnock = null;
+
+  // Tear the passenger out of the city scene so it cannot be drawn on the
+  // apron; it is rebuilt on the rim in finishSpaceArrival.
+  if (other && other !== rideCar && other.parent) other.parent.remove(other);
+
   // The car rides the hold at the SAME miniature scale as the launch ride, so
   // the ship you flew off in is the ship you land in - car and all. It is only
   // restored to full size on the cut to the wheel drive (finishSpaceArrival).
-  portalCarScale = RIDE_CAR_SCALE;
-  car.visible = true;
-  car.scale.setScalar(RIDE_CAR_SCALE);
+  // The frame loop scales P1 only, so a twin rider needs its own scale write.
+  if (rideCar === car) {
+    portalCarScale = RIDE_CAR_SCALE;
+    car.visible = true;
+    car.scale.setScalar(RIDE_CAR_SCALE);
+  } else {
+    portalCarScale = 0.0001;
+    rideCar.visible = true;
+    rideCar.scale.setScalar(RIDE_CAR_SCALE);
+  }
 
   const ship = spaceWorld.arrivalShip;
   ship.visible = true;
@@ -6694,10 +7548,45 @@ function startSpaceArrival() {
   ship.rotation.set(0, spaceShipYaw(0), -0.2);
   spaceWorld.setDoors(0);
 
+  // The little blue car can't ride the flyby: if a menu jump left it parked in
+  // another world, send it home to the city scene before the wheel drive
+  // re-summons it on the rim (see finishSpaceArrival).
+  if (bumperInRamp) {
+    rampScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInRamp = false;
+    reparentChaseTrainConsist();
+  }
+  if (bumperInCorn) {
+    cornfieldScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInCorn = false;
+  }
+  bumperInSpace = false;
+  bumperSpaceRing = null;
+  bumperSpaceTimer = BUMPER_SPACE_DELAY;
+
   spaceArrival.active = true;
   spaceArrival.timer = 0;
   _fadeOverlay.style.transition = 'none';
   _fadeOverlay.style.opacity = '1';   // we arrive from the launch's fade-to-black
+}
+
+// Where the split twin materialises on the rim: one lane over from P1, unless
+// that lane lands on the road-centre lift (the deck belongs to P1's boarding
+// sequence), in which case it appears just behind the lift instead.
+function spaceTwinSpawn() {
+  const spawn = spaceWorld.spawn;
+  const lift = spaceWorld.roadLift;
+  let s = spawn.s;
+  let w = Math.max(-RING_LANE, Math.min(RING_LANE, spawn.w - 5));
+  if (lift
+      && Math.abs(spaceWrapDelta(s - lift.s)) <= lift.halfS + 2.2
+      && Math.abs(w - lift.w) <= lift.halfW + 1.2) {
+    s = ringWrapS(lift.s - (lift.halfS + 4.0));
+    w = Math.max(-RING_LANE, Math.min(RING_LANE, spawn.w - 2));
+  }
+  return { s, w };
 }
 
 function finishSpaceArrival() {
@@ -6706,11 +7595,55 @@ function finishSpaceArrival() {
   spaceWorld.setDoors(0);
   camera.fov = 60;                  // drop the flyby telephoto back to base
   camera.updateProjectionMatrix();
+  // Player 1 always takes the MAIN ring state, and the twin a lane over — the
+  // same invariant as any normal visit, regardless of who rode the rocket. The
+  // rider's car is the one currently seated in the hold; place BOTH cars on the
+  // rim here so "the other one magically appears at the station" holds.
   spaceDrive = createRingState(spaceWorld.spawn.s, spaceWorld.spawn.w, spaceWorld.spawn.heading);
   portalCarScale = 1;
   velocity.value = 0;
   steering.value = 0;
+
+  // Put P1's own car on the main ring lane (it may have been the passenger and
+  // thus sat out the flight).
+  if (car.parent !== spaceScene) {
+    if (car.parent) car.parent.remove(car);
+    spaceScene.add(car);
+  }
+  car.visible = true;   // may have been the hidden passenger during the ride
+  car.scale.setScalar(1);
   applyRingPose(spaceDrive);
+
+  // The twin: rebuilt one lane over so the two cars don't overlap on the rim
+  // (cleared to null on a world change, re-created here so a split enabled
+  // mid-visit still works).
+  if (car2 && players[1]) {
+    const tw = spaceTwinSpawn();
+    players[1].ring = createRingState(tw.s, tw.w, spaceDrive.heading);
+    const pr2 = ringPose(players[1].ring.s, players[1].ring.w, players[1].ring.heading, SPACE_CAR_LIFT);
+    if (car2.parent !== spaceScene) {
+      if (car2.parent) car2.parent.remove(car2);
+      spaceScene.add(car2);
+    }
+    car2.position.set(pr2.px, pr2.py, pr2.pz);
+    _spaceBasis.makeBasis(
+      _spaceX.set(pr2.xx, pr2.xy, pr2.xz),
+      _spaceY.set(pr2.yx, pr2.yy, pr2.yz),
+      _spaceZ.set(pr2.zx, pr2.zy, pr2.zz),
+    );
+    car2.quaternion.setFromRotationMatrix(_spaceBasis);
+    car2.visible = true;   // may have been the hidden passenger during the ride
+    car2.scale.setScalar(1);
+    players[1].velocity.value = 0;
+    players[1].steering.value = 0;
+  }
+  // The boarding lift starts the visit parked down at floor level.
+  spaceDock.rise = 0;
+  spaceDock.dwell = 0;
+  spaceDock.boarding = false;
+  spaceDock.entered = false;
+  if (spaceWorld.roadLift) spaceWorld.roadLift.deck.position.y = 0;
+  rocketRide.rider = 0;   // the ride is over — next launch starts fresh
   _fadeOverlay.style.transition = 'opacity 1.0s';
   _fadeOverlay.style.opacity = '0';
 }
@@ -6725,15 +7658,21 @@ function updateSpaceArrival(delta) {
     _fadeOverlay.style.opacity = String(Math.max(0, 1 - t / SPACE_ARRIVAL_FADE_IN));
   }
 
-  // The pod-bay doors draw back before the ship arrives and stay open for it to
-  // slip in; they are automatic, so the moment the rocket is fully home they shut
-  // again behind it.
-  const doorOpen = spaceClamp((t - SPACE_ARRIVAL_DOORS) / (SPACE_ARRIVAL_ENTER - SPACE_ARRIVAL_DOORS), 0, 1);
-  const doorClose = spaceClamp((t - SPACE_ARRIVAL_CLOSE) / SPACE_ARRIVAL_CLOSE_DUR, 0, 1);
+  // The eye's lids draw back before the ship arrives — eased open like a lid
+  // opening, not a linear slide — and stay open for it to slip in; then slide
+  // shut around the hull. The cut (finishSpaceArrival) lands at ~75% closed, so
+  // the final seal happens behind the black.
+  const doorOpen = _spaceSmooth(spaceClamp((t - SPACE_ARRIVAL_DOORS) / (SPACE_ARRIVAL_ENTER - SPACE_ARRIVAL_DOORS), 0, 1));
+  const doorClose = _spaceSmooth(spaceClamp((t - SPACE_ARRIVAL_CLOSE) / SPACE_ARRIVAL_CLOSE_DUR, 0, 1));
   spaceWorld.setDoors(doorOpen * (1 - doorClose));
 
   const u = spaceArrivalU(spaceClamp((t - SPACE_ARRIVAL_TRANSIT) / SPACE_ARRIVAL_TRANSIT_DUR, 0, 1));
   spaceShipPoint(u, _spaceShipPos);
+  // Once lined up on the axle, the insert carries the ship straight in through
+  // the open eye. The approach itself never slows, so the flyby keeps its
+  // constant-speed sweep; this is a separate, deliberate parking move.
+  const insert = _spaceSmooth(spaceClamp((t - SPACE_ARRIVAL_INSERT_START) / SPACE_ARRIVAL_INSERT_DUR, 0, 1));
+  _spaceShipPos.z -= SPACE_ARRIVAL_INSERT_DEPTH * insert;
   ship.position.copy(_spaceShipPos);
   ship.rotation.set(0, spaceShipYaw(u), -0.2 * (1 - u));
 
@@ -6741,12 +7680,13 @@ function updateSpaceArrival(delta) {
   ship.updateWorldMatrix(true, false);
   spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
   spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
-  car.position.copy(_spaceSeatPos);
-  car.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
+  const seatCar = (rocketRide.rider === 1 && car2) ? car2 : car;
+  seatCar.position.copy(_spaceSeatPos);
+  seatCar.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
 
   // The scene ends as the automatic bay doors pass 75% shut, fading to black and
   // handing control back to the wheel drive.
-  const fadeAt = SPACE_ARRIVAL_SETTLE + SPACE_ARRIVAL_LINGER;
+  const fadeAt = SPACE_ARRIVAL_END - SPACE_ARRIVAL_FADE_OUT;
   if (t > fadeAt) {
     _fadeOverlay.style.transition = 'none';
     _fadeOverlay.style.opacity = String(spaceClamp((t - fadeAt) / SPACE_ARRIVAL_FADE_OUT, 0, 1));
@@ -6761,7 +7701,10 @@ function updateSpaceDrive(delta) {
     : readInput(players[0], { keys, pad, joy });
   players[0].input = inp;
 
-  const throttle = Math.max(-1, Math.min(1, inp.forward - inp.reverse));
+  // While the lift owns the car the controls are dead, and the car is drawn to
+  // the centre of the deck so the climb reads as a proper elevator ride.
+  const boarding = spaceDock.boarding;
+  const throttle = boarding ? 0 : Math.max(-1, Math.min(1, inp.forward - inp.reverse));
   // `steer` is left-positive, matching the steering.value convention everywhere
   // else. stepRing's own input is RIGHT-positive (see spaceRing.js), so it must
   // be negated on the way in: without the negation every turn is mirrored (the
@@ -6772,7 +7715,7 @@ function updateSpaceDrive(delta) {
   // Steering authority scales with how hard the player holds the stick. The
   // full-lock factor is 0.9 for every device, exactly as the ground cars cap
   // steering.value at 0.9, so the wheel turns at the same rate as every level.
-  let steerAmt = steer * 0.9;
+  let steerAmt = boarding ? 0 : steer * 0.9;
   // An arc-jolt or electrical hit briefly kills the steering so the car slews.
   if (spaceStun > 0) steerAmt = 0;
 
@@ -6791,10 +7734,26 @@ function updateSpaceDrive(delta) {
   const grip = spaceSurfaceGrip(spaceDrive);
   let laneHi = nearDock ? dock.lane : RING_LANE;
   if (nearDecon) laneHi = Math.max(laneHi, decon.lane);
+  // Remember where the car was BEFORE the step, so the road-lift posts can tell
+  // a head-on hit from a deliberate side entry across an open flank.
+  const prevS = spaceDrive.s;
+  const prevW = spaceDrive.w;
   stepRing(spaceDrive, { throttle, steer: -steerAmt, laneHi, grip }, delta);
+  if (boarding) {
+    const lift = spaceWorld.roadLift;
+    if (lift) {
+      const k = Math.min(1, delta * 2.5);
+      spaceDrive.s = ringWrapS(spaceDrive.s + spaceWrapDelta(lift.s - spaceDrive.s) * k);
+      spaceDrive.w += (lift.w - spaceDrive.w) * k;
+    }
+    spaceDrive.speed = 0;
+  }
   // Zones: boosts, conveyors, geysers, plasma, tugs, lifters, barriers and the
   // depressurization vent all act on the ring state here.
   updateSpaceHazards(delta);
+  // The road lift's fenced ends bounce a car that tries to drive straight over
+  // it; its open flanks latch the boarding sequence instead.
+  spaceRoadLiftCollision(prevS, prevW);
   velocity.value = spaceDrive.speed;   // keep HUD/speedometer in step
   steering.value = steer;
   applyRingPose(spaceDrive);
@@ -6809,23 +7768,79 @@ function updateSpaceDrive(delta) {
   if (pivs) for (let i = 0; i < Math.min(2, pivs.length); i++) pivs[i].rotation.y = steering.value * 0.55;
 }
 
-// ===== Wheel dock boarding trigger =====
-// Offered when the car is on the spur at the berth, sitting still. The dwell
-// means a driver just clipping the corner (or blasting through) is not launched;
-// you have to properly park at the dock.
-function updateSpaceDock(delta) {
+// ===== Road-lift collision + boarding trigger =====
+// The road-centre lift is fenced along its two TANGENT faces (the way a car is
+// already travelling when it drives the loop) and open along its two AXIAL
+// flanks. So a head-on approach always bounces off the post rows — you cannot
+// simply drive over the platform — while pulling off the line and crossing an
+// open flank latches the boarding sequence.
+function spaceRoadLiftCollision(prevS, prevW) {
+  const lift = spaceWorld.roadLift;
+  if (!lift || spaceDock.entered) return;
   if (spaceArrival.active || spaceDeparture.active || spaceVent.active) return;
-  const dock = spaceWorld.dock;
-  const s = spaceDrive.s;
-  const nearDock = s <= dock.s || s >= RING_CIRC - dock.s;
-  if (nearDock && spaceDrive.w >= dock.berthW && Math.abs(spaceDrive.speed) < 1.6) {
-    spaceDock.dwell += delta;
-    if (spaceDock.dwell >= 0.55) {
-      spaceDock.dwell = 0;
-      startSpaceDeparture();
-    }
-  } else {
+  const st = spaceDrive;
+  const ds = spaceWrapDelta(st.s - lift.s);
+  const dw = st.w - lift.w;
+  const inS = Math.abs(ds) <= lift.halfS;
+  const inW = Math.abs(dw) <= lift.halfW;
+  if (!inS || !inW) return;
+
+  // Work out which face the car crossed to get onto the deck. A car that was
+  // outside the footprint on the tangent side hit the fenced ends; one that was
+  // outside on the axial side came in through an open flank.
+  const pds = Math.abs(spaceWrapDelta(prevS - lift.s));
+  const pdw = Math.abs(prevW - lift.w);
+  const overS = pds - lift.halfS;
+  const overW = pdw - lift.halfW;
+  if (overS > 0 && overS >= overW) {
+    // Head-on: shove it back outside the post row and bounce it gently.
+    const from = Math.sign(spaceWrapDelta(prevS - lift.s)) || 1;
+    st.s = ringWrapS(lift.s + from * (lift.halfS + 0.55));
+    st.speed *= -0.12;
+    return;
+  }
+
+  // Side entry: commit the car to the lift and start it climbing.
+  spaceDock.entered = true;
+  spaceDock.boarding = true;
+  spaceDock.dwell = 0;
+  spaceDock.rise = 0;
+}
+
+// ===== Road-lift boarding =====
+// Once the car is on the deck, freeze the drive, haul the deck up to the exit
+// rocket's hold, then hand over to the departure cinematic. Nothing here needs
+// the car to be moving or parked: the side entry itself is the deliberate act.
+function updateSpaceDock(delta) {
+  const lift = spaceWorld.roadLift;
+  if (spaceArrival.active || spaceDeparture.active || spaceVent.active) {
+    // A cinematic owns the car; settle the deck back down and clear the latch.
+    if (lift) lift.deck.position.y += (0 - lift.deck.position.y) * Math.min(1, delta * 4);
+    spaceDock.boarding = false;
+    spaceDock.entered = false;
+    spaceDock.rise = 0;
     spaceDock.dwell = 0;
+    return;
+  }
+  if (!spaceDock.entered) {
+    spaceDock.boarding = false;
+    if (lift && lift.deck.position.y > 0) {
+      lift.deck.position.y += (0 - lift.deck.position.y) * Math.min(1, delta * 4);
+    }
+    return;
+  }
+
+  spaceDock.boarding = true;
+  spaceDock.dwell += delta;
+  spaceDock.rise = Math.min(1, spaceDock.rise + delta / SPACE_DOCK_RISE_TIME);
+  if (lift) lift.deck.position.y = spaceDock.rise * SPACE_DOCK_LIFT;
+  if (spaceDock.rise >= 1) {
+    spaceDock.dwell = 0;
+    spaceDock.rise = 0;
+    spaceDock.boarding = false;
+    spaceDock.entered = false;
+    if (lift) lift.deck.position.y = 0;
+    startSpaceDeparture();
   }
 }
 
@@ -6858,6 +7873,49 @@ function applyHouseTrackPose() {
 // understands yaw, so the pose's roll/pitch is dropped and the nose is pointed
 // along the track's ground tangent (releaseYaw). `yVel` is the launch's upward
 // kick - the ramp's own slope at the lip times the speed - and the house's inAir
+// model takes the fall from there.
+function releaseHouseTrack(yVel) {
+  car.rotation.set(0, releaseYaw(houseTrack.track, houseTrackState.s), 0);
+  velocity.value = houseTrackState.speed;
+  jumpState.inAir = true;
+  jumpState.yVelocity = yVel;
+  houseTrackState.active = false;
+  houseTrackState.speed = 0;
+}
+
+// Arm the ballistic flight off the end of the launch ramp.
+//
+// The lip's tangent is the direction of travel and its slope the upward kick,
+// so the car leaves the ramp the way the ramp was pointing and keeps going:
+// north through the playroom doorway and down onto the living room floor. The
+// speed it was doing on the rails is the speed it keeps.
+function armHouseLaunch(speed) {
+  // The flight starts ON THE LIP, not wherever the car happens to be standing.
+  // The house's own physics runs before the track does and knows nothing about
+  // the rails: by the time the ramp runs out under the car it has already
+  // dropped it onto the floor. Taking the start point off the track instead
+  // keeps the launch at the ramp's height - otherwise the car drops sixteen
+  // units off the lip, skids along the floor and never sails.
+  const p = poseOnTrack(houseTrack.track, houseTrackState.s, TRACK_LIFT);
+  const f = createLaunchFlight(
+    houseTrack.track,
+    houseTrackState.s,
+    speed,
+    p.px, p.py, p.pz,
+  );
+  houseLaunch.active = true;
+  houseLaunch.x = f.x; houseLaunch.y = f.y; houseLaunch.z = f.z;
+  houseLaunch.vx = f.vx; houseLaunch.vy = f.vy; houseLaunch.vz = f.vz;
+  houseLaunch.yaw = f.yaw;
+  houseLaunch.speed = f.speed;
+  houseLaunch.t = 0;
+  houseLaunch.pitch = f.pitch;
+  // The house's own inAir flag is what tells the world physics the car is off
+  // the floor; the vertical velocity is the flight's, so the two agree.
+  jumpState.inAir = true;
+  jumpState.yVelocity = f.vy;
+}
+
 // The arc-length window over which the loop cinematic should run: the stacked
 // pair of loops are the ONLY place the car goes inverted (the contact normal
 // points downward), so scanning for uy < 0 finds their tops. Padding by ~half a
@@ -6871,15 +7929,48 @@ function houseLoopWindow() {
   if (track && track.length > 0) {
     const L = track.length;
     const N = Math.max(240, Math.round(L));
+    const ramp = houseRampStartS();
     let first = -1, last = -1;
+    // The loop structure's bounding box, so the locked-off shot can be aimed
+    // at its middle. `uy < 0.2` catches the vertical parts of the loops and
+    // the flats between them, which is the whole loop run; the scan stops at
+    // the launch ramp, whose own flat lip is not part of this shot.
+    let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity, zmin = Infinity, zmax = -Infinity;
     for (let i = 0; i <= N; i++) {
       const s = (i / N) * L;
-      if (sampleTrack(track, s).uy < 0.2) { if (first < 0) first = s; last = s; }
+      if (ramp > 0 && s > ramp) break;
+      const p = sampleTrack(track, s);
+      if (p.uy < 0.2) {
+        if (first < 0) first = s;
+        last = s;
+        if (p.x < xmin) xmin = p.x; if (p.x > xmax) xmax = p.x;
+        if (p.y < ymin) ymin = p.y; if (p.y > ymax) ymax = p.y;
+        if (p.z < zmin) zmin = p.z; if (p.z > zmax) zmax = p.z;
+      }
     }
-    if (first >= 0) win = { s0: Math.max(0, first - 18), s1: Math.min(L, last + 18) };
+    if (first >= 0) {
+      win = { s0: Math.max(0, first - 18), s1: Math.min(L, last + 18) };
+      // The loops are followed by the launch ramp, which has a shot of its own.
+      // The loop shot therefore hands over BEFORE the climb starts, so the two
+      // never fight over the frame and the car never climbs out of a shot that
+      // was composed for the loops.
+      if (ramp > 0 && win.s1 > ramp) win.s1 = ramp;
+      // Where the locked-off shot looks: the middle of the loop structure, so
+      // the loops sit in the frame and the car runs through them.
+      houseLoopCine.look.set((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2);
+    }
   }
   houseLoopCine.loops = win;
   return win;
+}
+
+// The arc length where the launch ramp begins (the foot of the climb). Cached
+// on houseLoopCine.ramp.
+function houseRampStartS() {
+  if (houseLoopCine.ramp !== undefined) return houseLoopCine.ramp;
+  const track = houseTrack ? houseTrack.track : null;
+  houseLoopCine.ramp = track && track.length > 0 ? launchRampStart(track) : 0;
+  return houseLoopCine.ramp;
 }
 
 function armHouseLoopCine() {
@@ -6887,6 +7978,25 @@ function armHouseLoopCine() {
   houseLoopCine.phase = 'loop';
   houseLoopCine.t = 0;
   houseLoopCine.camPos.set(HOUSE_LOOP_CAM.x, HOUSE_LOOP_CAM.y, HOUSE_LOOP_CAM.z);
+  // The shot is bolted down: it holds the loops and the car loops through the
+  // frame. The aim comes from the track's own geometry (see houseLoopWindow);
+  // the constant is the fallback for a level that has not built yet.
+  if (houseLoopCine.look.lengthSq() === 0) {
+    houseLoopCine.look.set(HOUSE_LOOP_AIM.x, HOUSE_LOOP_AIM.y, HOUSE_LOOP_AIM.z);
+  }
+}
+
+// The launch ramp shot. The loop vantage is fixed, so a car climbing the ramp
+// recedes from it and ends up a speck at the far end of the room — which reads
+// as the car stalling at the lip. This shot rides beside the car instead: a
+// fixed offset from it in x and z, at a fixed height, so the car stays the same
+// size on the screen all the way up. The shot eases in from wherever the camera
+// already was, so the handover from the loops is a move rather than a cut.
+function startHouseRampCine() {
+  if (houseLoopCine.phase !== 'ramp') houseLoopCine.fromPos.copy(camera.position);
+  houseLoopCine.active = true;
+  houseLoopCine.phase = 'ramp';
+  houseLoopCine.t = 0;
 }
 
 function startHouseLaunchCine() {
@@ -6905,15 +8015,6 @@ function leaveHouseLoopCine(ease = 3.5) {
   _postCineTimer = ease;
   houseLoopCine.active = false;
   houseLoopCine.phase = 'idle';
-}
-
-function releaseHouseTrack(yVel) {
-  car.rotation.set(0, releaseYaw(houseTrack.track, houseTrackState.s), 0);
-  velocity.value = houseTrackState.speed;
-  jumpState.inAir = true;
-  jumpState.yVelocity = yVel;
-  houseTrackState.active = false;
-  houseTrackState.speed = 0;
 }
 
 function updateHouseTrackDrive(delta) {
@@ -6954,7 +8055,18 @@ function updateHouseTrackDrive(delta) {
   }
   // Off the end of the launch ramp: fly. The launch is the payoff shot.
   if (st.atEnd) {
-    releaseHouseTrack(Math.max(0, st.speed) * Math.max(0, f.ty));
+    const launchSpeed = Math.max(0, st.speed);
+    // Put the car back on the lip before letting go of it. The house's physics
+    // has already run this frame and dropped the car onto the floor (it knows
+    // nothing about the rails), so without this the shot would open on a car
+    // sitting on the boards at the foot of the ramp.
+    applyHouseTrackPose();
+    releaseHouseTrack(launchSpeed * Math.max(0, f.ty));
+    // The car leaves the ramp as a projectile and sails on into the living
+    // room, so it needs a flight of its own: the house's drive block is off
+    // for the length of the shot (the cinematic owns the frame) and would
+    // otherwise let the car drop straight down off the lip.
+    armHouseLaunch(launchSpeed);
     startHouseLaunchCine();
     return;
   }
@@ -6962,16 +8074,83 @@ function updateHouseTrackDrive(delta) {
   // Riding the stacked loops: swap the chase cam for the fixed side vantage so
   // the viewer actually watches the car go round. Leaving the window without
   // launching (e.g. reversed back out) eases back to the chase.
+  //
+  // The launch ramp has a shot of its own: the loops' vantage is fixed, so a
+  // car climbing the ramp would shrink away to nothing inside it.
   const win = houseLoopWindow();
-  if (win && st.s >= win.s0 && st.s <= win.s1) {
-    if (!houseLoopCine.active) armHouseLoopCine();
-  } else if (houseLoopCine.active && houseLoopCine.phase === 'loop') {
+  const ramp = houseRampStartS();
+  const inRamp = ramp > 0 && st.s >= ramp;
+  if (inRamp) {
+    if (houseLoopCine.phase !== 'ramp') startHouseRampCine();
+  } else if (win && st.s >= win.s0 && st.s <= win.s1) {
+    if (houseLoopCine.phase !== 'loop') armHouseLoopCine();
+  } else if (houseLoopCine.active && houseLoopCine.phase !== 'launch') {
     leaveHouseLoopCine();
   }
 
   applyHouseTrackPose();
   velocity.value = st.speed;   // HUD + wheel spin follow the track speed
   steering.value = 0;          // the rails steer; the wheel does not
+}
+
+// ===== The Hot Wheels launch flight =====
+//
+// Leaving the lip of the ramp is the one thing the house's driving model cannot
+// describe: the car is a projectile that has to KEEP its speed, sail through
+// the playroom doorway and come down in the living room.
+//
+// It also cannot live in the house's drive block, because that block is gated
+// off for the whole launch cinematic (the shot owns the frame) — which is
+// exactly the time the car is in the air. So the flight runs here, outside the
+// gate, on every house frame while it is armed. The maths is the pure ballistic
+// arc in house/hotwheels.mjs: the lip's tangent for the direction, gravity for
+// the fall, a little air drag to take the edge off.
+function updateHouseLaunchFlight(delta) {
+  if (worldState !== 'house' || !houseLaunch.active) return;
+  const surfs = houseWorld.surfaces;
+
+  stepLaunchFlight(houseLaunch, delta, gravity);
+
+  // The house is a closed box, so a flight can never sail out through a wall:
+  // the car is kept inside the shell while it is in the air.
+  const inset = playerCarRadius;
+  houseLaunch.x = Math.min(Math.max(houseLaunch.x, HOUSE.minX + inset), HOUSE.maxX - inset);
+  houseLaunch.z = Math.min(Math.max(houseLaunch.z, HOUSE.minZ + inset), HOUSE.maxZ - inset);
+  car.position.set(houseLaunch.x, houseLaunch.y, houseLaunch.z);
+  jumpState.yVelocity = houseLaunch.vy;
+  // The speedometer reads the flight's own speed, and so do the wheels.
+  velocity.value = Math.hypot(houseLaunch.vx, houseLaunch.vz);
+  // The house has a ceiling and no sky, so the ascent stops at it.
+  if (car.position.y >= HOUSE.ceil) {
+    car.position.y = HOUSE.ceil;
+    houseLaunch.vy = 0;
+    jumpState.yVelocity = 0;
+  }
+  // The body is pitched along the flight path, so the car noses up off the ramp
+  // and noses down as it falls. The lean block in the drive code stands down
+  // while the launch owns the car (see the houseLaunch branch there).
+  car.rotation.z += (houseLaunch.pitch - car.rotation.z) * 0.25;
+  car.rotation.x += (0 - car.rotation.x) * 0.12;
+
+  // Come down on whatever is under the car — the rug, the floor, the tiles —
+  // and hand the car back to the player.
+  const landing = houseLandingY(surfs, car.position.x, car.position.z);
+  const floor = landing === null ? HOUSE.floorY : Math.max(HOUSE.floorY, landing);
+  if (car.position.y <= floor) {
+    car.position.y = floor;
+    const impact = Math.abs(houseLaunch.vy);
+    houseLaunch.active = false;
+    jumpState.yVelocity = 0;
+    jumpState.inAir = false;
+    shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
+    // Keep a little of the launch speed so the car does not stop dead in the
+    // middle of the living room, but not so much that it is still doing 30
+    // when the player gets the wheel back.
+    velocity.value = Math.min(Math.hypot(houseLaunch.vx, houseLaunch.vz) * 0.3, 12);
+    car.rotation.z = 0;
+    // The shot has done its job: give the frame back to the chase cam.
+    if (houseLoopCine.active && houseLoopCine.phase === 'launch') leaveHouseLoopCine();
+  }
 }
 
 // ===== House playroom: the animated toys =====
@@ -7101,6 +8280,9 @@ function updateSpaceHazards(delta) {
   const zones = spaceWorld.zones;
   const sectors = spaceWorld.sectors;
   spaceLiftTarget = 0;
+  // The berth boarding elevator rides on top of the hazard lift: while its deck
+  // is up, the car rises with it toward the rocket's hold.
+  spaceLiftTarget = Math.max(spaceLiftTarget, spaceDock.rise * SPACE_DOCK_LIFT);
   if (spaceStun > 0) spaceStun = Math.max(0, spaceStun - delta);
   if (!zones) { spaceLift += (0 - spaceLift) * Math.min(1, delta * 8); return; }
 
@@ -7192,32 +8374,129 @@ function updateSpaceHazards(delta) {
   spaceLift += (spaceLiftTarget - spaceLift) * Math.min(1, delta * 7);
 }
 
+// Twin-ring hazard application (for P2's space drive). It applies the same
+// zone effects that push the main car around (boosts, conveyors, geysers,
+// plasma, compactors, tugs, lifts, decon, barriers) to a per-player ring
+// state, without advancing the global cinematic counters (vents/departures)
+// that belong to P1's path.
+function updateSpaceHazardsForRing(st, delta) {
+  const zones = spaceWorld.zones;
+  const sectors = spaceWorld.sectors;
+  let liftT2 = 0;
+  for (const z of zones) {
+    if (z.off) continue;
+    switch (z.type) {
+      case 'boost':
+        if (spaceZoneRect(st, z)) {
+          st.s = ringWrapS(st.s + z.add * delta);
+          st.speed = THREE.MathUtils.clamp(st.speed + z.add * delta * 0.5, -RING_REVERSE, RING_MAX);
+        }
+        break;
+      case 'conveyor':
+        if (spaceZoneRect(st, z)) {
+          st.s = ringWrapS(st.s + z.add * delta);
+          st.speed = THREE.MathUtils.clamp(st.speed + z.add * delta, -RING_REVERSE, RING_MAX);
+        }
+        break;
+      case 'geyser':
+        if (z.state > 0.35 && spaceZonePad(st, z)) {
+          if (z.dirW) st.w += z.dirW * z.push * delta;
+          st.speed *= Math.max(0, 1 - 1.6 * delta);
+        }
+        break;
+      case 'plasma':
+        if (z.state > 0.5 && spaceZonePad(st, z)) {
+          st.heading += (Math.random() - 0.5) * 0.6;
+          st.speed *= 0.7;
+        }
+        break;
+      case 'compactor':
+        if (z.state > 0.5 && spaceZonePad(st, z)) {
+          st.speed *= 0.35;
+        }
+        break;
+      case 'tractor':
+        if (spaceZonePad(st, z)) {
+          liftT2 = Math.max(liftT2, 2.4);
+          st.speed = THREE.MathUtils.clamp(st.speed + 16 * delta, -RING_REVERSE, RING_MAX);
+        }
+        break;
+      case 'tug':
+        if (z.state > 0.2 && spaceZonePad(st, z)) {
+          liftT2 = Math.max(liftT2, 3.4 * z.state);
+          st.speed *= Math.max(0, 1 - 0.5 * delta);
+        }
+        break;
+      case 'lift':
+        if (z.state > 0.05 && spaceZonePad(st, z)) {
+          liftT2 = Math.max(liftT2, 2.6 * z.state);
+        }
+        break;
+      case 'decon':
+        if (st.w > z.w0 - 2 && st.w < z.w1 + 2 && Math.abs(spaceWrapDelta(st.s - z.s)) < 6) {
+          st.w += (0 - st.w) * Math.min(1, 4 * delta);
+          st.s = ringWrapS(st.s + 8 * delta);
+          st.speed *= Math.max(0, 1 - 1.0 * delta);
+        }
+        break;
+      case 'override':
+        if (spaceZonePad(st, z) && sectors) sectors.state.hazardsOff = Math.max(sectors.state.hazardsOff, 2);
+        break;
+      case 'barrier':
+        if (z.state > 0.5 && Math.abs(spaceWrapDelta(st.s - z.s)) < 1.0 && st.w > z.w0 && st.w < z.w1) {
+          st.speed *= 0.15;
+        }
+        break;
+      case 'vent':
+        // The same airlock cut as P1's: if the twin drives into the bay, it is
+        // flung out and reeled back. Only one vent runs at a time, so this is a
+        // no-op while P1's own cut is live.
+        if (spaceZoneRect(st, z)) {
+          if (spaceVentArmed2 && !spaceVent.active) startSpaceVent(z, 1);
+        } else {
+          spaceVentArmed2 = true;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  // Lift is applied to the car's Y via the same spaceLift channel; the twin
+  // reads +spaceLift in ringPose like P1, so we can mirror the global lift
+  // (hazards affect both). Hazards like tractor/tug lift both equally.
+  if (liftT2 > spaceLiftTarget) spaceLiftTarget = Math.max(spaceLiftTarget, liftT2);
+}
+
 // ===== Airlock-vent rescue cinematic =====
 // The car drives into a shoulder decon chamber, the chamber winds up (lights up)
 // and fires it out the far port into the void, where the sector's jib crane
 // catches it and reels it home. Ends with the car driven back out onto the road.
 // The BLAST is the only beat played twice: act 0 cuts away from it mid-flight,
 // act 1 picks the same moment up again from an exterior angle and runs it home.
-function startSpaceVent(z) {
+function startSpaceVent(z, subject = 0) {
   if (spaceVent.active) return;
+  const ring = spaceVentRing(subject);
+  const vCar = spaceVentCar(subject);
+  if (!ring || !vCar) return;      // no such player (single-player, or twin not on the rim yet)
   spaceVent.active = true;
+  spaceVent.subject = subject;
   spaceVent.timer = 0;
   spaceVent.act = 0;
-  spaceVent.s = spaceDrive.s;
-  spaceVent.w = spaceDrive.w;
+  spaceVent.s = ring.s;
+  spaceVent.w = ring.w;
   spaceVent.s2 = z.s;
   spaceVent.w2 = z.w;
-  spaceVent.heading = spaceDrive.heading;
+  spaceVent.heading = ring.heading;
   spaceVent.out = 0;
   spaceVent.grabbed = false;
   spaceVent.roll = 0;
   spaceVent.rollV = 0;
-  spaceVentArmed = false;
+  if (subject === 1) spaceVentArmed2 = false; else spaceVentArmed = false;
   spaceLift = 0; spaceLiftTarget = 0; spaceStun = 0;
   velocity.value = 0; steering.value = 0;
   // Fit the rescue grip to the car actually being flung, so its jaws close around
   // this car's flanks rather than a fixed size.
-  const fit = measureBoardingCar(car.scale.x || 1);
+  const fit = measureBoardingCar(vCar.scale.x || 1);
   spaceVent.half = fit.half + 0.3;
   spaceVent.top = fit.top;
   const crane = spaceWorld.crane;
@@ -7227,6 +8506,9 @@ function startSpaceVent(z) {
 
 function updateSpaceVent(delta) {
   spaceVent.timer += delta;
+  // The car this cut owns — P1's or the split twin's. Everything below poses it
+  // and its ring exactly as before; only the identity changes.
+  const vCar = spaceVentCar(spaceVent.subject);
   // Act 0 is the interior lens (drive-in, charge, a truncated blast); act 1 is an
   // exterior cinematic angle that picks the blast up again at the port and runs it
   // to the end. Each act has its own phase table; `t` is time within the act.
@@ -7360,8 +8642,8 @@ function updateSpaceVent(delta) {
     _spaceY.set(p.yx, p.yy, p.yz),
     _spaceZ.set(p.zx, p.zy, p.zz),
   );
-  car.quaternion.setFromRotationMatrix(_spaceBasis);
-  car.rotateX(spaceVent.roll);
+  vCar.quaternion.setFromRotationMatrix(_spaceBasis);
+  vCar.rotateX(spaceVent.roll);
 
   // Hold the car by its geometric CENTRE inside the chamber, so the wash-and-spin
   // tumbles it about the airlock's middle instead of swinging its roof down through
@@ -7378,11 +8660,11 @@ function updateSpaceVent(delta) {
     if (t > tExit) hold = 1 - _spaceSmooth((t - tExit) / SPACE_VENT_EXIT);
   }
   const rimX = -Math.cos(seatS / RING_R), rimY = -Math.sin(seatS / RING_R);   // rim up (inward)
-  _spaceTmp.set(0, 1, 0).applyQuaternion(car.quaternion);                     // the car's own up
+  _spaceTmp.set(0, 1, 0).applyQuaternion(vCar.quaternion);                     // the car's own up
   const upDot = _spaceTmp.x * rimX + _spaceTmp.y * rimY;
   const rise = (SPACE_VENT_CHAMBER_Y - upDot * spaceVent.top * 0.5) * hold;
-  car.position.set(p.px + rimX * rise, p.py + rimY * rise, p.pz);
-  car.scale.setScalar(portalCarScale);
+  vCar.position.set(p.px + rimX * rise, p.py + rimY * rise, p.pz);
+  vCar.scale.setScalar(portalCarScale);
 
   if (crane) {
     // The jib runs out along +w (over the chamber and on into the void) so the
@@ -7400,12 +8682,22 @@ function updateSpaceVent(delta) {
 
 function finishSpaceVent() {
   const s = spaceVent.s2, h = spaceVent.heading;
+  const subject = spaceVent.subject;
   spaceVent.active = false;
+  spaceVent.frozen = false;
   spaceVent.grabbed = false;
   if (spaceWorld.crane) { spaceWorld.crane.setReach(0, h, 0, 0, spaceWorld.crane.parkLift); spaceWorld.crane.setClaw(1, spaceVent.half); }
   if (spaceWorld.decon) spaceWorld.decon.charge = 0;
   // Set the car down on the middle of the road (it has just been shot back out of
   // the chamber) at rest, so the driver regains control on the lane.
+  if (subject === 1 && players[1]) {
+    // The twin: hand its own ring back on the lane. P1's `spaceDrive`/lift/stun
+    // and the primary camera were never touched by this cut, so they keep running.
+    // The twin's next `stepTwoPlayer` frame poses `carTwo` from this fresh ring.
+    players[1].ring = createRingState(s, 0, h);
+    if (camB) { camB.up.set(0, 1, 0); camB.fov = SPLIT_FOV; camB.updateProjectionMatrix(); }
+    return;
+  }
   spaceDrive = createRingState(s, 0, h);
   spaceLift = 0; spaceLiftTarget = 0; spaceStun = 0;
   applyRingPose(spaceDrive);
@@ -7414,26 +8706,113 @@ function finishSpaceVent() {
   camera.updateProjectionMatrix();
 }
 
+// ===== Object-explorer camera tuning for the rescue grab =====
+// Re-runs the REAL vent timeline up to a freeze frame and holds it dead still
+// (spaceVent.frozen makes the frame loop pass delta 0, so every derived value —
+// tumble, drift, claw yaw, chamber glow — stays exactly on that frame). Never
+// called while the pose is already up: the caller tears the old one down first.
+function poseVentTuneFrame(frame) {
+  const crane = spaceWorld && spaceWorld.crane;
+  const zone = spaceWorld && spaceWorld.zones && spaceWorld.zones.find((z) => z.type === 'vent');
+  if (!crane || !zone) return false;
+  ventCamTune.frame = VENT_TUNE_FRAMES[frame] ? frame : 'cast';
+  // Seat the car in the chamber facing the port (+w) — the animation's own
+  // starting pose — so the replay begins from exactly where the real thing does.
+  spaceDrive = createRingState(zone.s, zone.w, Math.PI / 2);
+  velocity.value = 0;
+  steering.value = 0;
+  applyRingPose(spaceDrive);
+  spaceVent.active = false;    // startSpaceVent refuses to restart a live vent
+  startSpaceVent(zone);
+  const target = VENT_TUNE_FRAMES[ventCamTune.frame]();
+  while (spaceVent.timer < target) updateSpaceVent(Math.min(1 / 60, target - spaceVent.timer));
+  spaceVent.frozen = true;
+  return true;
+}
+
+function startVentCamTune() {
+  if (!poseVentTuneFrame(ventCamTune.frame)) return false;
+  // Seed the orbit knobs so the view OPENS on today's exterior angle, expressed
+  // as spherical coordinates around the animation's own look target (0.35 * the
+  // car): radius + phi from the saved OFFSET (the shot never stores an absolute
+  // tripod, only where it sits off the moving anchor), azimuth held separately
+  // as az0 so cameraYawOffset starts at 0 and drag/pinch swing around that
+  // baseline.
+  _ventLook.set(car.position.x * 0.35, car.position.y * 0.35, car.position.z * 0.35);
+  _ventLookOff.copy(SPACE_VENT_EXT_LOOK_OFF);   // replay's stored aim bias
+  const dx = SPACE_VENT_EXT_OFF.x;
+  const dy = SPACE_VENT_EXT_OFF.y;
+  const dz = SPACE_VENT_EXT_OFF.z;
+  const r = Math.hypot(dx, dy, dz) || 1;
+  cameraOrbit.radius = r;
+  cameraOrbit.phi = Math.acos(Math.max(-1, Math.min(1, dy / r)));
+  ventCamTune.az0 = Math.atan2(dx, dz);
+  cameraYawOffset = 0;
+  // The chase clamps phi to [0.6, 1.45]; framing this shot low or from the far
+  // side needs the whole hemisphere, so widen it for the pose and put it back
+  // on exit (same save/restore trick the plan and cine modes use).
+  ventCamTune.savedMinPhi = cameraOrbit.minPhi;
+  ventCamTune.savedMaxPhi = cameraOrbit.maxPhi;
+  cameraOrbit.minPhi = 0.15;
+  cameraOrbit.maxPhi = 2.9;
+  cameraManualTimer = CAMERA_MANUAL_HOLD;
+  ventCamTune.active = true;
+  setPaused(true);
+  minimap.style.display = '';   // setPaused hid it; the pose readout stays up
+  drawMinimap(mmCtx);
+  if (ventCamHud) {
+    ventCamHud.style.display = 'block';
+    document.querySelectorAll('#ventcam-hud .vh-frame').forEach((b) => {
+      b.classList.toggle('active', b.dataset.frame === ventCamTune.frame);
+    });
+    updateVentCamHud();
+  }
+  return true;
+}
+
+function endVentCamTune() {
+  if (!ventCamTune.active) return;
+  ventCamTune.active = false;
+  if (ventCamHud) ventCamHud.style.display = 'none';
+  finishSpaceVent();          // parks the crane, sets the car down on the road, resets fov
+  spaceVentArmed = true;      // the car is back at w = 0, well clear of the bay zone
+  cameraOrbit.minPhi = ventCamTune.savedMinPhi;
+  cameraOrbit.maxPhi = ventCamTune.savedMaxPhi;
+  setPaused(false);
+}
+
+// One HUD pass — called from the tune camera branch every rendered frame (the
+// branch runs whether paused or not, since updateCamera does).
+function updateVentCamHud() {
+  if (!ventCamHud) return;
+  vhMapEl.textContent = `map x=${Math.round(worldXHi - car.position.x)} z=${Math.round(worldZHi - car.position.z)}`;
+  vhCamEl.textContent = `cam x=${camera.position.x.toFixed(1)} y=${camera.position.y.toFixed(1)} z=${camera.position.z.toFixed(1)}`;
+  vhLookEl.textContent = `look x=${_ventLook.x.toFixed(1)} y=${_ventLook.y.toFixed(1)} z=${_ventLook.z.toFixed(1)}`;
+  vhOrbitEl.textContent = `fov ${Math.round(camera.fov)} \u00b7 r ${cameraOrbit.radius.toFixed(1)} \u00b7 phi ${cameraOrbit.phi.toFixed(2)} \u00b7 yaw ${cameraYawOffset.toFixed(2)}`;
+}
+
 function startSpaceDeparture() {
   if (worldState !== 'space' || spaceArrival.active || spaceDeparture.active) return;
   const ship = spaceWorld.arrivalShip;
   const arm = spaceWorld.hangarArm;
-  // Show the rocket berthed in the big hangar, roof open, and the loading arm
-  // awake. The car is parked at the berth; the arm lifts it in.
+  // Show the rocket waiting out on the ring park (SPACE_SHIP_P2D), roof open,
+  // and the loading arm awake. The car is parked at the berth; the arm lifts it
+  // in. Halfway through, the ship cuts to the pod bay and leaves through the
+  // eye, so the iris is shut until then.
   ship.visible = true;
   spaceWorld.arrivalPlume.g.visible = false;
-  spaceShipPoint(1, _spaceShipPos);
+  spaceWorld.setDoors(0);
+  spaceShipPoint(1, _spaceShipPos, SPACE_SHIP_P2D);
   ship.position.copy(_spaceShipPos);
   ship.rotation.set(0, spaceShipYawDep(0), 0.22);
   spaceWorld.arrivalHinge.rotation.z = 1.15;     // roof open to receive the car
-  spaceWorld.setDoors(1);
   portalCarScale = RIDE_CAR_SCALE;
   car.scale.setScalar(RIDE_CAR_SCALE);
   car.visible = true;
 
   // Where the car parked (the berth) in world space, and the arm's stowed perch.
   _spaceBerth.copy(spaceWorld.berthLocal);
-  spaceWorld.bay.localToWorld(_spaceBerth);
+  spaceWorld.dockFrame.localToWorld(_spaceBerth);
   spaceDeparture.heading = spaceDrive.heading;
   car.position.copy(_spaceBerth);
   car.rotation.set(0, spaceDeparture.heading, 0);
@@ -7445,17 +8824,29 @@ function startSpaceDeparture() {
   spaceDeparture.hold = m.top + 0.12;
   spaceDeparture.measured = true;
   spaceDeparture.yawOffset = null;
-  // The stowed perch: straight out into the bay from the arm's base (the bay's
-  // own -Y is "outward", i.e. world +X here), so the empty claw folds away from
-  // the car lane rather than sticking up into the corridor.
-  spaceWorld.bay.updateWorldMatrix(true, false);
-  spaceWorld.bay.getWorldQuaternion(_spaceQ2);
+  spaceDeparture.atEye = false;
+  // The stowed perch: straight out into the void from the arm's base (the dock
+  // frame's own -Y is radially outward, i.e. world +X here), so the empty claw
+  // folds away from the car lane rather than sticking up into the corridor.
+  spaceWorld.dockFrame.updateWorldMatrix(true, false);
+  spaceWorld.dockFrame.getWorldQuaternion(_spaceQ2);
   arm.g.getWorldPosition(_spaceRest);
   _spaceRest.addScaledVector(_spaceTmp.set(0, -1, 0).applyQuaternion(_spaceQ2).multiplyScalar(7));
   arm.reach(_spaceRest, 0, { half: m.half, len: m.top, drop: m.top * 0.5, width: m.half * 2 + 0.4 });
 
   velocity.value = 0;
   steering.value = 0;
+  // The little blue car stays on the rim: send it home to the city streets
+  // before the loading sequence starts, so it never rides along in the hold.
+  if (bumperInSpace) {
+    spaceScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInSpace = false;
+    bumperSpaceRing = null;
+    respawnBumper();
+    reparentChaseTrainConsist();
+  }
+  if (players[1]) players[1].ring = null;
   spaceDeparture.active = true;
   spaceDeparture.timer = 0;
   _fadeOverlay.style.transition = 'none';
@@ -7464,8 +8855,10 @@ function startSpaceDeparture() {
 
 function finishSpaceDeparture() {
   spaceDeparture.active = false;
+  spaceDeparture.atEye = false;
   spaceWorld.arrivalShip.visible = false;
   spaceWorld.arrivalHinge.rotation.z = 0;
+  spaceWorld.arrivalPlume.g.visible = false;
   spaceWorld.setDoors(0);
   const arm = spaceWorld.hangarArm;
   arm.reach(_spaceRest, 0);           // stow the empty claw
@@ -7479,102 +8872,156 @@ function updateSpaceDeparture(delta) {
   const t = (spaceDeparture.timer += delta);
   const ship = spaceWorld.arrivalShip;
   const arm = spaceWorld.hangarArm;
-
-  // Reveal the berthed ship at the top of the shot (the board-fade lifts).
-  if (t < SPACE_DEPART_FADE_IN) {
+  const fadeTo = (o) => {
     _fadeOverlay.style.transition = 'none';
-    _fadeOverlay.style.opacity = String(Math.max(0, 1 - t / SPACE_DEPART_FADE_IN));
-  }
-
-  // The bay stays open while the arm loads and the ship backs out, then draws
-  // shut behind it.
-  const doorOpen = t < SPACE_DEPART_DOORS
-    ? 1
-    : spaceClamp(1 - (t - SPACE_DEPART_DOORS) / SPACE_DEPART_DOORS_DUR, 0, 1);
-  spaceWorld.setDoors(doorOpen);
-
-  // Fly the arrival path backwards: u=0 parked in the bay, u=1 out in deep space.
-  // u stays 0 for the whole load, so the ship holds still while the arm works.
-  const u = _spaceSmooth(spaceClamp((t - SPACE_DEPART_TRANSIT) / SPACE_DEPART_TRANSIT_DUR, 0, 1));
-  spaceShipPoint(1 - u, _spaceShipPos);
-  ship.position.copy(_spaceShipPos);
-  ship.rotation.set(0, spaceShipYawDep(u), 0.22 * (1 - u));   // nose climbs as it leaves
-  ship.updateWorldMatrix(true, false);
-
-  // World targets for the load: the berth, the roof opening and the seat in the
-  // hold. The seat/quat also drive the car once it is aboard.
-  const hold = spaceDeparture.hold;
-  spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
-  spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
-  _spaceRoof.set(0, 1.4, 0);
-  ship.localToWorld(_spaceRoof);
-  _spacePadH.copy(_spaceBerth); _spacePadH.y += hold;
-  _spaceRoofH.copy(_spaceRoof); _spaceRoofH.y += hold;
-  _spaceSeatH.copy(_spaceSeatPos); _spaceSeatH.y += hold;
-
-  // ---- The arm load: grab off the berth, carry over the roof, lower into the
-  // hold, release and stow. (Timeline mirrors the city boarding ride.) ----
-  const g1 = SPACE_DEPART_LOAD_GRAB;
-  const c1 = g1 + SPACE_DEPART_LOAD_CARRY;
-  const i1 = c1 + SPACE_DEPART_LOAD_INSERT;
-  let grip;
-  if (t < g1) {
-    const l = rrSmooth(spaceClamp(t / SPACE_DEPART_LOAD_GRAB, 0, 1));
-    _spaceHand.copy(_spaceRest).lerp(_spacePadH, l);
-    grip = l;
-  } else if (t < c1) {
-    const l = rrSmooth(spaceClamp((t - g1) / SPACE_DEPART_LOAD_CARRY, 0, 1));
-    _spaceHand.copy(_spacePadH).lerp(_spaceRoofH, l);
-    grip = 1;
-  } else if (t < i1) {
-    const l = rrSmooth(spaceClamp((t - c1) / SPACE_DEPART_LOAD_INSERT, 0, 1));
-    _spaceHand.copy(_spaceRoofH).lerp(_spaceSeatH, l);
-    grip = 1 - l;
-  } else {
-    const l = rrSmooth(spaceClamp((t - i1) / SPACE_DEPART_LOAD_RETRACT, 0, 1));
-    _spaceHand.copy(_spaceSeatH).lerp(_spaceRest, l);
-    grip = 0;
-  }
-  const fit = {
-    half: spaceDeparture.half,
-    len: spaceDeparture.top,
-    drop: spaceDeparture.top * 0.5,
-    width: spaceDeparture.half * 2 + 0.4,
+    _fadeOverlay.style.opacity = String(spaceClamp(o, 0, 1));
   };
-  const claw = arm.reach(_spaceHand, grip, fit);
 
-  // The car turns WITH the hand: its yaw tracks the arm's heading, offset so that
-  // at the berth it still reads as the heading it parked on. The offset is
-  // captured as the hand arrives over the car (start of carry).
-  const armYaw = arm.yawAngle();
-  if (t >= g1 && t < c1 && spaceDeparture.yawOffset === null) {
-    spaceDeparture.yawOffset = spaceDeparture.heading - armYaw;
+  // ---- Fade bookkeeping: reveal, cut to the eye, reveal again, final fade. ----
+  if (t < SPACE_DEPART_FADE_IN) {
+    fadeTo(1 - t / SPACE_DEPART_FADE_IN);
+  } else if (t >= SPACE_DEPART_TRANSIT && t < SPACE_DEPART_DOOR) {
+    fadeTo(_spaceSmooth(spaceClamp((t - SPACE_DEPART_TRANSIT) / SPACE_DEPART_BLACK, 0, 1)));
+  } else if (t >= SPACE_DEPART_DOOR && t < SPACE_DEPART_DOOR + SPACE_DEPART_REVEAL) {
+    fadeTo(1 - _spaceSmooth(spaceClamp((t - SPACE_DEPART_DOOR) / SPACE_DEPART_REVEAL, 0, 1)));
+  } else if (t > SPACE_DEPART_FADE) {
+    fadeTo((t - SPACE_DEPART_FADE) / (SPACE_DEPART_END - SPACE_DEPART_FADE));
   }
-  const turning = spaceDeparture.yawOffset !== null && t >= g1 && t < i1;
-  const heldYaw = turning ? armYaw + spaceDeparture.yawOffset : spaceDeparture.heading;
 
-  // Roof seals shut as the arm stows, so the ship is buttoned up for the flight.
-  spaceWorld.arrivalHinge.rotation.z = 1.15 * (1 - spaceClamp((t - i1) / SPACE_DEPART_LOAD_RETRACT, 0, 1));
+  // ---- Beat 1: load the car at the ring berth (ship parked, arm working). ----
+  if (t < SPACE_DEPART_TRANSIT) {
+    spaceShipPoint(1, _spaceShipPos, SPACE_SHIP_P2D);
+    ship.position.copy(_spaceShipPos);
+    ship.rotation.set(0, spaceShipYawDep(0), 0.22);   // parked nose-high
+    ship.updateWorldMatrix(true, false);
 
-  // Place the car: on the berth until gripped, riding the claw while carried, then
-  // seated in the hold (hood to the nose) for the flight.
-  const attached = t >= i1;
-  const held = attached || t >= g1;
-  if (attached) {
+    // World targets for the load: the berth, the roof opening and the seat in the
+    // hold. The seat/quat also drive the car once it is aboard.
+    const hold = spaceDeparture.hold;
+    spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
+    spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
+    _spaceSeatCarQ.copy(_spaceSeatQuat).multiply(_rideFlipY);   // hood to the nose
+    _spaceRoof.set(0, 1.4, 0);
+    ship.localToWorld(_spaceRoof);
+    _spacePadH.copy(_spaceBerth); _spacePadH.y += hold;
+    _spaceRoofH.copy(_spaceRoof); _spaceRoofH.y += hold;
+    _spaceSeatH.copy(_spaceSeatPos); _spaceSeatH.y += hold;
+
+    // ---- The arm load: grab off the berth, carry over the roof, lower into the
+    // hold, release and stow. (Timeline mirrors the city boarding ride.) ----
+    const g1 = SPACE_DEPART_LOAD_GRAB;
+    const c1 = g1 + SPACE_DEPART_LOAD_CARRY;
+    const i1 = c1 + SPACE_DEPART_LOAD_INSERT;
+    let grip;
+    if (t < g1) {
+      const l = rrSmooth(spaceClamp(t / SPACE_DEPART_LOAD_GRAB, 0, 1));
+      _spaceHand.copy(_spaceRest).lerp(_spacePadH, l);
+      grip = l;
+    } else if (t < c1) {
+      const l = rrSmooth(spaceClamp((t - g1) / SPACE_DEPART_LOAD_CARRY, 0, 1));
+      _spaceHand.copy(_spacePadH).lerp(_spaceRoofH, l);
+      grip = 1;
+    } else if (t < i1) {
+      const l = rrSmooth(spaceClamp((t - c1) / SPACE_DEPART_LOAD_INSERT, 0, 1));
+      _spaceHand.copy(_spaceRoofH).lerp(_spaceSeatH, l);
+      grip = 1 - l;
+    } else {
+      const l = rrSmooth(spaceClamp((t - i1) / SPACE_DEPART_LOAD_RETRACT, 0, 1));
+      _spaceHand.copy(_spaceSeatH).lerp(_spaceRest, l);
+      grip = 0;
+    }
+    const fit = {
+      half: spaceDeparture.half,
+      len: spaceDeparture.top,
+      drop: spaceDeparture.top * 0.5,
+      width: spaceDeparture.half * 2 + 0.4,
+    };
+    const claw = arm.reach(_spaceHand, grip, fit);
+
+    // The car turns WITH the hand while carried, then the claw rolls its hood
+    // round to face the nose as it lowers it into the hold.
+    const armYaw = arm.yawAngle();
+    if (t >= g1 && t < c1 && spaceDeparture.yawOffset === null) {
+      spaceDeparture.yawOffset = spaceDeparture.heading - armYaw;
+    }
+    const turning = spaceDeparture.yawOffset !== null && t >= g1 && t < i1;
+    const heldYaw = turning ? armYaw + spaceDeparture.yawOffset : spaceDeparture.heading;
+
+    // Roof seals shut as the arm stows, so the ship is buttoned up for the flight.
+    spaceWorld.arrivalHinge.rotation.z = 1.15 * (1 - spaceClamp((t - i1) / SPACE_DEPART_LOAD_RETRACT, 0, 1));
+
+    // Place the car: on the berth until gripped, riding the claw while carried,
+    // then seated in the hold (hood to the nose) for the flight.
+    const attached = t >= i1;
+    const held = attached || t >= g1;
+    if (attached) {
+      car.position.copy(_spaceSeatPos);
+      car.quaternion.copy(_spaceSeatCarQ);
+    } else if (held) {
+      car.position.set(claw.x, claw.y - hold, claw.z);
+      car.rotation.set(0, heldYaw, 0);
+      if (t >= c1) {
+        // ...and the insert itself turns it forward: by the time the claw lets
+        // go, the hood is already pointing at the nose.
+        const l = rrSmooth(spaceClamp((t - c1) / SPACE_DEPART_LOAD_INSERT, 0, 1));
+        car.quaternion.slerp(_spaceSeatCarQ, l);
+      }
+    } else {
+      car.position.copy(_spaceBerth);
+      car.rotation.set(0, spaceDeparture.heading, 0);
+    }
+    return;
+  }
+
+  // ---- Beat 2: hold the loaded ship at the ring through the cut to black. ----
+  if (t < SPACE_DEPART_DOOR) {
+    spaceShipPoint(1, _spaceShipPos, SPACE_SHIP_P2D);
+    ship.position.copy(_spaceShipPos);
+    ship.rotation.set(0, spaceShipYawDep(0), 0.22);
+    ship.updateWorldMatrix(true, false);
+    spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
+    spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
     car.position.copy(_spaceSeatPos);
     car.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
-  } else if (held) {
-    car.position.set(claw.x, claw.y - hold, claw.z);
-    car.rotation.set(0, heldYaw, 0);
-  } else {
-    car.position.copy(_spaceBerth);
-    car.rotation.set(0, spaceDeparture.heading, 0);
+    return;
   }
 
-  if (t > SPACE_DEPART_FADE) {
-    _fadeOverlay.style.transition = 'none';
-    _fadeOverlay.style.opacity = String(spaceClamp((t - SPACE_DEPART_FADE) / (SPACE_DEPART_END - SPACE_DEPART_FADE), 0, 1));
+  // ---- Beat 3: the eye opens wide and the rocket bursts out of it. ----
+  if (!spaceDeparture.atEye) {
+    spaceDeparture.atEye = true;
+    spaceWorld.arrivalHinge.rotation.z = 0;
+    arm.reach(_spaceRest, 0);           // keep the empty claw stowed
   }
+
+  const doorOpen = _spaceSmooth(spaceClamp(
+    (t - (SPACE_DEPART_DOOR + SPACE_DEPART_REVEAL)) / SPACE_DEPART_DOOR_DUR, 0, 1));
+  const doorClose = _spaceSmooth(spaceClamp((t - (SPACE_DEPART_LAUNCH + 0.8)) / 1.2, 0, 1));
+  spaceWorld.setDoors(SPACE_DEPART_WIDE * doorOpen * (1 - doorClose));
+
+  // u stays 0 while the lids draw back (the rocket waits just behind the iris),
+  // then eases onto the outward climb along the eye's axis.
+  const u = _spaceSmooth(spaceClamp((t - SPACE_DEPART_LAUNCH) / SPACE_DEPART_FLY_DUR, 0, 1));
+  spaceShipPoint(1 - u, _spaceShipPos, SPACE_DEPART_EYE_PARK);
+  ship.position.copy(_spaceShipPos);
+  ship.rotation.set(0, spaceShipYawDep(u, SPACE_DEPART_EYE_PARK), 0);
+  ship.updateWorldMatrix(true, false);
+
+  // Plume builds at the burst-out and trails the climb away.
+  const plume = _spaceSmooth(spaceClamp((t - (SPACE_DEPART_LAUNCH - 0.25)) / 0.9, 0, 1));
+  const pl = spaceWorld.arrivalPlume;
+  pl.g.visible = plume > 0.02;
+  if (pl.g.visible) {
+    pl.g.scale.set(0.4 + 0.9 * plume, 0.6 + 0.5 * plume, 0.7 + 0.3 * plume);
+    pl.outer.material.opacity = 0.55 * plume;
+    pl.inner.material.opacity = 0.95 * plume;
+  }
+
+  // The car rides the hold, hood to the nose, all the way out.
+  spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
+  spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
+  car.position.copy(_spaceSeatPos);
+  car.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
+
   if (t >= SPACE_DEPART_END) finishSpaceDeparture();
 }
 
@@ -7583,7 +9030,7 @@ function updateSpaceDeparture(delta) {
 function returnCityFromSpace() {
   if (car.parent) car.parent.remove(car);
   scene.add(car);
-  worldState = 'city';
+  setWorldState('city');
   portalCarScale = 1;
   car.scale.setScalar(1);
   car.visible = true;
@@ -7615,6 +9062,10 @@ function returnCityFromSpace() {
   rocketRide.armed = false;
   placePlayerTwoNearP1();
   spaceDock.dwell = 0;
+  spaceDock.rise = 0;
+  spaceDock.boarding = false;
+  spaceDock.entered = false;
+  if (spaceWorld.roadLift) spaceWorld.roadLift.deck.position.y = 0;
   _fadeOverlay.style.transition = 'opacity 1.0s';
   _fadeOverlay.style.opacity = '0';
 }
@@ -7655,7 +9106,7 @@ const _clSeatQ = new THREE.Quaternion(); // the ship quaternion (car rides hood-
 function startCityLanding() {
   if (car.parent) car.parent.remove(car);
   scene.add(car);
-  worldState = 'city';
+  setWorldState('city');
   playerKnock = null;
   velocity.value = 0;
   steering.value = 0;
@@ -7793,6 +9244,11 @@ function updateCityLanding(delta) {
     car.position.copy(_clStage);
     car.rotation.set(0, cityLanding.heading, 0);
   }
+
+  // The handlers walk in for the drop-off: they close in as the roof opens and
+  // step back once the arm has stowed.
+  const load = t < TO ? 0 : t < TR ? 1 : Math.max(0, 1 - (t - TR) / CITY_LAND_RETRACT);
+  b.poseHandlers(car.position, load);
 
   if (t >= CITY_LAND_END) finishCityLanding();
 }
@@ -8067,6 +9523,31 @@ function drawSpaceMinimap(ctx) {
   ctx.fillStyle = '#9fe8ff';
   ctx.fillText('BAY', cx + ringPx, cy - 10);
 
+  // The berth boarding elevator: a marked pad just past the rim at loop angle 0,
+  // drawn as a small platform with an up-arrow, so the player can find where to
+  // park and rise to the exit rocket.
+  const lx = cx + ringPx + 9, ly = cy + 6;
+  ctx.fillStyle = 'rgba(57,215,255,0.22)';
+  ctx.fillRect(lx - 5, ly - 5, 10, 10);
+  ctx.strokeStyle = '#ffcf7a';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(lx - 5, ly - 5, 10, 10);
+  ctx.fillStyle = '#ffcf7a';
+  ctx.beginPath();
+  ctx.moveTo(lx, ly - 3.4);
+  ctx.lineTo(lx - 3, ly + 1);
+  ctx.lineTo(lx - 0.8, ly + 1);
+  ctx.lineTo(lx - 0.8, ly + 3.4);
+  ctx.lineTo(lx + 0.8, ly + 3.4);
+  ctx.lineTo(lx + 0.8, ly + 1);
+  ctx.lineTo(lx + 3, ly + 1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.8)';
+  ctx.fillText('LIFT', lx + 0.6, ly + 11.4);
+  ctx.fillStyle = '#ffcf7a';
+  ctx.fillText('LIFT', lx, ly + 11);
+
   // The car: a nib on the rim pointing the way the car's nose faces (local -X).
   const px = cx + Math.cos(ang) * ringPx;
   const py = cy + Math.sin(ang) * ringPx;
@@ -8105,6 +9586,10 @@ function drawMinimap(mmCtxArg, opts) {
     // A warm interior wash so the mini-map reads as "this is a room", not just
     // a missing city.
     ctx.fillStyle = 'rgba(250,245,225,0.24)';
+    ctx.fillRect(0, 0, 160, 160);
+  } else if (worldState === 'cornfield') {
+    // Grass-green wash behind the farm plan.
+    ctx.fillStyle = 'rgba(74,116,54,0.28)';
     ctx.fillRect(0, 0, 160, 160);
   }
 
@@ -8157,70 +9642,95 @@ function drawMinimap(mmCtxArg, opts) {
     band(BEACH_MAP_Z0, BEACH_RIM_Z, 'rgba(22,64,88,0.45)');
   }
 
-  // ===== Debug coordinate grid: faint lines every 20 world units =====
-  // x runs -90..90 (right..left after the rotation), z runs -90..123
-  // (south..north; north is the TOP of the minimap, where the grass field /
-  // mega ramp is).
+  // ===== Map projection =====
+  // Non-city worlds (ramp, underground, house, beach) are all small and close to
+  // the origin, so they keep the original scale. The CITY is now a big finite
+  // rectangle (x −180, z -180..246): it gets its own smaller scale and a centre
+  // offset so the whole map fits the 160px canvas.
+  const cityMode = worldState === 'city';
+  const cityScale = 0.35;
+  const cityCx = (worldXLo + worldXHi) / 2;   // 0
+  const cityCz = (worldZLo + worldZHi) / 2;   // 33
+  // The farm is a 244 x 230 rectangle around world (4, 11): bigger than the
+  // small stunt worlds but nowhere near city size, so it gets its own scale and
+  // centre (taken from the level's mapBounds) instead of spilling off-canvas.
+  const cornMode = worldState === 'cornfield';
+  const cornScale = 0.58;
+  const cornBounds = cornMode ? (cornfieldWorld.mapBounds || { x0: -118, x1: 126, z0: -104, z1: 126 }) : null;
+  const cornCx = cornBounds ? (cornBounds.x0 + cornBounds.x1) / 2 : 0;
+  const cornCz = cornBounds ? (cornBounds.z0 + cornBounds.z1) / 2 : 0;
+  const mScale = cityMode ? cityScale : cornMode ? cornScale : mmScale;
+  const mCx = cityMode ? cityCx : cornMode ? cornCx : 0;
+  const mCz = cityMode ? cityCz : cornMode ? cornCz : 0;
+  const mpx = (x) => mmCenter + (x - mCx) * mScale;
+  const mpz = (z) => mmCenter + (z - mCz) * mScale;
+
+  // ===== Debug coordinate grid =====
+  // Faint lines on a world-space grid. The city now spans far more ground, so it
+  // gets a coarser, wider grid than the small levels.
+  const gExtent = cityMode ? 160 : cornMode ? 140 : 80;
+  const gStep = cityMode ? 40 : cornMode ? 40 : 20;
   ctx.strokeStyle = 'rgba(150,175,215,0.13)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let g = -80; g <= 80; g += 20) {
-    const p = mmCenter + g * mmScale;
-    ctx.moveTo(p, 0); ctx.lineTo(p, 160);   // constant x
-    ctx.moveTo(0, p); ctx.lineTo(160, p);   // constant z
+  for (let g = -gExtent; g <= gExtent; g += gStep) {
+    const px = mpx(g), pz = mpz(g);
+    ctx.moveTo(px, 0); ctx.lineTo(px, 160);   // constant x
+    ctx.moveTo(0, pz); ctx.lineTo(160, pz);   // constant z
   }
   ctx.stroke();
 
+  // Crosshair on the world axes (x = 0 / z = 0), laid over the grid.
   ctx.strokeStyle = 'rgba(120,120,130,0.65)';
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(mmCenter - 90 * mmScale, mmCenter); ctx.lineTo(mmCenter + 90 * mmScale, mmCenter);
-  ctx.moveTo(mmCenter, mmCenter - 90 * mmScale); ctx.lineTo(mmCenter, mmCenter + 90 * mmScale);
+  ctx.moveTo(mpx(-gExtent), mpz(0)); ctx.lineTo(mpx(gExtent), mpz(0));
+  ctx.moveTo(mpx(0), mpz(-gExtent)); ctx.lineTo(mpx(0), mpz(gExtent));
   ctx.stroke();
   if (worldState === 'city') {
     ctx.fillStyle = 'rgba(190,190,200,0.5)';
     for (const c of buildingColliders) {
-      const sx = mmCenter + c.x * mmScale;
-      const sz = mmCenter + c.z * mmScale;
-      ctx.fillRect(sx - c.halfW * mmScale, sz - c.halfD * mmScale, c.halfW * 2 * mmScale, c.halfD * 2 * mmScale);
+      const sx = mpx(c.x);
+      const sz = mpz(c.z);
+      ctx.fillRect(sx - c.halfW * mScale, sz - c.halfD * mScale, c.halfW * 2 * mScale, c.halfD * 2 * mScale);
     }
     // The mega launch ramp is intentionally NOT drawn on the minimap (it sits
     // at the north edge of the map, in the grass field that isn't shown either).
     if (!splitActive) {   // no chase car on the map during a split session
       ctx.fillStyle = '#3aa0ff';   // bumper car
       ctx.beginPath();
-      ctx.arc(mmCenter + bumperCar.position.x * mmScale, mmCenter + bumperCar.position.z * mmScale, 2.6, 0, Math.PI * 2);
+      ctx.arc(mpx(bumperCar.position.x), mpz(bumperCar.position.z), 2.6, 0, Math.PI * 2);
       ctx.fill();
     }
     // Only while it is on the road: a stood-down engine is parked in its bay and
-  // would otherwise put an orange dot on the map for a truck you cannot see.
-  if (firetruck.duty()) {
-    ctx.fillStyle = '#ff8800';   // fire engine
-    ctx.beginPath();
-    ctx.arc(mmCenter + firetruck.truck.position.x * mmScale, mmCenter + firetruck.truck.position.z * mmScale, 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
+    // would otherwise put an orange dot on the map for a truck you cannot see.
+    if (firetruck.duty()) {
+      ctx.fillStyle = '#ff8800';   // fire engine
+      ctx.beginPath();
+      ctx.arc(mpx(firetruck.truck.position.x), mpz(firetruck.truck.position.z), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.fillStyle = '#00ffcc';   // giant robot
     ctx.beginPath();
-    ctx.arc(mmCenter + robot.mesh.position.x * mmScale, mmCenter + robot.mesh.position.z * mmScale, 5.5, 0, Math.PI * 2);
+    ctx.arc(mpx(robot.mesh.position.x), mpz(robot.mesh.position.z), 5.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#d8a24a';   // freight train
     for (let i = 0; i < train.units.length; i++) {
       const u = train.units[i];
       ctx.beginPath();
-      ctx.arc(mmCenter + u.position.x * mmScale, mmCenter + u.position.z * mmScale, i === 0 ? 3.4 : 2.5, 0, Math.PI * 2);
+      ctx.arc(mpx(u.position.x), mpz(u.position.z), i === 0 ? 3.4 : 2.5, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = '#ff3333';   // active fires
     for (const f of firetruck.fires) {
       if (!f.active) continue;
       ctx.beginPath();
-      ctx.arc(mmCenter + f.x * mmScale, mmCenter + f.z * mmScale, 2.2, 0, Math.PI * 2);
+      ctx.arc(mpx(f.x), mpz(f.z), 2.2, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.fillStyle = '#ff9a3c';   // flame lizard
     ctx.beginPath();
-    ctx.arc(mmCenter + lizard.mesh.position.x * mmScale, mmCenter + lizard.mesh.position.z * mmScale, 2.2, 0, Math.PI * 2);
+    ctx.arc(mpx(lizard.mesh.position.x), mpz(lizard.mesh.position.z), 2.2, 0, Math.PI * 2);
     ctx.fill();
 
   } else if (worldState === 'ramp') {
@@ -8301,22 +9811,23 @@ function drawMinimap(mmCtxArg, opts) {
     ctx.beginPath();
     ctx.arc(mmCenter + boulder.x * mmScale, mmCenter + boulder.z * mmScale, 2.4, 0, Math.PI * 2);
     ctx.fill();
-  } else if (worldState === 'underground') {
-    // Feature markers (idea #29): the cavern is large and dark, so drop a
-    // marker at each landmark from the level's exported mapFeatures list —
-    // a HOLLOW square per built feature (same faint outline style as the
-    // city-building footprints). The mountain keeps its round ring.
-    // Labels are drawn later, after the mirror is undone, so the text isn't
-    // flipped.
-    const feats = undergroundWorld.mapFeatures || [];
+  } else if (worldState === 'underground' || worldState === 'cornfield') {
+    // Feature markers (idea #29): the cavern and the farm are too large to read
+    // from the car alone, so drop a marker at each landmark from the level's
+    // exported mapFeatures list — a HOLLOW shape per built feature (same faint
+    // outline style as the city-building footprints). The mountain keeps its
+    // round ring. Labels are drawn later, after the mirror is undone, so the
+    // text isn't flipped.
+    const farm = worldState === 'cornfield';
+    const feats = (farm ? cornfieldWorld.mapFeatures : undergroundWorld.mapFeatures) || [];
     for (const f of feats) {
-      const fx = mmCenter + f.x * mmScale;
-      const fz = mmCenter + f.z * mmScale;
+      const fx = farm ? mpx(f.x) : mmCenter + f.x * mmScale;
+      const fz = farm ? mpz(f.z) : mmCenter + f.z * mmScale;
       ctx.strokeStyle = f.color;
       ctx.fillStyle = f.color;
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = 1.3;
-      const s = Math.max(2.2, f.r * mmScale);
+      const s = Math.max(2.2, f.r * (farm ? mScale : mmScale));
       if (f.kind === 'mountain' || f.kind === 'circle') {
         ctx.beginPath();
         ctx.arc(fx, fz, s, 0, Math.PI * 2);
@@ -8471,7 +9982,7 @@ function drawMinimap(mmCtxArg, opts) {
     const s = mark.other ? 3 : 1;
     ctx.fillStyle = pcolor;
     ctx.save();
-    ctx.translate(mmCenter + pc.position.x * mmScale, mmCenter + pc.position.z * mmScale);
+    ctx.translate(mpx(pc.position.x), mpz(pc.position.z));
     ctx.rotate(Math.atan2(Math.sin(pc.rotation.y), -Math.cos(pc.rotation.y)));
     ctx.beginPath();
     ctx.moveTo(5.5 * s, 0);       // nose
@@ -8489,14 +10000,19 @@ function drawMinimap(mmCtxArg, opts) {
   ctx.restore();
 
   // Feature labels (idea #29), drawn un-mirrored so the text reads normally.
-  if (worldState === 'underground') {
+  if (worldState === 'underground' || worldState === 'cornfield') {
+    const farm = worldState === 'cornfield';
+    const feats = (farm ? cornfieldWorld.mapFeatures : undergroundWorld.mapFeatures) || [];
+    const fs = farm ? mScale : mmScale;
     ctx.font = '6px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const f of (undergroundWorld.mapFeatures || [])) {
+    for (const f of feats) {
       if (!f.label) continue;
-      let lx = 160 - (mmCenter + f.x * mmScale);
-      let lz = 160 - (mmCenter + f.z * mmScale) - Math.max(2.2, f.r * mmScale) - 4;
+      const px = farm ? mpx(f.x) : mmCenter + f.x * mmScale;
+      const pz = farm ? mpz(f.z) : mmCenter + f.z * mmScale;
+      let lx = 160 - px;
+      let lz = 160 - pz - Math.max(2.2, f.r * fs) - 4;
       // The skate-park square pokes off the canvas's right edge (it sits west
       // of the mapped region), so clamp its label onto the visible square.
       if (f.kind === 'park') {
@@ -8543,8 +10059,8 @@ function drawMinimap(mmCtxArg, opts) {
     ctx.textBaseline = 'middle';
     const tagArrow = (pc, text, color) => {
       if (!pc) return;
-      const ax = 160 - (mmCenter + pc.position.x * mmScale);
-      const ay = 160 - (mmCenter + pc.position.z * mmScale);
+      const ax = 160 - mpx(pc.position.x);
+      const ay = 160 - mpz(pc.position.z);
       ctx.fillStyle = 'rgba(0,0,0,0.8)';
       ctx.fillText(text, ax + 0.8, ay - 11.8);
       ctx.fillStyle = color;
@@ -8555,18 +10071,25 @@ function drawMinimap(mmCtxArg, opts) {
   }
 
   // Axis numbers: x values along the top edge, z values down the left edge
-  // (both shown in MAP coordinates: x=0 at the left edge, z=0 at the top
-  // edge — the arrow's corner — counting up away from it). Ticks sit every 20
-  // world units, so the numbers are offset by the corner's world position.
-  // The x row counts UP left-to-right, matching screen-pixel habits.
+  // (both shown in MAP coordinates: counting up away from the map's top-left
+  // arrow corner). The city now spans much more ground, so its ticks are
+  // coarser; the small levels keep the original 20-unit ticks and their legacy
+  // 90/123 axis bases.
   ctx.font = '7px sans-serif';
   ctx.fillStyle = 'rgba(160,180,220,0.55)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
-  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(worldXHi - g), mmCenter - g * mmScale, 1);
+  const axisXHi = cityMode ? worldXHi : 90;
+  const axisZHi = cityMode ? worldZHi : 123;
+  const axLo = cityMode ? worldXLo : -80;
+  const axHi = cityMode ? worldXHi : 80;
+  const azLo = cityMode ? worldZLo : -80;
+  const azHi = cityMode ? worldZHi : 80;
+  const axStep = cityMode ? 80 : 20;
+  for (let g = axLo; g <= axHi; g += axStep) ctx.fillText(String(Math.round(axisXHi - g)), 160 - mpx(g), 1);
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-  for (let g = -80; g <= 80; g += 20) ctx.fillText(String(worldZHi - g), 4, mmCenter - g * mmScale);
+  for (let g = azLo; g <= azHi; g += axStep) ctx.fillText(String(Math.round(axisZHi - g)), 4, 160 - mpz(g));
   ctx.fillStyle = 'rgba(160,180,220,0.65)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'top';
@@ -8581,15 +10104,15 @@ function drawMinimap(mmCtxArg, opts) {
   // grows as world x DEcreases because the minimap is a true view-from-above
   // — east renders left.) Physics, spawn and teleports keep using real world
   // coords; this is display-only.
-  //   mapX = worldXHi - worldX   (0..180)
-  //   mapZ = worldZHi - worldZ   (0..213)
+  //   mapX = worldXHi - worldX   (0..360)
+  //   mapZ = worldZHi - worldZ   (0..426)
   const mapX = Math.round(worldXHi - car.position.x);
   const mapZ = Math.round(worldZHi - car.position.z);
   const label = `x=${mapX} z=${mapZ}`;
   ctx.font = '9px sans-serif';
   const lw = ctx.measureText(label).width;
-  const px0 = mmCenter - car.position.x * mmScale;
-  const pz0 = mmCenter - car.position.z * mmScale;
+  const px0 = 160 - mpx(car.position.x);
+  const pz0 = 160 - mpz(car.position.z);
   let lx = px0 + 7;
   if (lx + lw + 4 > 160) lx = px0 - lw - 7;   // flip to the left near the right edge
   let ly = pz0 + 10;
@@ -8831,6 +10354,7 @@ function padRebuildFocus() {
   else if (document.body.classList.contains('tab-levels')) scope = document.getElementById('levels-panel');
   else if (document.body.classList.contains('tab-objects')) scope = document.getElementById('objects-panel');
   else if (document.body.classList.contains('tab-controls')) scope = document.getElementById('controls-panel');
+  else if (document.body.classList.contains('tab-camera')) scope = document.getElementById('camera-panel');
   else if (document.body.classList.contains('tab-graphics')) scope = document.getElementById('graphics-panel');
   else if (document.body.classList.contains('tab-about')) scope = document.getElementById('about-panel');
   // Inputs count as controls on the Graphics tab: the pad walks a slider with
@@ -8869,7 +10393,7 @@ function padMoveFocus(step) {
 // LB / RB: step to the previous / next tab, wrapping round the list — the
 // pad's equivalent of clicking along the tab row.
 function padStepTab(dir) {
-  const tabs = ['player', 'chase', 'multiplayer', 'levels', 'controls', 'graphics', 'about'];
+  const tabs = ['player', 'chase', 'multiplayer', 'levels', 'controls', 'camera', 'graphics', 'about'];
   const i = tabs.indexOf(pickerTab);
   setPickerTab(tabs[(i + dir + tabs.length) % tabs.length]);
 }
@@ -9165,6 +10689,11 @@ const CAR_KINDS = [
   // Drives like any other vehicle (wheels spin, front pair steers); it is here
   // so you can take it round the city and park it wherever you like.
   { id: 'taco', label: 'Taco Truck', color: '#d8451f', scale: 1, build: () => createTacoTruck() },
+  // The 1939 Farmall from the cornfield, farmer dog at the wheel. A farm
+  // vehicle, not city traffic — it lives only in this chooser (and in the
+  // cornfield itself as an AI), never in cars.js's addTrafficCars patrol list.
+  // It steers its first two wheel pivots and rolls the rest, like any other car.
+  { id: 'tractor', label: '1939 Farmall', color: '#b8431d', scale: 1, build: () => makeFarmallTractor() },
   // The fire engine, the same model the city's AI engine drives around in (so
   // the ladder, the deck gun and the lightbar are all real). Drives like any
   // other vehicle and its beacons flash while it moves — but while you are in
@@ -9953,7 +11482,7 @@ function exitSelectMode(apply) {
   document.body.classList.remove('select-mode');
   // Leaving the modal drops the stage furniture too, so reopening it starts
   // from the tab that was showing rather than a stale object or a bare glow.
-  document.body.classList.remove('tab-levels', 'tab-objects', 'tab-controls', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open');
+  document.body.classList.remove('tab-levels', 'tab-objects', 'tab-controls', 'tab-camera', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open');
   clearSelectPreview();
   gearBtn.textContent = '⚙';
   gearBtn.title = 'Settings';
@@ -9995,13 +11524,16 @@ function cycleCar(dir) {
 // controller twin — and it is a browser too, so it hides the stage furniture
 // the same way. GRAPHICS edits the live renderer, so it is a browser as well,
 // but it drops back to rendering the real world behind the panel (see animate)
-// instead of the empty showroom stage. OBJECTS has no tab button of its own —
-// it is a screen inside LEVELS, opened from a level's own Objects button — but
-// the body classes below still drive its panel.
+// instead of the empty showroom stage. CAMERA does the same thing for the same
+// reason: it picks the live view (chase / top-down / cinematic) and shows it on
+// the real world behind the panel rather than describing it on a bare stage.
+// OBJECTS has no tab button of its own — it is a screen inside LEVELS, opened
+// from a level's own Objects button — but the body classes below still drive its
+// panel.
 function setPickerTab(tab) {
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
-  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-graphics', 'graphics'], ['tab-about', 'about'], ['tab-multiplayer', 'multiplayer']]) {
+  for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-camera', 'camera'], ['tab-graphics', 'graphics'], ['tab-about', 'about'], ['tab-multiplayer', 'multiplayer']]) {
     const el = tabEl(id);
     if (el) el.classList.toggle('active', tab === name);
   }
@@ -10011,10 +11543,11 @@ function setPickerTab(tab) {
   document.body.classList.toggle('tab-levels', tab === 'levels');
   document.body.classList.toggle('tab-objects', tab === 'objects');
   document.body.classList.toggle('tab-controls', tab === 'controls');
+  document.body.classList.toggle('tab-camera', tab === 'camera');
   document.body.classList.toggle('tab-graphics', tab === 'graphics');
   document.body.classList.toggle('tab-about', tab === 'about');
   document.body.classList.toggle('tab-multiplayer', tab === 'multiplayer');
-  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects' || tab === 'controls' || tab === 'graphics' || tab === 'about' || tab === 'multiplayer');
+  document.body.classList.toggle('browser-mode', tab === 'levels' || tab === 'objects' || tab === 'controls' || tab === 'camera' || tab === 'graphics' || tab === 'about' || tab === 'multiplayer');
   // The object-on-the-disc layout belongs to the objects screen alone. Leaving
   // it has to put the grid furniture back, or the panel comes back empty.
   if (tab !== 'objects') document.body.classList.remove('object-open');
@@ -10032,6 +11565,11 @@ function setPickerTab(tab) {
   } else if (tab === 'graphics') {
     clearSelectPreview();
     gfxUpdateUI();   // repaint from `gfx`, so reopening the tab always shows the applied settings
+  } else if (tab === 'camera') {
+    // Like Graphics, the Camera tab renders the real world behind its panel, so
+    // drop the showroom stage and paint the buttons to the view that is live.
+    clearSelectPreview();
+    refreshCameraTabUI();
   } else if (tab === 'about') {
     clearSelectPreview();
   } else if (tab === 'multiplayer') {
@@ -10213,6 +11751,14 @@ const tabControlsBtn = document.getElementById('tab-controls');
 if (tabControlsBtn) tabControlsBtn.addEventListener('click', () => setPickerTab('controls'));
 const tabGraphicsBtn = document.getElementById('tab-graphics');
 if (tabGraphicsBtn) tabGraphicsBtn.addEventListener('click', () => setPickerTab('graphics'));
+const tabCameraBtn = document.getElementById('tab-camera');
+if (tabCameraBtn) tabCameraBtn.addEventListener('click', () => setPickerTab('camera'));
+// The Camera tab's three view buttons. Clicking one jumps the live camera to
+// that view (running behind the panel) and re-paints so the choice is obvious.
+for (const [id, name] of [['cam-view-chase', 'chase'], ['cam-view-plan', 'plan'], ['cam-view-cine', 'cine']]) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => { setCameraView(name); refreshCameraTabUI(); });
+}
 const tabAboutBtn = document.getElementById('tab-about');
 if (tabAboutBtn) tabAboutBtn.addEventListener('click', () => setPickerTab('about'));
 const tabMpBtn = document.getElementById('tab-multiplayer');
@@ -10533,6 +12079,10 @@ function openLevelObjects(levelId) {
 // mirrors one of the enter*World functions and then immediately overrides the
 // spawn, rather than reusing them and fighting the drop they set up.
 function travelToLevel(levelId) {
+  // Any level jump (or context jump to another object) tears down the rescue
+  // camera pose first — it freezes the vent timeline and holds the pause, and
+  // must not leak into the destination. No-op when the pose is not up.
+  endVentCamTune();
   if (levelId === worldState) { exitSelectMode(false); return; }
   if (levelId === 'city') {
     enterCityWorld();
@@ -10569,11 +12119,12 @@ function travelToLevel(levelId) {
     housePortal.side = null;
     housePortal.swapping = false;
     housePortal.watch.active = false;
+    housePortal.rider = 0;
     _fadeOverlay.style.transition = 'none';
     _fadeOverlay.style.opacity = '0';
     scene.remove(car);
     houseScene.add(car);
-    worldState = 'house';
+    setWorldState('house');
     car.position.set(HOUSE_START.x, HOUSE.floorY, HOUSE_START.z);
     car.rotation.set(0, HOUSE_START.yaw, 0);
     globalDarkness = true;
@@ -10589,11 +12140,13 @@ function travelToLevel(levelId) {
   } else if (levelId === 'beach') {
     scene.remove(car);
     beachScene.add(car);
-    worldState = 'beach';
+    setWorldState('beach');
     resetKnockables();
     resetHydrantSprays();
     resetHouseAsh();
     resetShellTripPhysics();
+  } else if (levelId === 'cornfield') {
+    enterCornfieldWorld();
   }
   car.visible = true;
   velocity.value = 0;
@@ -10601,6 +12154,10 @@ function travelToLevel(levelId) {
   jumpState.inAir = false;
   jumpState.yVelocity = 0;
   playerKnock = null;
+  // Menu jumps bypass the enter*World helpers for some destinations, so bring
+  // the twin in here as well — it is idempotent where a branch already did it,
+  // and it is what restores P2 (full size, beside P1) for house/beach/space.
+  placePlayerTwoNearP1();
   exitSelectMode(false);
   shake.intensity = Math.max(shake.intensity, 0.4);
 }
@@ -10622,6 +12179,14 @@ const odCloseBtn = document.getElementById('od-close');
 const odGoBtn = document.getElementById('od-go');
 const odPrevBtn = document.getElementById('od-prev');
 const odNextBtn = document.getElementById('od-next');
+// Camera-tuning HUD for the Rescue Crane grab pose (ventCamTune, above).
+const ventCamHud = document.getElementById('ventcam-hud');
+const vhMapEl = document.getElementById('vh-map');
+const vhCamEl = document.getElementById('vh-cam');
+const vhLookEl = document.getElementById('vh-look');
+const vhOrbitEl = document.getElementById('vh-orbit');
+const vhUseBtn = document.getElementById('vh-use');
+const vhExitBtn = document.getElementById('vh-exit');
 
 function renderObjectBrowser() {
   padFocusDirty = true;   // grid / pager / detail buttons all change here
@@ -11008,6 +12573,10 @@ function viewObjectInContext() {
   // park a little back along the arc from the prop, facing it, then let the ring
   // drive keep the car glued to the rim.
   if (objLevel === 'space') {
+    // The Rescue Crane's context view is the grab itself: freeze the real
+    // rescue timeline at the claw's cast and hand the camera over with the
+    // coordinate HUD, instead of parking the car in front of the prop.
+    if (o.ring && o.ring.pose === 'ventGrab' && startVentCamTune()) return;
     if (o.ring) {
       const back = 8;                        // stand off so the prop is in view
       const s = ringWrapS(o.ring.s - back);
@@ -11044,6 +12613,7 @@ function groundHeightForWorld(levelId, x, z) {
   // cavern and is not where the course (or anything on it) sits, so parking on
   // that height drops the car straight through the floor.
   if (levelId === 'underground') return groundHeight;
+  if (levelId === 'cornfield') return cornfieldWorld.groundY;
   return groundHeight;
 }
 
@@ -11056,6 +12626,27 @@ if (odCloseBtn) odCloseBtn.addEventListener('click', closeObject);
 if (odGoBtn) odGoBtn.addEventListener('click', viewObjectInContext);
 if (odPrevBtn) odPrevBtn.addEventListener('click', () => stepObject(-1));
 if (odNextBtn) odNextBtn.addEventListener('click', () => stepObject(1));
+// Rescue-grab camera HUD: commit the framed position straight into the act-1
+// cut's vantage — rebaked as the OFFSET the single exterior camera rides off its
+// moving look anchor (field mutation — the const declaration itself stays put) —
+// or restore the world. The frame buttons re-pose the frozen timeline elsewhere
+// in its grab while keeping whatever framing has been dialed in.
+if (vhUseBtn) vhUseBtn.addEventListener('click', () => {
+  if (!ventCamTune.active) return;
+  SPACE_VENT_EXT_OFF.copy(camera.position).sub(_ventLook);
+  SPACE_VENT_EXT_LOOK_OFF.copy(_ventLookOff);
+  vhUseBtn.textContent = 'Applied!';
+  setTimeout(() => { vhUseBtn.textContent = 'Use this camera'; }, 1200);
+});
+if (vhExitBtn) vhExitBtn.addEventListener('click', endVentCamTune);
+document.querySelectorAll('#ventcam-hud .vh-frame').forEach((b) => {
+  b.addEventListener('click', () => {
+    if (!ventCamTune.active) return;
+    document.querySelectorAll('#ventcam-hud .vh-frame').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    poseVentTuneFrame(b.dataset.frame);
+  });
+});
 
 // Back and forward move through the object history, because every screen change
 // pushed an entry.
@@ -11078,7 +12669,9 @@ window.addEventListener('popstate', () => {
 // screens the two-finger pinch below drives the same cameraOrbit.radius.
 // While the showroom stage is up (the object explorer especially) the wheel
 // zooms THAT camera instead — see selectOrbit — and leaves the hidden game
-// camera untouched.
+// camera untouched. The Graphics and Camera tabs are the exception: they render
+// the real world, so the wheel keeps driving the game camera (the plan view's
+// own zoom when that view is up) rather than the stage.
 const CAM_ZOOM_MIN = 4;
 const CAM_ZOOM_MAX = 85;
 // The wheel station is 88 units across, so the chase cam's tight 85 cap leaves
@@ -11090,7 +12683,7 @@ const SPACE_CAM_ZOOM_MAX = 150;
 window.addEventListener('wheel', (event) => {
   event.preventDefault();
   const factor = Math.exp(event.deltaY * 0.0012);
-  if (selectMode && pickerTab !== 'graphics') {
+  if (selectMode && pickerTab !== 'graphics' && pickerTab !== 'camera') {
     selectOrbit.radius = THREE.MathUtils.clamp(selectOrbit.radius * factor, SELECT_ZOOM_MIN, SELECT_ZOOM_MAX);
     return;
   }
@@ -11133,9 +12726,9 @@ function launchTrebuchet(which = 0) {
   // Horizontal throw direction (world-space, flattened)
   const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(tCar.quaternion);
   fwd.y = 0; fwd.normalize();
-  // Compute a half-map distance in that direction using the world's half
+  // Compute a half-ramp span in that direction using the ramp world's half
   // spans along X/Z so the trebuchet flings you about half the playable map.
-  const desiredDist = Math.hypot(worldXHalf * Math.abs(fwd.x), worldZHalf * Math.abs(fwd.z));
+  const desiredDist = Math.hypot(RAMP_XHALF * Math.abs(fwd.x), RAMP_ZHALF * Math.abs(fwd.z));
   let desiredSpeed = desiredDist / Math.max(0.01, flightTime);
   // Clamp to sensible gameplay bounds so it never becomes absurd.
   desiredSpeed = THREE.MathUtils.clamp(desiredSpeed, 10, 140);
@@ -11549,6 +13142,224 @@ function updateRampWorldBumper(delta) {
   bumperCar.position.y = terrainHeightAt(bumperCar.position.x, bumperCar.position.z) + groundHeight;
 }
 
+// ===== Blue car in the cornfield =====
+// After ~16 seconds in the farm the little blue car shows up in the rows
+// behind you and chases you through the crops. It rides the farm as one of
+// cornfieldWorld.update's actors, so it flattens stalks, rolls pumpkins and
+// shoves barrels along with you, and it can be smashed aside like it is in
+// the city.
+function summonBumperToCornfield() {
+  scene.remove(bumperCar);
+  cornfieldScene.add(bumperCar);
+  bumperInCorn = true;
+  bumperInRamp = false;
+  bumperInSpace = false;
+  bumperSpaceRing = null;
+  bumperKnock = null;
+  bumperState.stopped = false;
+  bumperCar.visible = true;
+  bumperCar.scale.set(1, 1, 1);
+  // Drop it a ways behind the player (a few bearings tried, first clear spot
+  // wins) so it visibly catches up and follows.
+  const fx = -Math.cos(car.rotation.y), fz = Math.sin(car.rotation.y);
+  const tries = [
+    { x: car.position.x - fx * 14, z: car.position.z - fz * 14 },
+    { x: car.position.x - fx * 14 - fz * 8, z: car.position.z - fz * 14 + fx * 8 },
+    { x: car.position.x - fx * 14 + fz * 8, z: car.position.z - fz * 14 - fx * 8 },
+  ];
+  let spot = tries[0];
+  for (const t of tries) {
+    if (!isPositionBlocked(t.x, t.z, aiCarRadius)) { spot = t; break; }
+  }
+  bumperCar.position.set(spot.x, cornfieldWorld.groundY, spot.z);
+  bumperCar.lookAt(car.position.x, spot.y, car.position.z);
+  bumperCar.rotateY(Math.PI / 2);
+}
+
+function updateCornfieldBumper(delta) {
+  if (worldState !== 'cornfield') return;
+  if (splitActive) return;   // no chase car in split-screen
+  if (!bumperInCorn) {
+    bumperCornTimer -= delta;
+    if (bumperCornTimer <= 0) summonBumperToCornfield();
+    return;
+  }
+  // The player can smash it aside (it tumbles, then resumes chasing).
+  if (!bumperKnock) {
+    const pdx = car.position.x - bumperCar.position.x;
+    const pdz = car.position.z - bumperCar.position.z;
+    const pd = Math.hypot(pdx, pdz);
+    if (pd > 0.001 && pd < playerCarRadius + aiCarRadius) knockBumperAside(pdx, pdz, 13, 4.2);
+  }
+  if (bumperKnock) {
+    // Tumble from a hit, then resume chasing once it settles.
+    const k = bumperKnock;
+    bumperCar.position.x += k.vx * delta;
+    bumperCar.position.z += k.vz * delta;
+    bumperCar.rotation.y += k.w * delta;
+    k.vx *= KNOCK_DECAY;
+    k.vz *= KNOCK_DECAY;
+    k.w *= KNOCK_DECAY;
+    k.t -= delta;
+    if (k.t <= 0) bumperKnock = null;
+  } else {
+    // Chase the player, stopping a car length away like it does in the ramp
+    // world — but steered around the farm's solids (barn, silo, farmhouse, —)
+    // with the city AI's sideways slide when the straight shot is blocked.
+    const chaseDir = new THREE.Vector3(
+      car.position.x - bumperCar.position.x,
+      0,
+      car.position.z - bumperCar.position.z
+    );
+    const chaseDistance = chaseDir.length();
+    if (chaseDistance < bumperStopDistance) {
+      bumperState.stopped = true;
+    } else if (chaseDistance > bumperResumeDistance) {
+      bumperState.stopped = false;
+    }
+    bumperState.speed = bumperState.stopped ? 0 : bumperBaseSpeed;
+    if (!bumperState.stopped && chaseDistance > 0.15) {
+      chaseDir.normalize();
+      const move = Math.min(bumperState.speed * delta, Math.max(chaseDistance - bumperStopDistance, 0));
+      const nextX = bumperCar.position.x + chaseDir.x * move;
+      const nextZ = bumperCar.position.z + chaseDir.z * move;
+      if (!isPositionBlocked(nextX, nextZ, aiCarRadius)) {
+        bumperCar.position.x = nextX;
+        bumperCar.position.z = nextZ;
+      } else {
+        // Blocked: try each way around it before giving up the step.
+        const perpX = chaseDir.z, perpZ = -chaseDir.x;
+        const rightX = bumperCar.position.x + perpX * move;
+        const rightZ = bumperCar.position.z + perpZ * move;
+        const leftX = bumperCar.position.x - perpX * move;
+        const leftZ = bumperCar.position.z - perpZ * move;
+        if (!isPositionBlocked(rightX, rightZ, aiCarRadius)) {
+          bumperCar.position.x = rightX;
+          bumperCar.position.z = rightZ;
+        } else if (!isPositionBlocked(leftX, leftZ, aiCarRadius)) {
+          bumperCar.position.x = leftX;
+          bumperCar.position.z = leftZ;
+        }
+      }
+      bumperCar.lookAt(
+        bumperCar.position.x + chaseDir.x,
+        bumperCar.position.y,
+        bumperCar.position.z + chaseDir.z
+      );
+      bumperCar.rotateY(Math.PI / 2);
+    }
+    if (bumperState.stopped && chaseDistance > 0.15 && chaseDistance < bumperStopDistance * 0.65) {
+      const push = bumperStopDistance * 0.65 - chaseDistance;
+      bumperCar.position.addScaledVector(chaseDir.normalize(), -push);
+    }
+    // No knockAt here: the farm owns its props through cornfieldWorld.update,
+    // and the blue car rides along as one of its actors (see the frame loop).
+  }
+  // Ride the farm's surfaces like a real car: the mound, the barn ramp and
+  // the river bank/bed, the same max-of-surfaces the terrain pitch uses.
+  const bgx = bumperCar.position.x, bgz = bumperCar.position.z;
+  if (cornfieldWorld.riverAt(bgx, bgz)) {
+    const ry = cornfieldWorld.riverSurfaceY(bgx, bgz);
+    bumperCar.position.y = ry !== null ? ry : cornfieldWorld.groundY;
+  } else {
+    bumperCar.position.y = Math.max(
+      cornfieldWorld.groundY,
+      cornfieldWorld.hillHeightAt(bgx, bgz),
+      cornfieldWorld.rampSurfaceY(bgx, bgz)
+    );
+  }
+}
+
+// ===== Blue car on the wheel =====
+// The rim's version of the farm visit: after ~16 seconds the blue car joins
+// you on the ring, a half-lap behind in the far lane. It drives the loop with
+// its own ring state (bumperSpaceRing) — the pose is overwritten from that
+// every frame, so all of its movement (chase, knocks, wall clamps) happens in
+// ring space rather than world space.
+function summonBumperToSpace() {
+  scene.remove(bumperCar);
+  spaceScene.add(bumperCar);
+  bumperInSpace = true;
+  bumperInRamp = false;
+  bumperInCorn = false;
+  bumperKnock = null;
+  bumperState.stopped = false;
+  bumperCar.visible = true;
+  bumperCar.scale.set(1, 1, 1);
+  // A ways behind the player along the loop, in the opposite lane, heading
+  // the same way so the chase reads as a race rather than a head-on.
+  bumperSpaceRing = createRingState(spaceDrive.s - 42, spaceWorld.spawn.w - 10, spaceDrive.heading);
+}
+
+function updateSpaceBumper(delta) {
+  if (worldState !== 'space') return;
+  if (spaceArrival.active || spaceDeparture.active || spaceVent.active) return;
+  if (splitActive) return;   // no chase car in split-screen
+  if (!bumperInSpace) {
+    bumperSpaceTimer -= delta;
+    if (bumperSpaceTimer <= 0) summonBumperToSpace();
+    return;
+  }
+  const st = bumperSpaceRing;
+  // A smash on the rim is a ring-space shove: the world-space knock vector is
+  // projected onto the loop's (tangent, axial) frame — world Z is the axial
+  // (w) direction, and the tangent at this angle takes the rest — so the pose
+  // applied after this never has to fight the knock.
+  if (bumperKnock) {
+    const k = bumperKnock;
+    const tA = st.s / RING_R;
+    st.s += (k.vx * -Math.sin(tA) + k.vz * Math.cos(tA)) * delta;
+    st.w += k.vz * delta;
+    st.heading += k.w * delta * 3;
+    st.speed *= Math.max(0, 1 - 1.5 * delta);
+    k.vx *= KNOCK_DECAY;
+    k.vz *= KNOCK_DECAY;
+    k.w *= KNOCK_DECAY;
+    k.t -= delta;
+    if (k.t <= 0) bumperKnock = null;
+  } else {
+    // Player smash contact: the same proximity rule as the ramp world (the
+    // ring-space cars still have world positions, so the chord test works).
+    const pdx = car.position.x - bumperCar.position.x;
+    const pdz = car.position.z - bumperCar.position.z;
+    const pd = Math.hypot(pdx, pdz);
+    if (pd > 0.001 && pd < playerCarRadius + aiCarRadius) knockBumperAside(pdx, pdz, 13, 4.2);
+  }
+  // Cruise control: close the shortest arc gap, easing in so it holds a few
+  // car lengths back instead of slamming into the player's bumper, and
+  // reversing out when it gets too close.
+  const dS = spaceWrapDelta(spaceDrive.s - st.s);
+  const gap = Math.abs(dS);
+  let desired;
+  if (gap < 2.5) desired = -6;
+  else if (gap < 5) desired = 0;
+  else desired = Math.min(RING_MAX, (gap - 4) * 1.5);
+  const thr = Math.max(-1, Math.min(1, ((desired - st.speed) / RING_ACCEL) * 1.6));
+  // Heading: face along the loop toward the player, biased back to the lane
+  // centre so it never rides the wall; within the hold band it just keeps its
+  // course and coasts.
+  let hStar;
+  if (gap < 5) hStar = st.heading;
+  else hStar = Math.atan2(-st.w * 0.35, Math.max(-40, Math.min(40, dS)));
+  let dh = hStar - st.heading;
+  dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+  const steer = Math.max(-1, Math.min(1, dh / (RING_TURN * Math.max(delta, 1e-4))));
+  stepRing(st, { throttle: thr, steer }, delta);
+  // Pose on the rim, exactly like the players.
+  const bp = ringPose(st.s, st.w, st.heading, SPACE_CAR_LIFT);
+  bumperCar.position.set(bp.px, bp.py, bp.pz);
+  _spaceBasis.makeBasis(
+    _spaceX.set(bp.xx, bp.xy, bp.xz),
+    _spaceY.set(bp.yx, bp.yy, bp.yz),
+    _spaceZ.set(bp.zx, bp.zy, bp.zz),
+  );
+  bumperCar.quaternion.setFromRotationMatrix(_spaceBasis);
+  if (bumperKnock) bumperCar.rotateY(bumperKnock.w * delta * 3);
+  // Wheels: same spin-per-distance constant as the city, off the ring speed.
+  const bspin = st.speed * delta * 2.6;
+  if (bumperCar.userData.wheels) for (const w of bumperCar.userData.wheels) w.rotation.y += bspin;
+}
+
 // ===== Wild monster truck in the ramp world =====
 // A second ramp-world visitor: a huge purple monster truck that roams a loop
 // of waypoints at full throttle, wiping out the launch ramps and the velodrome
@@ -11779,6 +13590,52 @@ function updateCamera(delta) {
     overrideRan: false,
   };
 
+  // ===== Object-explorer camera tuning (frozen rescue grab) =====
+  // The pose owns the frame outright: the act-1 exterior rig — world up, fov 45,
+  // look at 0.35 * the car — with the position composed from the orbit knobs and
+  // reported live to the HUD. Returning here also outranks the manual-return
+  // snap below, so the knobs hold their values until the pose exits (at which
+  // point cameraManualTimer is already 0 and the camera eases back to chase).
+  if (ventCamTune.active) {
+    _ventLook.set(car.position.x * 0.35, car.position.y * 0.35, car.position.z * 0.35);
+    // Numpad-style 2/4/6/8 (digit row included) slide the look anchor across
+    // THIS frame's view plane — screen down/left/right/up — so the orbit can be
+    // re-aimed at any part of the frozen shot before framing the saved angle.
+    const panX = (keys['Numpad6'] || keys['Digit6'] ? 1 : 0) - (keys['Numpad4'] || keys['Digit4'] ? 1 : 0);
+    const panY = (keys['Numpad8'] || keys['Digit8'] ? 1 : 0) - (keys['Numpad2'] || keys['Digit2'] ? 1 : 0);
+    if (panX || panY) {
+      // Build the frame from the last drawn view: its look was base + the pan
+      // we had accumulated, and camera.position still holds its position.
+      _ventFwd.subVectors(_ventLook, camera.position).add(_ventLookOff);
+      if (_ventFwd.lengthSq() < 1e-6) _ventFwd.set(0, 0, -1); else _ventFwd.normalize();
+      _ventRight.crossVectors(_ventFwd, _ventUp.set(0, 1, 0));
+      if (_ventRight.lengthSq() < 1e-6) _ventRight.set(1, 0, 0); else _ventRight.normalize();
+      _ventUp.crossVectors(_ventRight, _ventFwd);
+      const spd = delta * cameraOrbit.radius * 0.75;
+      _ventLookOff.addScaledVector(_ventRight, panX * spd).addScaledVector(_ventUp, panY * spd);
+      const cap = cameraOrbit.radius * 2;
+      if (_ventLookOff.lengthSq() > cap * cap) _ventLookOff.setLength(cap);
+    }
+    _ventLook.add(_ventLookOff);
+    const rr = cameraOrbit.radius;
+    const ph = cameraOrbit.phi;
+    const az = ventCamTune.az0 + cameraYawOffset;
+    const horiz = rr * Math.sin(ph);
+    camera.up.set(0, 1, 0);
+    camera.position.set(
+      _ventLook.x + horiz * Math.sin(az),
+      _ventLook.y + rr * Math.cos(ph),
+      _ventLook.z + horiz * Math.cos(az),
+    );
+    camera.lookAt(_ventLook);
+    if (camera.fov !== 45) {
+      camera.fov = 45;
+      camera.updateProjectionMatrix();
+    }
+    updateVentCamHud();
+    return;
+  }
+
   // Give manual framing a moment to settle, then ease back to the default
   // chase view so a stray drag or scroll cannot leave the player disoriented.
   if (cameraManualTimer <= 0) {
@@ -11817,25 +13674,49 @@ function updateCamera(delta) {
     }
   }
 
-  // ===== House Hot Wheels loop / launch cinematic =====
+  // ===== House Hot Wheels loop / ramp / launch cinematic =====
   // A FIXED vantage: while the car loops it sits off to the side of the loop
   // plane and only turns to keep the car framed (the position never moves and
   // there is no roll, so the camera does not "spin itself"); on the launch it
   // holds a raised side angle in the living room the car flies into, watching
-  // it arc away. When the launch shot has run its length it arms the shared
-  // post-cine ease, which the block below picks up to drift smoothly back onto
-  // the chase cam.
+  // it arc away. The ramp shot in between RIDES with the car — a fixed offset
+  // from it in x and z, at a fixed height in the playroom — because a fixed
+  // vantage would let the climbing car shrink away to nothing. When the launch
+  // shot has run its length it arms the shared post-cine ease, which the block
+  // below picks up to drift smoothly back onto the chase cam.
   if (worldState === 'house' && houseLoopCine.active) {
     houseLoopCine.t += delta;
     if (houseLoopCine.phase === 'launch' && houseLoopCine.t >= HOUSE_LAUNCH_TIME) {
       leaveHouseLoopCine(3.5);   // fall through to the post-cine ease this frame
     } else {
       camera.up.set(0, 1, 0);
-      camera.position.copy(houseLoopCine.camPos);
-      _lookTarget.set(car.position.x, car.position.y + 0.6, car.position.z);
-      camera.lookAt(_lookTarget);
+      if (houseLoopCine.phase === 'ramp') {
+        // The ramp shot rides beside the car: a fixed offset from it in x and
+        // z, at a fixed height in the playroom, so the car keeps its size on
+        // the screen all the way up to the lip. It eases in from the shot it
+        // replaces (the loops) rather than cutting.
+        houseLoopCine.camPos.set(
+          car.position.x + HOUSE_RAMP_CAM.x,
+          HOUSE_RAMP_CAM.y,
+          car.position.z + HOUSE_RAMP_CAM.z,
+        );
+        const b = Math.min(1, houseLoopCine.t / HOUSE_RAMP_BLEND);
+        camera.position.lerpVectors(houseLoopCine.fromPos, houseLoopCine.camPos, b * b * (3 - 2 * b));
+        _lookTarget.set(car.position.x, car.position.y + 0.6, car.position.z);
+        camera.lookAt(_lookTarget);
+      } else if (houseLoopCine.phase === 'loop') {
+        // Locked off. The camera does not move and does not pan: it holds the
+        // loops, and the car goes round them inside a steady frame.
+        camera.position.copy(houseLoopCine.camPos);
+        _lookTarget.copy(houseLoopCine.look);
+        camera.lookAt(_lookTarget);
+      } else {
+        camera.position.copy(houseLoopCine.camPos);
+        _lookTarget.set(car.position.x, car.position.y + 0.6, car.position.z);
+        camera.lookAt(_lookTarget);
+      }
       _camDbg.houseLoopCine = true;
-      return;   // the loop/launch camera owns the frame
+      return;   // the loop/ramp/launch camera owns the frame
     }
   }
 
@@ -11852,7 +13733,7 @@ function updateCamera(delta) {
     const st = rideStateAt(rocketRide.timer);
     const site = spaceport.site;
     const pad = rocketRide.pickupWorld;
-    const car3 = car.position;
+    const car3 = rideCarFor(rocketRide.rider).position;   // eyes follow the car actually aboard
     const ship = b.ship.ship.g.getWorldPosition(_rrShip);
     const ph = st.phase;
 
@@ -11918,18 +13799,17 @@ function updateCamera(delta) {
   // ===== Hangar-load camera (departure's first beat) =====
   // While the arm lifts the car off the berth and slots it into the parked
   // rocket, the exterior tripod would only see the outside of the hull. So for
-  // the load we cut INSIDE the hangar, looking down its length from the mouth
-  // end with the hangar's own up (toward the hub) at the top of frame. Once the
-  // load completes the exterior tripod (below) picks up for the fly-out.
+  // the load we ride the ROCKET'S OWN FRAME: set back off the open roof with the
+  // ship's up (toward the open sky) at the top of frame, looking down the hold
+  // toward where the arm fetches the car. Once the load completes the exterior
+  // tripod (below) picks up for the fly-out.
   if (spaceDeparture.active && spaceDeparture.timer < SPACE_DEPART_TRANSIT) {
-    const bay = spaceWorld.bay;
-    bay.updateWorldMatrix(true, false);
-    bay.getWorldQuaternion(_spaceQ2);
+    const ship = spaceWorld.arrivalShip;
+    ship.updateWorldMatrix(true, false);
+    ship.getWorldQuaternion(_spaceQ2);
     camera.up.copy(_spaceUp.set(0, 1, 0).applyQuaternion(_spaceQ2));
-    bay.localToWorld(_rrCam.set(0, -2.0, 6));
-    camera.position.copy(_rrCam);
-    bay.localToWorld(_lookTarget.set(0, -7.0, 14));
-    camera.lookAt(_lookTarget);
+    camera.position.copy(ship.localToWorld(_rrCam.set(-6, 7.5, -7)));
+    camera.lookAt(ship.localToWorld(_lookTarget.set(2, -0.2, 3)));
     if (camera.fov !== 55) {
       camera.fov = 55;
       camera.updateProjectionMatrix();
@@ -11962,23 +13842,32 @@ function updateCamera(delta) {
   // Act 0 is a lens INSIDE the station, set back along the corridor from the side
   // bay: we watch from within as the car drives in, the chamber winds up, and it is
   // fired out of the far port. The cut lands mid-blast. Act 1 is a locked exterior
-  // cinematic angle on the same blast, and then the jib's rescue.
+  // cinematic angle on the same blast, and then the jib's rescue. This same rig
+  // serves either player: when the cut owns the twin, it poses `camB` (the right
+  // half) and the frame loop falls through so P1's normal chase keeps the left half
+  // live on the ship.
   if (spaceVent.active) {
-    // Second showing: a fixed exterior angle high over the station's shoulder,
-    // close enough that only the near quarter of the wheel is in frame. The lens
-    // looks DOWN onto the bay corner while the car sails out along the axis
-    // straight toward it and is then reeled back by the jib.
+    const vCar = spaceVentCar(spaceVent.subject);
+    const onB = spaceVent.subject === 1 && camB;
+    const vCam = onB ? camB : camera;
+    // Second showing: the ONE exterior angle on the same blast, and then the
+    // jib's rescue. Its position is not a fixed tripod but an OFFSET off the
+    // moving look anchor (0.35 * the car, plus the tune's stored aim bias), so
+    // the camera glides with the car as it sails out along the axis straight
+    // toward the lens and is then reeled back — it changes position during the
+    // cinematic instead of cutting to a second camera.
     if (spaceVent.timer >= SPACE_VENT_ACT) {
-      camera.up.set(0, 1, 0);
-      camera.position.set(SPACE_VENT_EXT_CAM.x, SPACE_VENT_EXT_CAM.y, SPACE_VENT_EXT_CAM.z);
-      _lookTarget.set(car.position.x * 0.35, car.position.y * 0.35, car.position.z * 0.35);
-      camera.lookAt(_lookTarget);
-      if (camera.fov !== 45) {
-        camera.fov = 45;
-        camera.updateProjectionMatrix();
+      vCam.up.set(0, 1, 0);
+      _lookTarget.set(vCar.position.x * 0.35, vCar.position.y * 0.35, vCar.position.z * 0.35)
+        .add(SPACE_VENT_EXT_LOOK_OFF);
+      vCam.position.copy(_lookTarget).add(SPACE_VENT_EXT_OFF);
+      vCam.lookAt(_lookTarget);
+      if (vCam.fov !== 45) {
+        vCam.fov = 45;
+        vCam.updateProjectionMatrix();
       }
-      return;
-    }
+      if (!onB) return;
+    } else {
     const th = spaceVent.s2 / RING_R;
     const c = Math.cos(th), sn = Math.sin(th);
     const t = spaceVent.timer;
@@ -11996,15 +13885,16 @@ function updateCamera(delta) {
       sn * (RING_R - lift) + c * back,
       inboard,
     );
-    camera.up.set(-c, -sn, 0);   // stand on the rim: up runs toward the hub
-    camera.position.copy(_rrCam);
-    _lookTarget.copy(car.position);
-    camera.lookAt(_lookTarget);
-    if (camera.fov !== 55) {
-      camera.fov = 55;
-      camera.updateProjectionMatrix();
+    vCam.up.set(-c, -sn, 0);   // stand on the rim: up runs toward the hub
+    vCam.position.copy(_rrCam);
+    _lookTarget.copy(vCar.position);
+    vCam.lookAt(_lookTarget);
+    if (vCam.fov !== 55) {
+      vCam.fov = 55;
+      vCam.updateProjectionMatrix();
     }
-    return;
+    if (!onB) return;
+    }
   }
   if (worldState === 'space' && !topDown.active && !cineCam.active) {
     const st = spaceDrive;
@@ -12664,6 +14554,18 @@ function updateCamera(delta) {
     cameraTarget.y = THREE.MathUtils.lerp(Math.max(ceilCamY, car.position.y), car.position.y, belowT);
   }
 
+  // Squirrel apple-hit close-up: snap the framing onto the impact point and
+  // swing around it while the world is in slow motion. Eases fully in over the
+  // first APPLE_CINE_EASE of the cut and back out over the last.
+  if (appleCineActive) {
+    const t = Math.min(1, appleCineTimer / APPLE_CINE_TIME);
+    appleCineBlend = t < APPLE_CINE_EASE
+      ? t / APPLE_CINE_EASE
+      : t > 1 - APPLE_CINE_EASE
+        ? (1 - t) / APPLE_CINE_EASE
+        : 1;
+  }
+
   // Aim the shot at the robot's head only when the ROBOT is why we zoomed out;
   // during the ramp flight the camera stays on the car so you watch yourself.
   const robotHead = new THREE.Vector3();
@@ -12739,13 +14641,31 @@ function updateCamera(delta) {
   // cameraTarget, _lookTarget and desiredOffset, and then the one place at the
   // end of the function turns them into a camera position. Placed AFTER the
   // mine branch so the two can never both claim the frame.
-  if (housePortal.watch.active) {
+  if (appleCineActive && appleCineBlend > 0.001) {
+    // Close, low orbit around the impact point the apple struck. A slow drift
+    // in the orbit angle keeps the shot alive without whipping around. `b` is
+    // the ease-in/out blend, so the framing slides in from the chase view and
+    // slides back out when the cut ends.
+    _appleCineThetaSpin += delta * 0.5;
+    const b = appleCineBlend;
+    _lookTarget.copy(_appleCinePoint);
+    cameraTarget.lerp(_appleCinePoint, b);
+    desiredOffset.set(
+      APPLE_CINE_RADIUS * Math.sin(APPLE_CINE_PHI) *
+        Math.cos(_appleCineThetaBase + _appleCineThetaSpin),
+      APPLE_CINE_RADIUS * Math.cos(APPLE_CINE_PHI) + 2.0,
+      APPLE_CINE_RADIUS * Math.sin(APPLE_CINE_PHI) *
+        Math.sin(_appleCineThetaBase + _appleCineThetaSpin));
+    _camDbg.overrideRan = true;
+  } else if (housePortal.watch.active && housePortal.rider !== 1) {
     const w = housePortal.watch;
     if (w.hasCam) {
       // The shot owns the camera: lock it to the fixed spot and aim at the car.
       // The original eased toward a look vector that could be stale on the first
       // frame; here we aim straight at the car (with a tiny head-up offset) so
-      // the override is exact for the test and still usable in-game.
+      // the override is exact for the test and still usable in-game. When the
+      // twin is the one riding (split), P1's camera is left alone so it follows
+      // P1 instead of being yanked onto the twin's doorway shot.
       _camHousePos.copy(w.cam);
       _camHouseAim.set(car.position.x, car.position.y + 0.6, car.position.z);
       cameraTarget.copy(_camHouseAim);
@@ -12796,7 +14716,7 @@ function updateCamera(delta) {
     shake.intensity *= 0.88;
   }
 
-  camOffset.lerp(desiredOffset, holeFallActive ? 0.6 : 0.12);
+  camOffset.lerp(desiredOffset, holeFallActive ? 0.6 : appleCineActive ? 0.4 : 0.12);
   camera.position.copy(cameraTarget).add(camOffset);
 
   // Keep the chase camera out of the beach sand. The profile climbs into the
@@ -12852,6 +14772,44 @@ function updateCamera(delta) {
     if (camera.position.y < 0.4) camera.position.y = 0.4;
   }
 
+  // The cornfield's barn, silo and mill are enclosed too: while the car is
+  // inside one, keep the chase lens inside the same shell, so the frame never
+  // ends up outside a wall looking in. The clamp only applies when the CAR is
+  // inside, so driving around the farm keeps the normal chase.
+  if (worldState === 'cornfield' && cornfieldWorld && cornfieldWorld.interiors) {
+    for (const b of cornfieldWorld.interiors) {
+      const dxc = car.position.x - b.x, dzc = car.position.z - b.z;
+      const inside = b.kind === 'cyl'
+        ? Math.hypot(dxc, dzc) < b.r - 0.6
+        : Math.abs(dxc) < b.halfW - 0.6 && Math.abs(dzc) < b.halfD - 0.6;
+      if (!inside) continue;
+      const margin = 1.2;
+      if (b.kind === 'cyl') {
+        const dx = camera.position.x - b.x, dz = camera.position.z - b.z;
+        const rr = Math.hypot(dx, dz);
+        const maxR = Math.max(1, b.r - margin);
+        if (rr > maxR) {
+          const s = maxR / rr;
+          camera.position.x = b.x + dx * s;
+          camera.position.z = b.z + dz * s;
+        }
+      } else {
+        camera.position.x = THREE.MathUtils.clamp(
+          camera.position.x, b.x - b.halfW + margin, b.x + b.halfW - margin);
+        camera.position.z = THREE.MathUtils.clamp(
+          camera.position.z, b.z - b.halfD + margin, b.z + b.halfD - margin);
+      }
+      const ceil = b.ceil - 1.0;
+      if (camera.position.y > ceil) {
+        const drop = camera.position.y - ceil;
+        camera.position.y = ceil;
+        _lookTarget.y += drop * 0.6;
+      }
+      if (camera.position.y < 0.4) camera.position.y = 0.4;
+      break;
+    }
+  }
+
   camera.lookAt(_lookTarget);
 }
 
@@ -12869,6 +14827,45 @@ function gullHasTheCar() {
 // Mirrors cityPowerOut() so the street lamp bulbs are only touched when the
 // substation's transformer actually goes over or is stood back up.
 let streetLightsOut = false;
+
+// ===== Spinning turntable carry (shared) =====
+// The underground platter and the city park's merry-go-round have colliders
+// with a live `spin`. While a body is riding (or flying just over) the deck,
+// the spin adds directly to its heading AND sweeps its position around the
+// deck centre by the same rotation. Carrying the position keeps the contact
+// point glued to one radius of the disk, so the body parks on a single colour
+// wedge and turns with the deck instead of the pattern sliding out from
+// beneath it. The heading rotates with the disk too, so driving off after a
+// ride points the nose where the deck has carried it.
+//
+// Two details make it read as a turntable rather than a shove:
+//  - the footprint test is onColliderFootprint, so the round deck stops
+//    carrying anything in the square corners its mesh never covers
+//  - the position sweep is the SAME handedness as the heading, and both match
+//    `disk.rotation.y += a` (Three.js R_y maps (dx,dz) to
+//    (dx·cos a + dz·sin a, −dx·sin a + dz·cos a)). Sweeping the other way
+//    orbits against the disk's own rotation — the clearest tell.
+// Shared by the player, the split-screen twin and the chase car, so all of
+// them ride the deck exactly the same way. Returns true while it carried.
+function carryOnTurntable(obj, delta) {
+  if (!obj) return false;
+  if (worldState !== 'underground' && worldState !== 'city') return false;
+  for (const c of activeColliders()) {
+    if (c.spin
+      && Math.abs(obj.position.y - c.h) < 1.5
+      && onColliderFootprint(c, obj.position.x, obj.position.z)) {
+      obj.rotation.y += c.spin * delta;
+      const dx = obj.position.x - c.x;
+      const dz = obj.position.z - c.z;
+      const a = c.spin * delta;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      obj.position.x = c.x + dx * ca + dz * sa;
+      obj.position.z = c.z - dx * sa + dz * ca;
+      return true;
+    }
+  }
+  return false;
+}
 
 function animate() {
   requestAnimationFrame(animate);
@@ -12900,24 +14897,33 @@ function animate() {
       framePickCamera();
       updatePickStage();
       renderer.render(pickScene, pickCamera);
-    // On the Graphics tab the panel is semi-transparent on purpose: the world
-    // you actually play keeps rendering behind it, so the sliders (and the FPS
-    // readout) show their effect on the real scene rather than on the empty
+    // On the Graphics and Camera tabs the panel is semi-transparent on purpose:
+    // the world you actually play keeps rendering behind it, so the sliders (and
+    // the FPS readout) show their effect on the real scene, and a camera choice
+    // shows the view it just picked, rather than either acting on the empty
     // showroom stage.
-    } else if (selectMode && pickerTab !== 'graphics') {
+    } else if (selectMode && pickerTab !== 'graphics' && pickerTab !== 'camera') {
       updateSelectCamera();
       updateSelectCar();
       renderer.render(selectScene, selectCamera);
     } else {
       updateCamera(1 / 60);
       clampBeachCamera();
-      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : scene, camera);
+      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene, camera);
       renderUnderwaterTint();
     }
     return;
   }
 
-  const delta = clock.getDelta();
+  const rawDelta = clock.getDelta();
+  // The squirrel apple-hit cinematic drags the whole world into slow motion for
+  // a beat. `clock.elapsedTime` (which drives water, wheel and shader phase)
+  // is untouched, so the scenery keeps flowing while physics crawls.
+  if (appleCineActive) {
+    appleCineTimer += rawDelta;
+    if (appleCineTimer >= APPLE_CINE_TIME) { appleCineActive = false; appleCineBlend = 0; }
+  }
+  const delta = rawDelta * appleCineTimeScale();
   const accel = 10 * delta;
   const turnRate = 1.7 * delta;
 
@@ -12993,42 +14999,11 @@ function animate() {
   // the controls around at a standstill.
   const reverseFlip = velocity.value < -0.5 ? -1 : 1;
   car.rotation.y += steering.value * delta * 2.3 * reverseFlip;
-  // Spinning turntable (underground): while the car is riding (or flying just
-  // over) the giant platter, the disk's spin adds directly to the heading AND
-  // sweeps the car's position around the platter centre by the same rotation.
-  // Carrying the position keeps the contact point glued to one radius of the
-  // disk, so the car parks on a single colour wedge and turns with it like a
-  // car on a turntable — the pattern spins under the WHEELS' own carriage, not
-  // sliding out from beneath a fixed car (which read as tyres slipping). The
-  // heading rotates with the disk too, and because the movement vector is
-  // rebuilt from the heading below, the car's actual driving direction follows
-  // the disk instead of cutting a straight line across it.
-  //
-  // Two details make it read as a turntable rather than a shove:
-  //  - the footprint test is onColliderFootprint, so the round deck stops
-  //    carrying the car in the square corners its mesh never covers (a car that
-  //    ran off the rim there used to orbit on air)
-  //  - the position sweep is the SAME handedness as the heading, and both match
-  //    `disk.rotation.y += a` (Three.js R_y maps a point offset (dx,dz) to
-  //    (dx·cos a + dz·sin a, −dx·sin a + dz·cos a)). Sweeping the other way
-  //    orbits the car against the disk's own rotation, which is the clearest
-  //    possible "this isn't spinning naturally" tell.
-  if (worldState === 'underground') {
-    for (const c of ugColliders) {
-      if (c.spin
-        && Math.abs(car.position.y - c.h) < 1.5
-        && onColliderFootprint(c, car.position.x, car.position.z)) {
-        car.rotation.y += c.spin * delta;
-        const dx = car.position.x - c.x;
-        const dz = car.position.z - c.z;
-        const a = c.spin * delta;
-        const ca = Math.cos(a), sa = Math.sin(a);
-        car.position.x = c.x + dx * ca + dz * sa;
-        car.position.z = c.z - dx * sa + dz * ca;
-        break;
-      }
-    }
-  }
+  // Spinning turntable carry (underground platter, city merry-go-round). See
+  // carryOnTurntable() for the whole rationale — the collider's `spin` is read
+  // LIVE, so the merry-go-round (whose speed winds up while occupied and coasts
+  // down when empty) carries the car by whatever it is turning at this frame.
+  carryOnTurntable(car, delta);
   const direction = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
   direction.y = 0;
   direction.normalize();
@@ -13052,7 +15027,7 @@ function animate() {
   // a wall — but a cat swat sets a vertical impulse, and a 5-unit hop is easily
   // enough to clear a 3-thick wall, which would let a bumped car hop out through
   // the shell and land in the void. Inside, walls always block.
-  const elevated = worldState === 'house'
+  const elevated = (worldState === 'house' || worldState === 'cornfield')
     ? false
     : (jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5));
   const canMove =
@@ -13497,6 +15472,107 @@ function animate() {
         if (window.__ugTraceHistory.length > 240) window.__ugTraceHistory.shift();
       }
     }
+  } else if (worldState === 'cornfield') {
+    // The cornfield is flat ground plus two surface families the module owns:
+    // the barn ramp + silo spiral (rampInfoAt, baseY-aware) and the hayloft
+    // (loftTopAt, gated on the car already being up at loft level so the ground
+    // floor under it is never lifted). buildingTopAt is NOT consulted — the
+    // walls' `top` field already contains a car up at loft height, and the loft
+    // is not a collider at all.
+    const gy = cornfieldWorld.groundY;
+    // The river is a shallow sloped valley now, not a walled trench: its
+    // heightfield (riverSurfaceY) meets the grass at every bank and sinks to
+    // the bed in the middle, so the car can drive in and climb out anywhere.
+    const rv = cornfieldWorld.riverAt(car.position.x, car.position.z);
+    if (jumpState.inAir) {
+      jumpState.yVelocity -= gravity * delta;
+      car.position.y += jumpState.yVelocity * delta;
+      // Inside the river the bank/bed surface is the floor; the loft, mound and
+      // porch all read 0 there and would otherwise stop the car at grass height.
+      const surface = rv
+        ? cornfieldWorld.riverSurfaceY(car.position.x, car.position.z)
+        : Math.max(
+          cornfieldWorld.rampSurfaceY(car.position.x, car.position.z),
+          cornfieldWorld.loftTopAt(car.position.x, car.position.z, car.position.y),
+          cornfieldWorld.hillHeightAt(car.position.x, car.position.z),
+          cornfieldWorld.porchTopAt(car.position.x, car.position.z)
+        );
+      const floor = rv ? surface : Math.max(gy, surface);
+      if (car.position.y <= floor) {
+        car.position.y = floor;
+        const impact = Math.abs(jumpState.yVelocity);
+        jumpState.yVelocity = 0;
+        jumpState.inAir = false;
+        shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
+      }
+    } else {
+      const r = cornfieldWorld.rampInfoAt(car.position.x, car.position.z);
+      currentRamp = null;
+      const hillY = cornfieldWorld.hillHeightAt(car.position.x, car.position.z);
+      if (r) {
+        car.position.y = r.baseY + r.height * r.s;
+        wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+      } else if (hillY > 0.001) {
+        // Ride the rounded mound in BOTH directions: every side is a gentle
+        // curve, so snapping to the surface reads as driving, not clipping.
+        car.position.y = hillY;
+        wasOnRamp = null;
+      } else {
+        const top = Math.max(
+          cornfieldWorld.loftTopAt(car.position.x, car.position.z, car.position.y),
+          cornfieldWorld.porchTopAt(car.position.x, car.position.z)
+        );
+        if (rv) {
+          // Ride the sloped bank/bed straight through: no lip to fall over and
+          // no wall to keep you in — in and out anywhere on the perimeter.
+          const riverY = cornfieldWorld.riverSurfaceY(car.position.x, car.position.z);
+          if (riverY !== null) car.position.y = riverY;
+        } else if (top > 0) {
+          car.position.y = Math.max(car.position.y, top);
+        } else if (car.position.y > gy + 1) {
+          // Just drove off the loft's (or the hill's) open edge — fall.
+          jumpState.inAir = true;
+          jumpState.yVelocity = 0;
+        } else {
+          car.position.y = gy;
+        }
+        wasOnRamp = null;
+      }
+    }
+    // Terrain attitude: sample the same surfaces the Y branch just used a half
+    // wheelbase ahead of and behind the car, so the mound and the river banks
+    // pitch it nose-up/nose-down like the ramp and beach worlds do.
+    if (!jumpState.inAir) {
+      const surfaceAt = (x, z) => {
+        if (cornfieldWorld.riverAt(x, z)) {
+          const ry = cornfieldWorld.riverSurfaceY(x, z);
+          if (ry !== null) return ry;
+        }
+        return Math.max(
+          gy,
+          cornfieldWorld.rampSurfaceY(x, z),
+          cornfieldWorld.loftTopAt(x, z, car.position.y),
+          cornfieldWorld.hillHeightAt(x, z),
+          cornfieldWorld.porchTopAt(x, z)
+        );
+      };
+      const halfBase = 1.35;
+      const frontH = surfaceAt(car.position.x + direction.x * halfBase, car.position.z + direction.z * halfBase);
+      const rearH = surfaceAt(car.position.x - direction.x * halfBase, car.position.z - direction.z * halfBase);
+      terrainPitch = -Math.atan2(frontH - rearH, halfBase * 2);
+    }
+    // The current: it shoves anything afloat downstream (-Z) and bleeds throttle,
+    // so steering is a fight rather than a teleport. `velocity` is the shared
+    // speed scalar the drive code reads, and shake sells the rush.
+    if (rv) {
+      const flow = cornfieldWorld.riverFlowAt(car.position.x, car.position.z, car.position.y);
+      if (flow) {
+        car.position.x += flow.dx * delta;
+        car.position.z += flow.dz * delta;
+        velocity.value *= Math.max(0, 1 - flow.drag * delta);
+        shake.intensity = Math.max(shake.intensity, 0.1);
+      }
+    }
   } else if (worldState === 'house') {
     // A house is mostly a flat floor and a ceiling. But a few things in it are
     // meant to be driven on: the raised tiled deck, the surfboard ramp and the
@@ -13504,7 +15580,12 @@ function animate() {
     // consulted here — the house's colliders are its walls with h = ceiling
     // height, so a wall would read as a 26-unit rooftop and snap the car on top.
     const surfs = houseWorld.surfaces;
-    if (jumpState.inAir) {
+    // The Hot Wheels launch flight has a flight of its own (updateHouseLaunchFlight)
+    // and it runs OUTSIDE this gated block: the launch cinematic owns the frame
+    // for the length of the shot, so the gate is shut exactly when the car is in
+    // the air — a flight living in here would never step and the car would hang
+    // on the lip of the ramp instead of sailing into the living room.
+    if (jumpState.inAir && !houseLaunch.active) {
       jumpState.yVelocity -= gravity * delta;
       car.position.y += jumpState.yVelocity * delta;
       // The ceiling is a real surface indoors, so the ascent stops at it. The
@@ -13593,6 +15674,14 @@ function animate() {
     if (r) {
       car.position.y = groundHeight + r.height * r.s;
       wasOnRamp = { runX: r.runX, runZ: r.runZ, height: r.height, len: r.len, boost: r.boost };
+      // A `slide` ramp is the downhill shute of the park slide: give the car a
+      // gravity-like push along the descent (opposite the run direction) so it
+      // slithers down on its own, over the normal top speed on a steep slope.
+      if (r.slide) {
+        const des = direction.x * (-r.runX) + direction.z * (-r.runZ);
+        velocity.value += des * 9 * delta;
+        if (velocity.value > 16) velocity.value = 16;
+      }
     } else {
       // ...and launch off the far (high) edge. Keep the current height (the
       // ramp-top) as the launch height so the car flies off the actual top,
@@ -13731,7 +15820,11 @@ function animate() {
   // ground. Off the ramp it just does the usual steering roll + accel lean.
   const targetRoll = -steering.value * 0.1;
   const accelPitch = THREE.MathUtils.clamp(velocity.value, -7, 14) * -0.004;
-  if (tunnelFloorState.active) {
+  if (houseLaunch.active) {
+    // The Hot Wheels launch owns the car's attitude while it is in the air: the
+    // flight itself pitches the body along the path (updateHouseLaunchFlight),
+    // so the lean below stays out of it.
+  } else if (tunnelFloorState.active) {
     const rampPitch = -Math.atan(tunnelFloorState.slope);
     car.rotation.z += (rampPitch - car.rotation.z) * 0.28;
     car.rotation.x += (0 - car.rotation.x) * 0.12;
@@ -13774,6 +15867,12 @@ function animate() {
     // Same two-point pitch the ramp world uses; only the height source differs.
     car.rotation.z += (terrainPitch - car.rotation.z) * 0.25;
     car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
+  } else if (worldState === 'cornfield' && !jumpState.inAir) {
+    // Cornfield terrain: the mound and the river banks are heightfields, so
+    // use the two-point sample from the Y branch (currentRamp takes precedence
+    // above for the loft ramp and silo spiral).
+    car.rotation.z += (terrainPitch - car.rotation.z) * 0.25;
+    car.rotation.x += (accelPitch - car.rotation.x) * 0.12;
   } else if (minePortal.active) {
     // Mine portal dive: the portal code controls car.rotation.z directly.
     // Do not touch rotation.z here — the dive code sets it each frame.
@@ -13790,7 +15889,7 @@ function animate() {
   }
 
   // Pothole + park lake wobble — the car rocks when driven over the pothole on
-  // the main road or into the shallow lake in the NE park. Does not block
+  // the main road or into the shallow lake in the park. Does not block
   // movement; just adds a fun visual wobble (with splashes in the lake).
   if (worldState === 'city') {
     const WATER_ZONES = [
@@ -13846,34 +15945,23 @@ function animate() {
     if (k.t <= 0) playerKnock = null;
   }
 
-  // ===== Player wrap =====
-  // The whole map is a torus — no invisible edge walls, so drive off ANY edge
-  // and you wrap around to the opposite side. x wraps at ±90 (span 180): off
-  // the east edge -> west edge, keeping z. z wraps -90..123 (span 213): off
-  // the field's far end -> south edge, off the south edge -> the field's far
-  // end (the opposite side of the world).
-  // Underground world has its own enclosed cavern — and the house is a boxed
-  // interior with its own walls — so neither of them wraps. The house shell's
-  // walls block driving clean out through the plaster; wrapping would jump the
-  // car across the whole building the moment it touched a wall. The beach does
-  // not wrap either: it is a walled box (cliffs on three sides, a walled deep
-  // channel on the fourth), and now that the drop-off is open the car drives far
-  // past worldZLo — out to the wreck at z -415 — so a torus jump would be wrong.
+  // ===== Player boundary =====
+  // The city is a FINITE box now: a solid brick wall rings the whole map, so
+  // you cannot drive out of it and there is no torus jump to the far side. This
+  // block is only a hard backstop clamping the car into the rectangle (the wall
+  // physically stops it first). The ramp world still wraps — its rolling-hills
+  // terrain is periodic across the original 180 x 213 span, so a wrap keeps the
+  // surface seamless there. The underground cavern and the house are enclosed
+  // boxes, and the beach is a walled cove, so none of those move/wrap.
   if (worldState !== 'underground' && worldState !== 'house' && worldState !== 'beach') {
     const px = car.position.x;
     const pz = car.position.z;
-
-    // East/west: wrap straight across to the opposite edge (torus), keeping z.
-    if (px > worldXHi || px < worldXLo) {
-      car.position.x = wrapCoordX(px);
-    }
-
-    // North/south: full torus in both directions — off the field's far end ->
-    // south edge, off the south edge -> the field's far end.
-    if (pz > worldZHi) {
-      car.position.z = wrapCoordZ(pz);                      // ≈ -90 (south edge)
-    } else if (pz < worldZLo) {
-      car.position.z = wrapCoordZ(pz);                      // ≈ +123 (field far end)
+    if (worldState === 'ramp') {
+      if (px > RAMP_XHI || px < RAMP_XLO) car.position.x = wrapTorusX(px);
+      if (pz > RAMP_ZHI || pz < RAMP_ZLO) car.position.z = wrapTorusZ(pz);
+    } else {
+      if (px > worldXHi || px < worldXLo) car.position.x = wrapCoordX(px);
+      if (pz > worldZHi || pz < worldZLo) car.position.z = wrapCoordZ(pz);
     }
   }
 
@@ -13940,18 +16028,16 @@ function animate() {
     }
   }
 
-  // Knock over props near the player. The city wraps across the seam, so its
-  // knock uses the torus spans; the ramp world's props sit well inside the
-  // band, so it knocks without wrap (which would otherwise let a ramp prop
-  // near the edge also topple city props folded across the seam).
-  // `heavy` gates the few props only the biggest rides can take out - above all
-  // the substation's transformer, whose destruction blacks the city out. The
+  // Knock over props near the player. The city is a finite box now (no seam to
+  // fold across), so every world knocks with plain distances (spans 0). `heavy`
+  // gates the few props only the biggest rides can take out - above all the
+  // substation's transformer, whose destruction blacks the city out. The
   // steamroller, the monster truck and the fire engine all qualify.
   const vehicle = {
     kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster,
     firetruck: playerFiretruck, heavy: playerSteamroller || playerMonster || playerFiretruck,
   };
-  if (worldState === 'city') knockAt(car.position, playerKnockRadius, worldSizeX, worldSizeZ, velocity.value, vehicle);
+  if (worldState === 'city') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'ramp') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'house') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
@@ -13964,17 +16050,32 @@ function animate() {
   // so the pad does NOT have to be free — the auto-loop ships are only paused,
   // never hit. The car must leave the compound again before another ride can
   // start, so arriving on a just-finished ride does not loop straight back in.
-  if (worldState === 'city' && !splitActive) {
+  //
+  // Split-screen: EITHER car can be the one that drives onto the yard and
+  // boards; whichever did is `rocketRide.rider`, and the other spools along to
+  // the wheel station (startSpaceArrival). P1 is preferred if both are somehow
+  // inside at once, and the ride only re-arms once BOTH cars are clear of the
+  // yard — otherwise the second car sitting inside would fire again on landing.
+  if (worldState === 'city') {
     const bd = spaceport.bounds;
     const cb = Math.cos(bd.yaw), sb = Math.sin(bd.yaw);
-    const bdx = car.position.x - bd.x, bdz = car.position.z - bd.z;
-    const lbx = bdx * cb - bdz * sb;
-    const lbz = bdx * sb + bdz * cb;
-    const inside = Math.abs(lbx) <= bd.halfX && Math.abs(lbz) <= bd.halfZ;
-    const clear = Math.abs(lbx) > bd.halfX + 3 || Math.abs(lbz) > bd.halfZ + 3;
-    if (inside) {
-      if (rocketRide.armed) startRocketRide();
-    } else if (clear) {
+    const insideYard = (px, pz) => {
+      const bdx = px - bd.x, bdz = pz - bd.z;
+      const lbx = bdx * cb - bdz * sb;
+      const lbz = bdx * sb + bdz * cb;
+      return { inside: Math.abs(lbx) <= bd.halfX && Math.abs(lbz) <= bd.halfZ,
+               clear: Math.abs(lbx) > bd.halfX + 3 || Math.abs(lbz) > bd.halfZ + 3 };
+    };
+    const p1 = insideYard(car.position.x, car.position.z);
+    const p2 = (car2 && players[1]) ? insideYard(car2.position.x, car2.position.z) : null;
+    const anyInside = p1.inside || (p2 && p2.inside);
+    const allClear = p1.clear && (!p2 || p2.clear);
+    if (anyInside) {
+      if (rocketRide.armed) {
+        const rider = p1.inside ? 0 : 1;
+        startRocketRide(rider);
+      }
+    } else if (allClear) {
       rocketRide.armed = true;   // clear of the whole yard — ready for the next ride
     }
   }
@@ -13992,7 +16093,7 @@ function animate() {
       firetruck: playerTwoFiretruck, heavy: playerTwoSteamroller || playerTwoMonster || playerTwoFiretruck,
     };
     const spd2 = players[1].velocity ? players[1].velocity.value : 0;
-    if (worldState === 'city') knockAt(car2.position, playerKnockRadius, worldSizeX, worldSizeZ, spd2, vehicle2);
+    if (worldState === 'city') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
     else if (worldState === 'ramp') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
     else if (worldState === 'underground') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
     else if (worldState === 'house') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
@@ -14339,7 +16440,17 @@ function animate() {
   if (cityLanding.active) updateCityLanding(delta);
 
   // ===== Space: arrival cinematic, the wheel drive, then the departure =====
-  if (spaceVent.active) updateSpaceVent(delta);
+  // spaceVent.frozen is the object explorer's camera pose: the timeline was
+  // replayed to a freeze frame, so delta 0 keeps every derived value on it.
+  if (spaceVent.active) {
+    updateSpaceVent(spaceVent.frozen ? 0 : delta);
+    // When the cut owns the TWIN, P1 is not part of it and must keep driving the
+    // ship (watching from the left half). When it owns P1, P1's drive stands down
+    // as before.
+    if (spaceVent.subject === 1 && !spaceVent.frozen && worldState === 'space' && !spaceDeparture.active && !spaceArrival.active) {
+      updateSpaceDrive(delta);
+    }
+  }
   else if (spaceDeparture.active) updateSpaceDeparture(delta);
   else if (spaceArrival.active) updateSpaceArrival(delta);
   else if (worldState === 'space') updateSpaceDrive(delta);
@@ -14348,7 +16459,12 @@ function animate() {
     // out of the same airlock the car is being flung through, so the loader loop
     // stands down for the length of the cutscene.
     if (spaceWorld.trashBot) spaceWorld.trashBot.suppress = spaceVent.active;
-    spaceWorld.update(delta, clock.elapsedTime, spaceDrive);
+    // Hand the level BOTH ring states so every interactive prop treats the split
+    // twin as a full actor (it parts the vines and shoves props like Player 1).
+    // P2's ring is null in single-player or while a cut owns that car; the level
+    // tolerates either.
+    const ring2 = (splitActive && players[1]) ? players[1].ring : null;
+    spaceWorld.update(delta, clock.elapsedTime, spaceDrive, ring2);
     updateSpaceDock(delta);
   }
 
@@ -14358,14 +16474,163 @@ function animate() {
   // drive block is gated off (see the big `!houseTrackState.active` guard above).
   if (worldState === 'house') updateHouseTrackDrive(delta);
 
+  // The Hot Wheels launch flight. It is stepped here, OUTSIDE the drive gate
+  // above, because the launch cinematic owns the frame while the car is in the
+  // air — the drive block is off for the length of the shot, so the flight has
+  // to move the car itself. Stepping it before the camera (updateCamera runs
+  // further down the frame) keeps the shot locked on the car as it arcs away.
+  if (worldState === 'house') updateHouseLaunchFlight(delta);
+
   // The playroom's animated toys: the toy train on its little loop, and the
   // xylophone that rings a note under the wheels.
   if (worldState === 'house') updatePlayroom(delta);
+
+  // Cornfield: flatten corn, roll pumpkins, blow hay off the loft. The level
+  // owns all of it; we just hand it the cars and the frame time. Every car on
+  // the farm is an actor — P1, the split twin (with its own knock callbacks so
+  // a hit never moves Player 1), and the blue chaser car.
+  if (worldState === 'cornfield') {
+    const cornActors = [{
+      x: car.position.x, y: car.position.y, z: car.position.z,
+      heading: car.rotation.y, speed: velocity.value,
+      // An apple that connects knocks you sideways, cat-style — and cuts to a
+      // slow-motion close-up of the impact.
+      onAppleHit: (nx, nz, ax, ay, az) => {
+        cornSquirrelKnock(nx, nz, cornfieldWorld.squirrel.x, cornfieldWorld.squirrel.z);
+        if (typeof ax === 'number' && typeof ay === 'number' && typeof az === 'number') {
+          cornAppleHitCinematic(ax, ay + 0.9, az);
+        }
+      },
+      onBullHit: (nx, nz) => cornBullThrow(nx, nz),
+      onBullBreak: () => cornBullBreak(),
+    }];
+    if (splitActive && players[1] && players[1].car && !express2State.active) {
+      const c2f = players[1].car;
+      cornActors.push({
+        x: c2f.position.x, y: c2f.position.y, z: c2f.position.z,
+        heading: c2f.rotation.y, speed: players[1].velocity.value,
+        // P2 takes its hits on its own knock slot — no cinematic, that cut
+        // belongs to Player 1's camera.
+        onAppleHit: (nx, nz) => cornSquirrelKnockTwo(nx, nz, cornfieldWorld.squirrel.x, cornfieldWorld.squirrel.z),
+        onBullHit: (nx, nz) => cornBullThrowTwo(nx, nz),
+        onBullBreak: () => cornBullBreak(),
+      });
+    }
+    if (bumperInCorn) {
+      cornActors.push({
+        x: bumperCar.position.x, y: bumperCar.position.y, z: bumperCar.position.z,
+        heading: bumperCar.rotation.y, speed: bumperState.speed,
+      });
+    }
+
+    // ---- The parked farm truck takes a hit ----
+    // Solid like a traffic car while it is parked: you can shove it — the same
+    // three-quarters mass split the Farmall gets below — and a hit (or even a
+    // gentle touch) starts the runaway roll the level owns. This runs BEFORE
+    // the level's update, so the shove lands first and the level's proximity
+    // trigger then flips the truck to 'rolling' in the same frame; the truck
+    // continues its roll from wherever the bump left it.
+    const ftr = cornfieldWorld.truck;
+    // Box distance against the truck's footprint (faces south, so the box is
+    // axis-aligned: 1.3 half-width, 3.3 half-length along z). Returns the
+    // contact normal (pushing the truck AWAY from the car) plus how deep the
+    // car sits into the box, or null if the car is not touching it.
+    const truckBumpNormal = (cx, cz) => {
+      if (!ftr || ftr.state !== 'parked') return null;
+      const dx = cx - ftr.x, dz = cz - ftr.z;
+      const ox = Math.max(0, Math.abs(dx) - 1.3), oz = Math.max(0, Math.abs(dz) - 3.3);
+      const bd = Math.hypot(ox, oz);
+      const minB = playerCarRadius + 0.3;
+      if (bd >= minB) return null;
+      if (ox > 0 || oz > 0) {
+        // Closest point on the box: a flank gives the face normal, a corner
+        // the diagonal.
+        return { nx: (ox > 0 ? Math.sign(dx) * ox : 0) / bd, nz: (oz > 0 ? Math.sign(dz) * oz : 0) / bd, sep: minB - bd };
+      }
+      // Centred inside the box: push out the nearest face.
+      const px = 1.3 + playerCarRadius - Math.abs(dx);
+      const pz = 3.3 + playerCarRadius - Math.abs(dz);
+      return px < pz
+        ? { nx: dx < 0 ? -1 : 1, nz: 0, sep: minB }
+        : { nx: 0, nz: dz < 0 ? -1 : 1, sep: minB };
+    };
+    const shoveTruck = (n, pos) => {
+      // Three quarters of the separation goes to the truck, the rest pushes
+      // the car back — it recoils off the contact like a traffic car would.
+      ftr.x += n.nx * n.sep * 0.75;
+      ftr.z += n.nz * n.sep * 0.75;
+      pos.x += n.nx * n.sep * 0.25;
+      pos.z += n.nz * n.sep * 0.25;
+    };
+    if (!jumpState.inAir && Math.abs(velocity.value) > 0.6) {
+      const n = truckBumpNormal(car.position.x, car.position.z);
+      if (n) {
+        shoveTruck(n, car.position);
+        applyBounce({ kind: 'player' }, -n.nx, -n.nz, 'traffic', false);
+      }
+    }
+    // Player 2 nudges it the same way, on their own speed gate; the recoil is
+    // the separation itself (applyBounce is a Player-1 effect).
+    if (splitActive && car2 && players[1] && players[1].car &&
+        !(players[1].jump && players[1].jump.inAir) &&
+        Math.abs(players[1].velocity.value) > 0.6) {
+      const n = truckBumpNormal(car2.position.x, car2.position.z);
+      if (n) shoveTruck(n, car2.position);
+    }
+    cornfieldWorld.update(delta, ...cornActors);
+
+    // ---- The Farmall takes a hit ----
+    // resolveCarCollisions() only runs in the city, so the AI tractor — the
+    // cornfield's one moving actor — gets its own radius bump here: the player
+    // recoils off the contact normal, the tractor is knocked aside with a spin
+    // (the same makeKnock the traffic cars use), and the AI's x/z/heading are
+    // kept in sync for the knock's length so it doesn't snap back onto its
+    // lane mid-tumble.
+    const ft = cornfieldWorld.farmTractor;
+    if (ft.knock) {
+      const k = ft.knock;
+      ft.mesh.position.x += k.vx * delta;
+      ft.mesh.position.z += k.vz * delta;
+      ft.mesh.rotation.y += k.w * delta;
+      const slide = (Math.abs(k.vx) + Math.abs(k.vz)) * delta;
+      if (ft.mesh.userData.wheels) for (const w of ft.mesh.userData.wheels) w.rotation.y += slide * 2.6;
+      k.vx *= KNOCK_DECAY;
+      k.vz *= KNOCK_DECAY;
+      k.w *= KNOCK_DECAY;
+      k.t -= delta;
+      ft.x = ft.mesh.position.x;
+      ft.z = ft.mesh.position.z;
+      ft.heading = ft.mesh.rotation.y;
+      if (k.t <= 0) ft.knock = null;
+    } else if (!jumpState.inAir && Math.abs(velocity.value) > 0.6) {
+      const dx = car.position.x - ft.mesh.position.x;
+      const dz = car.position.z - ft.mesh.position.z;
+      const d = Math.hypot(dx, dz);
+      const minD = playerCarRadius + 1.7;
+      if (d < minD && d > 0.001) {
+        const nx = dx / d, nz = dz / d;    // pushes the tractor away from you
+        const sep = minD - d;
+        // Mass split: the tractor takes three quarters of the separation, the
+        // player's nose the rest — it shoves you back like a traffic car would.
+        ft.mesh.position.x += nx * sep * 0.75;
+        ft.mesh.position.z += nz * sep * 0.75;
+        ft.x = ft.mesh.position.x;
+        ft.z = ft.mesh.position.z;
+        car.position.x += nx * sep * 0.25;
+        car.position.z += nz * sep * 0.25;
+        ft.knock = makeKnock(ft.mesh, 2.15, 1.15, nx, nz, 12, 3.6);
+        applyBounce({ kind: 'player' }, -nx, -nz, 'traffic', false);
+      }
+    }
+  }
 
   // Bumper car AI: chases the NEAREST copy of you across the wrap seam, stops
   // ~1 foot from you, and only follows once you drive away. Skipped entirely
   // while the robot is holding the blue car in its claw — or in the ramp world.
   if (worldState === 'city' && !robot.bumperCaptured && !splitActive) {
+  // Ride the merry-go-round like everybody else: the spinning deck carries the
+  // chase car by the same shared rule it carries the player.
+  carryOnTurntable(bumperCar, delta);
   if (bumperKnock) {
     // Just got smashed by the player: tumble away with a spin, then resume
     // chasing once the knock settles.
@@ -14710,7 +16975,9 @@ function animate() {
     // Outside the city the AI collision pass above never ran, so bump the two
     // players apart here; inside the city resolveCarCollisions already did it.
     if (worldState !== 'city') resolvePlayerPairCollision();
-    followCameraTwo(players[1], delta);
+    // While the vent cut owns the twin, its exterior/interior rig is driving
+    // `camB` (posed in updateCamera below); don't let the chase cam stomp it.
+    if (!(spaceVent.active && spaceVent.subject === 1)) followCameraTwo(players[1], delta);
   }
 
   // Chase camera — held in updateCamera() so it can also keep running while
@@ -14744,6 +17011,14 @@ function animate() {
 
   // Fire hydrant water sprays
   updateHydrantSprays(delta);
+
+  // Park merry-go-round: wind up while a car sits on its deck, coast otherwise.
+  // The second guest is the split twin when split is live, else the blue chase
+  // car — either of them riding alone should get the deck turning too.
+  const merryGuest = splitActive && car2
+    ? car2.position
+    : (bumperCar.visible && !robot.bumperCaptured ? bumperCar.position : null);
+  updateMerryGoRound(delta, car.position, merryGuest);
 
   // Park lake splash droplets (city scene only — the spawn is gated above)
   updateLakeSplashes(delta);
@@ -14914,6 +17189,21 @@ function animate() {
       ugRecoveries += 1;
       shake.intensity = Math.max(shake.intensity, 0.3);
     }
+    // The twin gets the same rescue a little to one side, so a huge knock that
+    // throws P2 off the cavern rim doesn't strand them driving in the void.
+    if (splitActive && car2 && players[1] &&
+        (car2.position.x < -148 || car2.position.x > 148 || car2.position.z < -98.5 || car2.position.z > 181.5)) {
+      car2.position.set(66, 0, -15);
+      car2.rotation.set(0, Math.PI / 2, 0);
+      const p2 = players[1];
+      p2.velocity.value = 0;
+      p2.steering.value = 0;
+      p2.knock = null;
+      if (p2.jump) { p2.jump.inAir = false; p2.jump.yVelocity = 0; }
+      p2.wasOnRamp2 = false;
+      ugRecoveries += 1;
+      shake.intensity = Math.max(shake.intensity, 0.3);
+    }
     // Task #35b: ghost-in-the-pyramid nudge — see stairGhostAt in the level.
     if (undergroundWorld.stairGhostAt && undergroundWorld.stairGhostAt(car.position.x, car.position.y, car.position.z)) {
       stairGhostTimer += delta;
@@ -14932,6 +17222,10 @@ function animate() {
 
   // Blue car follow in the ramp world: countdown, then chase + knock props.
   updateRampWorldBumper(delta);
+  // The farm and the wheel get their own visits (each gates on its world and
+  // runs its own summon timer, exactly like the ramp's).
+  updateCornfieldBumper(delta);
+  updateSpaceBumper(delta);
 
   // Wild monster truck in the ramp world: patrols, ramp-jumps, flattens you.
   updateRampWorldMonster(delta);
@@ -15022,10 +17316,18 @@ function animate() {
         portalGrace = 1.2;
       }
     }
+    // Either player can be the one the valves close on. The park shell is a
+    // near-touch trigger now (see clam.js PARK_CLAM), so simply driving onto the
+    // fan arms it; the shell's own open/close animation is still driven from P1
+    // below, but the hold/shrink follows whoever is actually inside it.
+    const p1InShell = !jumpState.inAir && clamInsideShell(car.position.x, car.position.z);
+    const p2InShell = splitActive && car2 &&
+      !(players[1] && players[1].jump && players[1].jump.inAir) &&
+      clamInsideShell(car2.position.x, car2.position.z);
     if (portalGrace <= 0 && !shellPortal.armed && shellPortal.phase === null &&
-        !clamShell.closing && !jumpState.inAir &&
-        clamInsideShell(car.position.x, car.position.z)) {
+        !clamShell.closing && (p1InShell || p2InShell)) {
       shellPortal.armed = true;
+      shellPortal.rider = (p2InShell && !p1InShell) ? 1 : 0;
       clamShell.close();
     }
     if (shutNow && shellPortal.armed && shellPortal.fadeTimer < 0) {
@@ -15036,15 +17338,22 @@ function animate() {
       _fadeOverlay.style.opacity = '1';
     }
     if (shellPortal.armed) {
-      // The valves are closing on top of you, so hold the car still - otherwise
-      // it rolls back out of the bowl through the closing gap.
-      velocity.value *= Math.max(0, 1 - 9 * delta);
-      steering.value = 0;
-      if (Math.abs(velocity.value) < 0.05) velocity.value = 0;
+      const sr = shellPortal.rider || 0;
+      const riderIsP2 = sr === 1 && players[1];
+      const svel = riderIsP2 ? players[1].velocity : velocity;
+      // The valves are closing on top of the rider, so hold that car still -
+      // otherwise it rolls back out of the bowl through the closing gap.
+      svel.value *= Math.max(0, 1 - 9 * delta);
+      if (riderIsP2) players[1].steering.value = 0;
+      else steering.value = 0;
+      if (Math.abs(svel.value) < 0.05) svel.value = 0;
       // Shrink the car as the lid comes down, so it visibly fits inside the
-      // shell (cinematic only; restored on arrival).
+      // shell (cinematic only; restored on arrival). P1's scale runs through
+      // the frame loop's portalCarScale; a twin rider needs a direct write.
       const p = (clamShell.openAngle - clamShell.angle) / (clamShell.openAngle - clamShell.shutAngle);
-      portalCarScale = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
+      const shrink = 1 - Math.min(1, Math.max(0, p)) * (1 - PORTAL_CAR_SHRINK);
+      if (riderIsP2 && car2) car2.scale.setScalar(shrink);
+      else portalCarScale = shrink;
     }
   }
   if (shellPortal.fadeTimer >= 0) {
@@ -15064,9 +17373,21 @@ function animate() {
   if (worldState === 'beach') {
     // The world's update drives the shell as well as the sea and the wildlife,
     // and hands back whether the valves have just met.
+    //
+    // The camera's height goes in as well: it is the eye, and the eye is what
+    // opens the deep. While the camera is above the water the mermaids, their
+    // castle and the wreck are not drawn at all, and the blue flag out at the
+    // drop-off stays furled against its post. The camera has already been
+    // updated this frame (updateCamera() runs above), so this is the height
+    // the player is actually looking from. In split screen both views are on
+    // the screen at once, so the deep opens for whichever eye is under.
+    const beachEyeY = (splitActive && camB)
+      ? Math.min(camera.position.y, camB.position.y)
+      : camera.position.y;
     const shutNow = beachWorld.update(delta, car.position, playerCarRadius,
       beachShellPortal.armed || beachShell.closing || beachShellPortal.fadeTimer >= 0,
-      (splitActive && car2) ? car2.position : null);
+      (splitActive && car2) ? car2.position : null,
+      beachEyeY);
 
     // ===== The sand castle =====
     // Drive into it and it comes down. The level flags the frame it happens;
@@ -15263,13 +17584,16 @@ function animate() {
   if (portalGrace <= 0 && worldState === 'city') {
     const p2AirM = players[1] && players[1].jump && players[1].jump.inAir;
     const p2InTunnel = splitActive && car2 && !p2AirM && isInMineDiveTrigger(car2.position.x, car2.position.z, minePortal);
-    const inTunnel = (isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir)
-      || p2InTunnel;
+    const p1InTunnel = isInMineDiveTrigger(car.position.x, car.position.z, minePortal) && !jumpState.inAir;
+    const inTunnel = p1InTunnel || p2InTunnel;
     if (inTunnel) {
       if (!minePortal.active) {
         minePortal.active = true;
         minePortal.timer = 0;
-        minePortal.baseY = car.position.y;
+        // Whoever actually entered the shaft rides the adit; P1 is preferred
+        // only when both are somehow inside at once.
+        minePortal.rider = (p2InTunnel && !p1InTunnel) ? 1 : 0;
+        minePortal.baseY = minePortal.rider === 1 ? car2.position.y : car.position.y;
       }
     } else if (minePortal.active && minePortal.timer < 0.5) {
       // Car left the trigger zone before teleport — reset, but only in the
@@ -15278,6 +17602,7 @@ function animate() {
       // the reset must never cancel a committed run before the world swap.
       minePortal.active = false;
       minePortal.timer = 0;
+      minePortal.rider = 0;
       car.rotation.z = 0;    // undo any tilt
       _fadeOverlay.style.transition = 'none';
       _fadeOverlay.style.opacity = '0';
@@ -15285,6 +17610,22 @@ function animate() {
     if (minePortal.active) {
       minePortal.timer += delta;
       const t = Math.min(minePortal.timer / minePortal.diveTotal, 1);
+      const riderIsP2 = minePortal.rider === 1 && car2;
+      const diveCar = riderIsP2 ? car2 : car;
+
+      // The non-rider is a passenger here: hold it on the surface and zero its
+      // motion so the dive's scripted teleport does not drag it down the shaft
+      // (and so it is not left mid-air while the cut fires).
+      if (riderIsP2) {
+        velocity.value = 0;
+        steering.value = 0;
+        jumpState.inAir = false;
+        jumpState.yVelocity = 0;
+      } else if (car2) {
+        const p2 = players[1];
+        if (p2) { p2.velocity.value = 0; p2.steering.value = 0; }
+        if (p2 && p2.jump) { p2.jump.inAir = false; p2.jump.yVelocity = 0; }
+      }
 
       // Forward progress along the channel: monotonic z advance, eased so the
       // car rolls off the meadow, picks up speed down the slope, then settles
@@ -15296,11 +17637,11 @@ function animate() {
       // downhill), plus a touch of body roll for life.
       const slope = (mineAditDropAt(zz + 0.5) - mineAditDropAt(zz - 0.5)) / 1.0;
       const pitch = Math.atan2(-slope, 1) * 0.85;
-      car.rotation.set(0, Math.PI / 2, pitch);   // heading +z (north), nose down
+      diveCar.rotation.set(0, Math.PI / 2, pitch);   // heading +z (north), nose down
 
       // Keep the car centred on the channel axis (the banks guide it; no
       // steering input needed — the adit is a one-way chute).
-      car.position.set(minePortal.triggerX, yy, zz);
+      diveCar.position.set(minePortal.triggerX, yy, zz);
 
       // Camera shake builds as the dive deepens
       shake.intensity = Math.max(shake.intensity, 0.12 + t * 0.35);
@@ -15340,6 +17681,35 @@ function animate() {
   // Mine portal: glow pulse on crystals when the car is inside the tunnel
   if (worldState === 'city' && minePortal.active) {
     // Crystal glow is handled by the emissive materials — no extra animation needed
+  }
+
+  // City ? Cornfield: drive WEST into the arch cut in the giant tree out in the
+  // outer belt. A plain threshold — no cinematic, you just roll through the door.
+  // EITHER player can cross it: in split-screen the twin's car is tested too, and
+  // the world change brings the other player along (placePlayerTwoNearP1).
+  if (portalGrace <= 0 && worldState === 'city') {
+    const t = CORN_TREE_PORTAL;
+    const p1In = !jumpState.inAir &&
+      car.position.x > t.x0 && car.position.x < t.x1 &&
+      car.position.z > t.z0 && car.position.z < t.z1;
+    const p2In = splitActive && car2 && players[1] &&
+      !(players[1].jump && players[1].jump.inAir) &&
+      car2.position.x > t.x0 && car2.position.x < t.x1 &&
+      car2.position.z > t.z0 && car2.position.z < t.z1;
+    if (p1In || p2In) enterCornfieldWorld();
+  }
+  // Cornfield ? City: drive SOUTH into the hollow tree behind the spawn. Same
+  // either-player rule as the way in.
+  if (portalGrace <= 0 && worldState === 'cornfield') {
+    const rp = cornfieldWorld.returnPortal;
+    const inBox = (px, pz) =>
+      px > rp.x - rp.halfW && px < rp.x + rp.halfW &&
+      pz > rp.z - rp.halfD && pz < rp.z + rp.halfD;
+    const p1Out = inBox(car.position.x, car.position.z);
+    const p2Out = splitActive && car2 && players[1] &&
+      !(players[1].jump && players[1].jump.inAir) &&
+      inBox(car2.position.x, car2.position.z);
+    if (p1Out || p2Out) leaveCornfield();
   }
 
   // Ramp-world vortex: spin the spiral arms, the shear rings, and the rising
@@ -15415,7 +17785,7 @@ function animate() {
     // The underwater tint is a single full-screen pass owned by the primary
     // viewport; split mode skips it (see the plan's v1 caveats).
   } else {
-    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : scene, camera);
+    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene, camera);
     renderUnderwaterTint();
   }
 }
@@ -15534,6 +17904,10 @@ if (location.search.includes('debug')) {
       robot: robot.playerCaptured, spiral: spiralCine.active, mineA: mineAscent.active,
       tunnelA: tunnelAscentCine.active,
       houseLoop: houseLoopCine.active, houseLoopPhase: houseLoopCine.phase,
+      // The launch flight: the car is a projectile, off the lip of the ramp.
+      houseLaunch: houseLaunch.active,
+      houseLaunchT: +houseLaunch.t.toFixed(2),
+      houseLaunchSpeed: +Math.hypot(houseLaunch.vx, houseLaunch.vz).toFixed(1),
       paused: isPaused,
     }),
     vel: () => ({ v: +velocity.value.toFixed(2), s: +steering.value.toFixed(2) }),
@@ -15619,11 +17993,19 @@ if (location.search.includes('debug')) {
       // debugging different states.
       housePortal.side = 'in';
       housePortal.watch.active = false;
+      housePortal.rider = 0;
       housePortal.swapping = true;
       completeHouseSwap(true);
       _fadeOverlay.style.transition = 'none';
       _fadeOverlay.style.opacity = '0';
       housePortal.swapping = false;
+    },
+    // Force-enter the cornfield (?debug only): jumps straight to the spawn so
+    // tests can stage corn / pumpkin / barn-ramp collisions without driving
+    // through the arch cut in the giant tree.
+    toCornfield() {
+      if (worldState === 'cornfield') return;
+      enterCornfieldWorld();
     },
     // Force-enter the beach (?debug only): stages the car on the sand without
     // having to sit through the shell's closing animation. Puts you where
@@ -15676,6 +18058,22 @@ if (location.search.includes('debug')) {
             dist: +Math.hypot(car.position.x - houseCat.mesh.position.x, car.position.z - houseCat.mesh.position.z).toFixed(1),
           }
           : null,
+      };
+    },
+    // Cornfield readout (?debug only): how much corn has been flattened and
+    // where the pumpkins are, so tests can confirm knocking and rolling.
+    cornfield: () => {
+      const knocked = cornfieldWorld.corn.knocked;
+      let k = 0;
+      for (let i = 0; i < knocked.length; i++) if (knocked[i]) k++;
+      return {
+        world: worldState,
+        corn: { total: cornfieldWorld.corn.count, knocked: k },
+        pumpkins: cornfieldWorld.pumpkins.map((p) => ({
+          x: +p.x.toFixed(1), z: +p.z.toFixed(1),
+          vx: +p.vx.toFixed(2), vz: +p.vz.toFixed(2),
+          stem: p.stemAttached,
+        })),
       };
     },
     // Underground course readout (?debug only): how many runs have crossed the
@@ -16169,7 +18567,9 @@ function onCanvasPointerDown(event) {
   // On the showroom stage the drag orbits the STAGE camera (the object
   // explorer's click-drag view), not the hidden game camera — and it must
   // start here, on the canvas, so drags on the panels keep their own meaning.
-  if (selectMode && pickerTab !== 'graphics') {
+  // The Graphics and Camera tabs render the real world, so there a drag orbits
+  // the game camera as it does while driving.
+  if (selectMode && pickerTab !== 'graphics' && pickerTab !== 'camera') {
     selectDrag = { id: event.pointerId, x: event.clientX, y: event.clientY, yaw: selectOrbit.yaw, phi: selectOrbit.phi };
     return;
   }
@@ -16265,8 +18665,10 @@ window.addEventListener('pointercancel', endPointer);
 
 // ===== Resize =====
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
+  // syncCameraAspect picks the right aspect/fov for the live mode: full-screen
+  // for single-player, halved + SPLIT_FOV while split owns `camera` (including
+  // a cinematic running inside the split).
+  syncCameraAspect();
   renderer.setSize(window.innerWidth, window.innerHeight);
   // Split-screen: P2's camera takes the other half, so its aspect is the
   // halved width. The scissor rects are recomputed per frame, so they follow

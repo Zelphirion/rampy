@@ -1,0 +1,12 @@
+﻿4905:       return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost, slide: r.slide, def: r };
+4906:     }
+4907:   }
+4908:   return null;
+4909: }
+4910: function rampSurfaceY(px, pz, py) {
+4911:   const info = rampInfoAt(px, pz, py);
+4912:   return info ? groundHeight + info.height * info.s : cityGroundHeightAt(px, pz);
+4913: }
+4914: 
+4915: // Ramp-world launch ramps: same footprint/surface math as the city ramps, but
+

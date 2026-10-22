@@ -1,0 +1,47 @@
+﻿1350: 
+1351:   let shimmerT = 0;
+1352: 
+1353:   return {
+1354:     group: scene,
+1355:     colliders,
+1356:     ramps,
+1357:     groundY: CORN_GROUND,
+1358:     spawn: CORN_SPAWN,
+1359:     returnPortal: CORN_RETURN,
+1360:     corn,
+1361:     pumpkins,
+1362:     barrels,
+1363:     mapFeatures: [
+1364:       { kind: 'rect', x: (CORNFIELD_RECT.x0 + CORNFIELD_RECT.x1) / 2, z: (CORNFIELD_RECT.z0 + CORNFIELD_RECT.z1) / 2, r: 26, color: '#c8d46a', label: 'Corn' },
+1365:       { kind: 'rect', x: BARN.x, z: BARN.z, r: 12, color: '#c0503a', label: 'Barn' },
+1366:       { kind: 'circle', x: SILO.x, z: SILO.z, r: 6, color: '#b9c0c4', label: 'Silo' },
+1367:       { kind: 'circle', x: WATER_TOWER.x, z: WATER_TOWER.z, r: 5, color: '#9ab6cc', label: 'Water Tower' },
+1368:       { kind: 'rect', x: (PUMPKIN_PATCH.x0 + PUMPKIN_PATCH.x1) / 2, z: (PUMPKIN_PATCH.z0 + PUMPKIN_PATCH.z1) / 2, r: 18, color: '#e08a2a', label: 'Pumpkins' },
+1369:       { kind: 'rect', x: (ORCHARD.x0 + ORCHARD.x1) / 2, z: (ORCHARD.z0 + ORCHARD.z1) / 2, r: 20, color: '#5f9e4a', label: 'Orchard' },
+1370:       { kind: 'rect', x: (HILL.x0 + HILL.x1) / 2, z: (HILL.zNear + HILL.zFar) / 2, r: 16, color: '#8a6a3a', label: 'Hill' },
+1371:       { kind: 'rect', x: (HILL.x0 + HILL.x1) / 2, z: (HILL.zFar + HILL.ravine.z1) / 2, r: 14, color: '#2b2119', label: 'Ravine' },
+1372:       { kind: 'circle', x: CORN_RETURN.x, z: CORN_RETURN.z, r: 5, color: '#7fe0ff', label: 'Home' },
+1373:     ],
+1374:     // ---- Surface queries used by main.js's cornfield Y branch ----
+1375:     // Ramp surface is `baseY + height * s` (baseY is what makes the silo spiral
+1376:     // stack); returns null off any ramp.
+1377:     rampInfoAt(x, z) {
+1378:       for (const r of ramps) {
+1379:         const dx = x - r.x, dz = z - r.z;
+1380:         const along = dx * r.runX + dz * r.runZ;
+1381:         const perp = -dx * r.runZ + dz * r.runX;
+1382:         if (along >= -r.len / 2 && along <= r.len / 2 && Math.abs(perp) < r.width / 2) {
+1383:           const s = (along + r.len / 2) / r.len;
+1384:           return { runX: r.runX, runZ: r.runZ, s, height: r.height, len: r.len, boost: r.boost | 0, baseY: r.baseY || 0, def: r };
+1385:         }
+1386:       }
+1387:       return null;
+1388:     },
+1389:     // -Infinity off a ramp/mound so a Math.max() with the loft picks the loft.
+1390:     rampSurfaceY(x, z) {
+1391:       const info = this.rampInfoAt(x, z);
+1392:       return info ? info.baseY + info.height * info.s : -Infinity;
+1393:     },
+1394:     // The hayloft, but ONLY for a car already up at loft level â€” a ground-floor
+1395:     // car parked under the loft must not be lifted onto it.
+

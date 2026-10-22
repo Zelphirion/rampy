@@ -20,6 +20,12 @@
 //  - "Max" (gfx.max) disables the walk entirely: the user has asked for the
 //    picture whatever the frame rate.
 export const GFX_SCALE_MIN = 0.2;
+// The walk's own floor is deliberately higher than the slider's: a fifth-res
+// buffer plays, but it is a last resort the walk should not visit on its own.
+// It ties to the Low preset's scale (main.js GFX_PRESETS.low.scale), so the
+// walk bottoms out at a picture that was tuned to look acceptable — not at the
+// slider's extreme end.
+export const GFX_WALK_SCALE_MIN = 0.5;
 
 export const GFX_AUTO_FLOOR = 5;           // the dip that arms the walk (fps)
 export const GFX_AUTO_TARGET = 30;         // what it cuts to reach
@@ -30,17 +36,13 @@ export const GFX_AUTO_COOLDOWN = 1500;     // ms between steps (going down)
 
 // Only scale and aa: the walk must never move shadows, fog tie or draw
 // distance. Most-aggressive-of-the-two is applied cumulatively, so the rungs
-// only ever reduce. The bottom rung is the blocky end: a fifth-res buffer, and
-// the same floor the resolution slider bottoms out at (index.html).
+// only ever reduce. The bottom rung is the Low-preset picture: the walk stops
+// there and never falls back to the slider's extreme end.
 export const GFX_AUTO_LADDER = [
   { scale: 1.0, aa: false },
   { scale: 0.8, aa: false },
   { scale: 0.65, aa: false },
-  { scale: 0.5, aa: false },
-  { scale: 0.4, aa: false },
-  { scale: 0.32, aa: false },
-  { scale: 0.25, aa: false },
-  { scale: GFX_SCALE_MIN, aa: false },
+  { scale: GFX_WALK_SCALE_MIN, aa: false },
 ];
 
 // One walk's timing/settings state. A fresh create() re-arms a paused walk.

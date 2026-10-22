@@ -8,9 +8,13 @@
 // If any of them drifts the car ends up driving through the floor or clipping
 // the turf, so the numbers live here once and everybody reads them from here.
 
-// World position of the umbo (the point the two valves hinge on).
-export const SHELL_X = 22;
-export const SHELL_Z = 59.95;
+// World position of the umbo (the point the two valves hinge on). The whole
+// park was relocated OUT of the town square and into the north-west outer belt
+// (the city grew 4x - see modules/world.js), then moved again to the site of
+// the old nature-area lake. The park lawn, the slab hole and the portal all read
+// these numbers, so they move together.
+export const SHELL_X = -134;
+export const SHELL_Z = 98;
 export const SHELL_GRASS = 0.16;   // top of the park's grass slab
 
 export const SHELL_RIBS = 13;      // one rib per ~15 deg of the fan
@@ -77,6 +81,7 @@ export function createClamSite({
   open = SHELL_OPEN, shut = SHELL_SHUT,
   yaw = Math.PI / 2,
   triggerR = 0.55,
+  edge = 0.72,
 }) {
   const lowerH = size * flat;
   const surfaceHole = Math.acos(clamp01(1 - (surfaceY - umboY) / lowerH)) / (Math.PI * 0.5);
@@ -108,15 +113,19 @@ export function createClamSite({
     return umboY + lowerH * (1 - Math.cos(phi));
   };
 
-  // Is a world XZ in the part of the bowl the car is meant to park in? Kept well
-  // clear of the fan's side edges and its shallow lip, so nudging the shell on
-  // the sand can't trigger the portal.
+  // Is a world XZ in the part of the bowl the car is meant to park in? Kept
+  // just clear of the fan's side edges and its shallow lip, so nudging the
+  // shell on the sand can't trigger the portal. The PARK shell overrides this
+  // with a near-touch trigger (see PARK_CLAM): driving onto the fan at all
+  // starts the cinematic, because "a pocket only in the middle" made the
+  // portal feel broken — you could drive right across the shell and nothing
+  // happened.
   const inside = (wx, wz) => {
     const sx = z - wz;
     const sz = (wx - x) / squash;
     const r = Math.hypot(sx, sz);
     const a = Math.atan2(sx, sz);
-    if (r > UMBO_DEADZONE && (a < -span * 0.72 || a > span * 0.72)) return false;
+    if (r > UMBO_DEADZONE && (a < -span * edge || a > span * edge)) return false;
     return r / (size * (1 + ribAmp * shellFlute(a, ribs, span))) < triggerR;
   };
 
@@ -158,8 +167,15 @@ export function createClamSite({
 
 // The park's shell. props.js, map.js and main.js all read through this, so the
 // existing named exports below stay the park's numbers exactly as they were.
+// The trigger is deliberately near-touch, not a mid-bowl pocket: the fan rim
+// sits at local r≈2.2, so triggerR 1.15 arms the portal when the car's centre
+// is anywhere within (or just past) the shell's own silhouette — the nose is
+// already on the fan by then, which is what "drive into the shell" should
+// mean. edge 0.95 keeps the wide side ribs in, so approaching across the
+// grass at an angle still fires it.
 export const PARK_CLAM = createClamSite({
   x: SHELL_X, z: SHELL_Z, umboY: SHELL_UMBO_Y, surfaceY: SHELL_GRASS,
+  triggerR: 1.15, edge: 0.95,
 });
 
 // How deep the corrugation is at angle `a` across the fan. Even in `a`, so
@@ -180,8 +196,8 @@ export function clamFanOutline(t, ox, oz, segments = 56) {
   return PARK_CLAM.fanOutline(t, ox, oz, segments);
 }
 
-// Local frame helpers. The shell is yawed 90 deg so its fan opens east onto
-// the park-spine road, which makes the world<->local swap a plain swap:
+// Local frame helpers. The shell is yawed 90 deg so its fan opens east toward
+// the rest of the park, which makes the world<->local swap a plain swap:
 export function shellLocal(wx, wz) {
   return { lx: SHELL_Z - wz, lz: wx - SHELL_X };
 }

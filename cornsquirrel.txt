@@ -1,0 +1,47 @@
+﻿5370:     ux = -k.vx / len;
+5371:     uz = -k.vz / len;
+5372:   } else {
+5373:     const dx = catX - car.position.x;
+5374:     const dz = catZ - car.position.z;
+5375:     const len = Math.hypot(dx, dz);
+5376:     if (len < 1e-4) { ux = 0; uz = 0; } else { ux = dx / len; uz = dz / len; }
+5377:   }
+5378:   if (ux || uz) {
+5379:     // forward = (-cos(yaw), sin(yaw)) must equal (ux, uz).
+5380:     car.rotation.y = Math.atan2(uz, -ux);
+5381:   }
+5382:   // A swipe is the one knock that must never leave the house.
+5383:   k.confine = true;
+5384: }
+5385: 
+5386: // ===== The squirrel's apple =====
+5387: // An apple to the windscreen is the cat's swat in farmyard dress: the same
+5388: // sideways knock away from the hitter, ending up facing it. Only the hitter and
+5389: // the numbers differ â€” a thrown apple should not carry quite the punch of a paw,
+5390: // and there is no house to be confined to out in the cornfield.
+5391: const SQUIRREL_HIT_POWER = 58;
+5392: const SQUIRREL_HIT_HOP = 2.4;
+5393: function cornSquirrelKnock(nx, nz, squirrelX, squirrelZ) {
+5394:   knockPlayerAway(nx, nz, SQUIRREL_HIT_POWER, 0, SQUIRREL_HIT_HOP);
+5395:   const k = playerKnock;
+5396:   if (!k) return;
+5397:   let ux, uz;
+5398:   if (squirrelX === undefined) {
+5399:     ux = -nx; uz = -nz;
+5400:   } else {
+5401:     const dx = squirrelX - car.position.x, dz = squirrelZ - car.position.z;
+5402:     const len = Math.hypot(dx, dz);
+5403:     if (len < 1e-4) { ux = 0; uz = 0; } else { ux = dx / len; uz = dz / len; }
+5404:   }
+5405:   if (ux || uz) car.rotation.y = Math.atan2(uz, -ux);
+5406: }
+5407: 
+5408: // Keep a swipe inside the plaster. Two layers, because one is not enough:
+5409: //
+5410: //   - The collider bounce uses the same wallNormal/resolveStuck maths as normal
+5411: //     driving, so internal partitions shove you back exactly like they do when
+5412: //     you steer into one.
+5413: //   - The hard interior clamp catches what colliders CANNOT: the shell wall by
+5414: //     the roller door deliberately has no collider, because that is how the car
+5415: //     leaves the house. A swipe pointed at the doorway would sail straight
+

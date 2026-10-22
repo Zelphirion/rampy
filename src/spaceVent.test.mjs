@@ -350,9 +350,9 @@ test('console screens carry a glyph texture and a scrambled variant', () => {
 // ===== The main.js wiring ===================================================
 
 test('the space rescue grip is fitted to the car being flung', () => {
-  assert.match(mainSrc, /function measureBoardingCar\(scale\)/,
+  assert.match(mainSrc, /function measureBoardingCar\(scale, which = car\)/,
     'measureBoardingCar is gone');
-  assert.match(mainSrc, /const fit = measureBoardingCar\(car\.scale\.x \|\| 1\)/,
+  assert.match(mainSrc, /const fit = measureBoardingCar\(vCar\.scale\.x \|\| 1\)/,
     'the vent does not measure the live car for the grip');
   assert.match(mainSrc, /spaceVent\.half = fit\.half \+ 0\.3/,
     'the grip is not fitted to the measured width');
@@ -375,7 +375,7 @@ test('the wash-and-spin pins the car by its centre inside the chamber', () => {
     'the car is not held about its measured centre');
   assert.match(mainSrc, /const upDot = _spaceTmp\.x \* rimX \+ _spaceTmp\.y \* rimY/,
     'the car-up / rim-up alignment is not read');
-  assert.match(mainSrc, /car\.position\.set\(p\.px \+ rimX \* rise, p\.py \+ rimY \* rise, p\.pz\)/,
+  assert.match(mainSrc, /vCar\.position\.set\(p\.px \+ rimX \* rise, p\.py \+ rimY \* rise, p\.pz\)/,
     'the centring lift is not applied along the rim');
   // The spin must not begin until the chamber charges, so the car drives in flat.
   // In act 1 there is no drive beat — the tumble is already running on the cut.
@@ -393,10 +393,18 @@ test('only the blast repeats: an interior lens, then an exterior cinematic angle
     'act 0 is not drive-in + charge + a truncated blast');
   assert.match(mainSrc, /const act = spaceVent\.timer >= SPACE_VENT_ACT \? 1 : 0;/,
     'the vent does not split into two acts');
-  assert.match(mainSrc, /const SPACE_VENT_EXT_CAM = \{ x: 52, y: 16, z: 68 \};/,
+  assert.match(mainSrc, /const SPACE_VENT_EXT_OFF = new THREE\.Vector3\(32\.3, 15\.5, 47\.5\);/,
     'there is no exterior vantage for the second showing');
-  assert.match(mainSrc, /if \(spaceVent\.timer >= SPACE_VENT_ACT\) \{[\s\S]{0,400}SPACE_VENT_EXT_CAM/,
+  assert.match(mainSrc, /const SPACE_VENT_EXT_LOOK_OFF = new THREE\.Vector3/,
+    'the exterior vantage cannot carry its own aim bias');
+  assert.match(mainSrc, /if \(spaceVent\.timer >= SPACE_VENT_ACT\) \{[\s\S]{0,500}SPACE_VENT_EXT_OFF/,
     'the replay does not cut to the exterior angle');
+  // The escape has exactly ONE camera outside the station: it never cuts to a
+  // second — it re-positions itself each frame by tracking the drifting car.
+  assert.match(mainSrc, /vCam\.position\.copy\(_lookTarget\)\.add\(SPACE_VENT_EXT_OFF\)/,
+    'the exterior camera is not driven as an offset off its look anchor');
+  assert.doesNotMatch(mainSrc, /vCam\.position\.set\(SPACE_VENT_EXT/,
+    'the exterior camera was baked back to a fixed tripod');
   // Act 0 truncates the blast; act 1 runs it the whole way.
   assert.match(mainSrc, /out = SPACE_VENT_DIST_A \* \(1 - Math\.pow\(1 - k, 3\)\)/,
     'act 0 does not use its own truncated blast distance');
@@ -493,7 +501,7 @@ test('the rescue camera cuts INSIDE the station for the vent', () => {
     'the vent camera is not pulled inside the station');
   assert.doesNotMatch(mainSrc, /const out = 44 \+ spaceVent\.e \* 0\.35/,
     'the old exterior rim lens is still there');
-  assert.match(mainSrc, /camera\.up\.set\(-c, -sn, 0\)/,
+  assert.match(mainSrc, /vCam\.up\.set\(-c, -sn, 0\)/,
     'the inside lens does not stand on the rim');
 });
 
@@ -532,7 +540,7 @@ test('the city hand turns the car with it, and sets it down facing forward', () 
     'the car-vs-hand yaw offset is not captured at pickup');
   assert.match(mainSrc, /const heldYaw = turningWithHand \? armYaw \+ rocketRide\.yawOffset : rocketRide\.yaw/,
     'the held car yaw does not follow the hand');
-  assert.match(mainSrc, /car\.rotation\.set\(0, heldYaw, 0\)/,
+  assert.match(mainSrc, /rideCar\.rotation\.set\(0, heldYaw, 0\)/,
     'the held car does not use the hand-tracking yaw');
 });
 
@@ -545,20 +553,32 @@ test('the boarding arm exposes its heading and accepts the car fit', () => {
     'makeBoardingArm does not measure its own yaw');
 });
 
-// ===== The side hangar + the return leg =====================================
+// ===== The eye-port and the ring-head dock frame ============================
 
-test('the side dock is a big hangar, not the tiny catalogue airlock', () => {
-  // The level builds the pod-bay model BIG so the whole rocket fits inside.
-  assert.match(idxSrc, /const bay = buildSpacePodBay\(\{ mouthR: [\d.]+, hx: [\d.]+, hz0: -?[\d.]+, hz1: [\d.]+, hy0: -?[\d.]+ \}\)/,
-    'the level dock is not enlarged into a full hangar');
+test('the eye-port is the centre pod bay (no big hull box)', () => {
+  assert.match(idxSrc, /const bay = buildSpacePodBay\(\);/,
+    'the centre eye-port uses buildSpacePodBay() with no big-box options');
+  assert.match(idxSrc, /bay\.rotation\.x = -Math\.PI \/ 2/,
+    'the centre eye-port must be rotated to aim mouth at +Z (the wheel axis)');
+  assert.match(idxSrc, /bay\.position\.set\(0, 0, 21\.5\)/,
+    'the eye-port must sit on the axle, looking out past the end cap');
+  assert.doesNotMatch(idxSrc, /buildSpacePodBay\(\{/,
+    'the centre eye-port must not pass box dimensions to buildSpacePodBay');
+  assert.doesNotMatch(idxSrc, /hy0|coreDockRing|coreThroat/,
+    'the old box-dock/outward port dressing was not removed');
+  assert.match(idxSrc, /orientFloor\(dockFrame, 0, 0, RING_R\)/,
+    'the dock frame lives at the ring floor (theta 0, RING_R)');
+  assert.match(idxSrc, /dockFrame\.add\(hangarArm\.g\)/,
+    'the loading arm lives on the dock frame, not the eye-port');
+  // The small eye-port and a larger-mouth variant are both plausible
   const small = space.buildSpacePodBay();
-  const big = space.buildSpacePodBay({ mouthR: 7.5, hx: 7, hz0: 2, hz1: 28, hy0: -30 });
-  let n = 0;
-  big.traverse((o) => { if (o.isMesh) n++; });
-  assert.ok(n >= 15, `the enlarged hangar is nearly empty (${n} meshes)`);
-  // The big hangar's mouth is wider than the catalogue airlock.
+  const big = space.buildSpacePodBay({ mouthR: 7.5 });
+  let ns = 0, nb = 0;
+  small.traverse((o) => { if (o.isMesh) ns++; });
+  big.traverse((o) => { if (o.isMesh) nb++; });
+  assert.ok(ns >= 15 && nb >= 15, `iris meshs ${ns}, ${nb}`);
   assert.notEqual(small.userData.mouthR, big.userData.mouthR,
-    'the hangar was not enlarged past the catalogue airlock');
+    'eye variants must differ by mouthR');
 });
 
 test('a big hydraulic arm stands in the hangar, sized to span it', () => {
@@ -602,4 +622,52 @@ test('the return leg lands the rocket and unloads the car in the city', () => {
     'the landing is never advanced from the loop');
   assert.match(mainSrc, /!rocketRide\.active && !cityLanding\.active/,
     'the landing does not stand the car physics down');
+});
+
+// ===== The airlock serves BOTH players ======================================
+
+test('the vent cut names the player it owns (P1 or the split twin)', () => {
+  // The same cinematic has to be able to fling EITHER car: the subject decides
+  // which ring/car it drives and which half of the split screen it poses.
+  assert.match(mainSrc, /const spaceVent = \{ active: false, subject: 0,/,
+    'the vent carries no subject, so it can only ever own P1');
+  assert.match(mainSrc, /function spaceVentRing\(subject\) \{[\s\S]{0,200}spaceDrive/,
+    'there is no helper resolving the subject\'s ring');
+  assert.match(mainSrc, /function spaceVentCar\(subject\) \{[\s\S]{0,120}return subject === 1 \? car2 : car/,
+    'there is no helper resolving the subject\'s car');
+});
+
+test('the twin can trigger the airlock from its own bay visit', () => {
+  // P2's hazard pass must actually start the cut (subject 1), not ignore the vent.
+  assert.match(mainSrc, /if \(spaceVentArmed2 && !spaceVent\.active\) startSpaceVent\(z, 1\)/,
+    'the twin can never trigger the vent cut');
+  assert.doesNotMatch(mainSrc, /Vent is a global cinematic \(only P1 triggers it\)/,
+    'the twin still ignores the vent zone');
+  // ...and its own re-arm gate exists, so it fires once per approach.
+  assert.match(mainSrc, /let spaceVentArmed2 = true;/,
+    'the twin has no vent re-arm gate');
+});
+
+test('while P1 is flung, the twin keeps driving the ship and watching', () => {
+  // P2's space step must stand down ONLY for its own cut (subject 1) or the
+  // arrival/departure cuts — never merely because a vent is live.
+  assert.match(mainSrc, /spaceVent\.active && spaceVent\.subject === 1\)\) \{\s*\n\s*p\.velocity\.value = 0/,
+    'P2 is parked whenever any vent runs, even P1\'s');
+  // And when the twin IS the subject, P1 keeps driving the wheel.
+  assert.match(mainSrc, /if \(spaceVent\.subject === 1 && !spaceVent\.frozen && worldState === 'space'[\s\S]{0,120}updateSpaceDrive\(delta\)/,
+    'P1 stops driving when the cut owns the twin');
+});
+
+test('the vent camera poses the left half for P1 and the right half for the twin', () => {
+  assert.match(mainSrc, /const vCam = onB \? camB : camera;/,
+    'the vent camera cannot target the twin\'s viewport');
+  assert.match(mainSrc, /if \(!\(spaceVent\.active && spaceVent\.subject === 1\)\) followCameraTwo/,
+    'the twin chase cam stomps the cut\'s camera');
+});
+
+test('the twin lane opens at the airlock so its car can reach the bay', () => {
+  // Without the widened lane the twin can never leave the corridor and drive into
+  // the chamber mouth, so the cut could never be triggered from its half.
+  assert.match(mainSrc, /laneHi2 = Math\.max\(laneHi2, decon2\.lane\)/,
+    'the twin lane is never widened out to the side bay');
 });

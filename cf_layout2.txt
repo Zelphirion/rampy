@@ -1,0 +1,201 @@
+﻿221: // apple and hurls it at you. It is an expert marksman: exactly one throw in
+222: // three lands â€” deterministic, so the "1 in 3" is real and not a coin flip.
+223: export const SQUIRREL = {
+224:   home: { x: (ORCHARD.x0 + ORCHARD.x1) / 2, z: (ORCHARD.z0 + ORCHARD.z1) / 2 },
+225:   runSpeed: 7.5,        // units/s on the ground
+226:   throwRange: 30,       // how close the car must be for it to take a shot
+227:   climbTime: 0.8,       // seconds to scale a tree
+228:   throwInterval: 2.2,   // seconds between apples
+229:   shots: 3,             // apples per climb before it comes back down
+230:   appleSpeed: 24,       // thrown apple speed
+231:   appleHitRadius: 1.9,  // how close an apple must pass to hit the car
+232: };
+233: 
+234: // Expert marksman: the 1st, 4th, 7th â€¦ throw is a true hit â€” one in three,
+235: // deterministically (a `% 3 === 0` cycle), so the odds are exactly as promised
+236: // and never streak unluckily.
+237: export function squirrelThrowHits(throwIndex) {
+238:   return throwIndex % 3 === 0;
+239: }
+240: 
+241: // ===== The AI tractor: a slow loop around the barnyard =====
+242: export const TRACTOR = {
+243:   speed: 5,                              // slow farm pace
+244:   path: [[0, -20], [42, -20], [42, 30], [6, 34]],
+245: };
+246: 
+247: // ===== Corn stooks and barrels =====
+248: // Stooks: teepee bundles of cut corn left standing in the yard.
+249: export const STOOKS = [
+250:   { x: 6, z: 12 }, { x: -16, z: 4 }, { x: 38, z: 44 },
+251:   { x: -32, z: 28 }, { x: -34, z: 52 }, { x: 18, z: -30 },
+252: ];
+253: // Barrel stacks: pyramids of barrels lying on their sides.
+254: export const BARREL_STACKS = [
+255:   { x: -6, z: -18, rows: 4, alongX: true },
+256:   { x: 42, z: -16, rows: 3, alongX: true },
+257:   { x: 34, z: 40, rows: 4, alongX: false },
+258:   { x: -26, z: 40, rows: 3, alongX: false },
+259: ];
+260: 
+261: // Lay a hollow pyramid of barrels: row 0 sits on the floor, each row above
+262: // nests in the groove of the one below (hex packing). Barrels lie on their
+263: // side, so the pyramid spreads perpendicular to the barrel axis.
+264: export function barrelPyramid({ x, z, rows, alongX = true, radius = 0.55, length = 1.3 }) {
+265:   const out = [];
+266:   const dx = radius * 2;
+267:   const dy = radius * Math.sqrt(3);
+268:   for (let k = 0; k < rows; k++) {
+269:     const n = rows - k;
+270:     const rowW = (n - 1) * dx;
+271:     for (let i = 0; i < n; i++) {
+272:       const o = -rowW / 2 + i * dx;
+273:       const y = radius + k * dy;
+274:       out.push({ x: alongX ? x : x + o, y, z: alongX ? z + o : z, alongX, length, radius });
+275:     }
+276:   }
+277:   return out;
+278: }
+279: 
+280: // ===== The hill, the ravine, and the runaway farm truck =====
+281: // A terraced earthen embankment the car can climb: a straight slope from the
+282: // yard (z = zNear, y = 0) up to a flat top (zTop..zFar, y = topY). Beyond the
+283: // far edge a fence guards the drop into a ravine. The 1940s farm truck is parked
+284: // up on top; bump it and it rolls off through the fence into the ravine.
+285: export const HILL = {
+286:   x0: 52, x1: 98,
+287:   zNear: 18, zTop: 42, zFar: 58,
+288:   topY: 8,
+289:   ravine: { z1: 96, depth: 7 },
+290: };
+291: // Faces +Z (toward the ravine): forward is (-cos yaw, sin yaw), so yaw PI/2.
+292: export const FARM_TRUCK = { x: 76, z: 50, yaw: Math.PI / 2 };
+293: 
+294: // The slope, as a ramp def main.js's cornfield overlay already understands.
+295: export function hillRamp() {
+296:   return {
+297:     x: (HILL.x0 + HILL.x1) / 2,
+298:     z: (HILL.zNear + HILL.zTop) / 2,
+299:     runX: 0, runZ: 1,
+300:     len: HILL.zTop - HILL.zNear,
+301:     width: HILL.x1 - HILL.x0,
+302:     height: HILL.topY, baseY: 0, boost: 0,
+303:   };
+304: }
+305: 
+306: // The flat top of the embankment, for a car already up at the top (mirrors
+307: // barn loftTopAt so a ground-floor car is never lifted onto it).
+308: export function plateauTopAt(x, z, carY) {
+309:   const on = x >= HILL.x0 && x <= HILL.x1 && z >= HILL.zTop && z <= HILL.zFar;
+310:   return on && carY > HILL.topY - 2.5 ? HILL.topY : 0;
+311: }
+312: 
+313: // Walls that keep the car on the embankment (its two flanks) and the fence
+314: // across the far edge that the truck breaks through. `truckFence` marks the
+315: // fence so index.js can hide it when the truck crashes.
+316: export function hillColliders() {
+317:   const h = HILL.topY + 2;
+318:   const wall = 0.5;
+319:   const zMid = (HILL.zNear + HILL.zFar) / 2;
+320:   const zHalf = (HILL.zFar - HILL.zNear) / 2;
+321:   const fenceH = HILL.topY + 1.6;
+322:   return [
+323:     { x: HILL.x0, z: zMid, halfW: wall, halfD: zHalf, h, top: h },
+324:     { x: HILL.x1, z: zMid, halfW: wall, halfD: zHalf, h, top: h },
+325:     {
+326:       x: (HILL.x0 + HILL.x1) / 2, z: HILL.zFar,
+327:       halfW: (HILL.x1 - HILL.x0) / 2, halfD: 0.5,
+328:       h: fenceH, top: fenceH, truckFence: true,
+329:     },
+330:   ];
+331: }
+332: 
+333: // ===== Farm boundary =====
+334: // A wooden perimeter fence, so you cannot drive off the flat ground into the
+335: // void. Returned as four long wall colliders (the rails are drawn in index.js).
+336: export const FARM_BOUNDS = { x0: -118, x1: 126, z0: -104, z1: 126 };
+337: export function farmBoundsColliders() {
+338:   const t = 0.5, h = 2.0;
+339:   const { x0, x1, z0, z1 } = FARM_BOUNDS;
+340:   const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+341:   return [
+342:     { x: x0, z: cz, halfW: t, halfD: (z1 - z0) / 2, h, top: h },
+343:     { x: x1, z: cz, halfW: t, halfD: (z1 - z0) / 2, h, top: h },
+344:     { x: cx, z: z0, halfW: (x1 - x0) / 2, halfD: t, h, top: h },
+345:     { x: cx, z: z1, halfW: (x1 - x0) / 2, halfD: t, h, top: h },
+346:   ];
+347: }
+348: 
+349: 
+350: 
+351: 
+352: 
+353: 
+354: 
+355: 
+356: 
+357: 
+358: 
+359: 
+360: 
+361: 
+362: 
+363: 
+364: 
+365: 
+366: 
+367: 
+368: 
+369: 
+370: 
+371: 
+372: 
+373: 
+374: 
+375: 
+376: 
+377: 
+378: 
+379: 
+380: 
+381: 
+382: 
+383: 
+384: 
+385: 
+386: 
+387: 
+388: 
+389: 
+390: 
+391: 
+392: 
+393: 
+394: 
+395: 
+396: 
+397: 
+398: 
+399: 
+400: 
+401: 
+402: 
+403: 
+404: 
+405: 
+406: 
+407: 
+408: 
+409: 
+410: 
+411: 
+412: 
+413: 
+414: 
+415: 
+416: 
+417: 
+418: 
+419: 
+420: 
+

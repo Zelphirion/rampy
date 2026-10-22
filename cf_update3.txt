@@ -1,0 +1,292 @@
+﻿1415:       // The car's forward vector is (-cos(yaw), sin(yaw)) â€” see main.js.
+1416:       const hx = -Math.cos(car.heading), hz = Math.sin(car.heading);
+1417:       const moving = Math.abs(car.speed) > CORN.minSpeed;
+1418:       if (moving) {
+1419:         for (let i = 0; i < corn.count; i++) {
+1420:           if (corn.knocked[i]) continue;
+1421:           if (shouldKnockStalk(car.x, car.z, car.speed, corn.pts[i])) {
+1422:             corn.knock(i, hx, hz, (p) => {
+1423:               // Burst of cobs off the top, thrown along the car's heading.
+1424:               const speed = Math.abs(car.speed);
+1425:               for (let c = 0; c < 3; c++) {
+1426:                 const a = Math.atan2(hx, hz) + (Math.random() - 0.5) * 1.6;
+1427:                 const sp = 2.5 + speed * 0.35 + Math.random() * 2.5;
+1428:                 cobs.spawn(
+1429:                   p.x, CORN_GROUND + CORN.stalkH * 0.8, p.z,
+1430:                   Math.sin(a) * sp, 3.5 + Math.random() * 3.0, Math.cos(a) * sp,
+1431:                   1.8 + Math.random() * 1.2
+1432:                 );
+1433:               }
+1434:             });
+1435:           }
+1436:         }
+1437:       }
+1438:       corn.step(delta);
+1439: 
+1440:       // ---- Pumpkin patch ----
+1441:       for (const p of pumpkins) {
+1442:         const dx = car.x - p.x, dz = car.z - p.z;
+1443:         const dist = Math.hypot(dx, dz);
+1444:         const hit = dist < p.radius + 1.0 && Math.abs(car.speed) > 1.2;
+1445:         if (hit && Math.hypot(p.vx, p.vz) < 0.4) {
+1446:           const nx = dist > 1e-3 ? -dx / dist : 1;
+1447:           const nz = dist > 1e-3 ? -dz / dist : 0;
+1448:           const push = 3.5 + Math.abs(car.speed) * 0.5;
+1449:           p.vx = nx * push; p.vz = nz * push;
+1450:           if (p.stemAttached) {
+1451:             p.stemAttached = false;
+1452:             p.stem.visible = false;
+1453:             for (let s = 0; s < 4; s++) {
+1454:               stems.spawn(p.x, p.restY + p.radius * 0.6, p.z,
+1455:                 (Math.random() - 0.5) * 4, 4 + Math.random() * 2, (Math.random() - 0.5) * 4,
+1456:                 1.6 + Math.random());
+1457:             }
+1458:           }
+1459:         }
+1460:         const sp = stepPumpkin(p, delta);
+1461:         if (sp > 0) {
+1462:           p.group.position.x = p.x;
+1463:           p.group.position.z = p.z;
+1464:           // Roll about the horizontal axis perpendicular to travel.
+1465:           const ax = Math.hypot(p.vx, p.vz) || 1;
+1466:           _axis.set(p.vz / ax, 0, -p.vx / ax);
+1467:           _q.setFromAxisAngle(_axis, (sp * delta) / p.radius);
+1468:           p.group.quaternion.premultiply(_q);
+1469:         }
+1470:       }
+1471: 
+1472:       // ---- Barrels: knock them over and they roll like logs ----
+1473:       if (moving) {
+1474:         const push = 4.0 + Math.abs(car.speed) * 0.55;
+1475:         for (const b of barrels) {
+1476:           if (b.state !== 'stacked' && b.state !== 'rest') continue;
+1477:           const dx = b.x - car.x, dz = b.z - car.z;
+1478:           const dist = Math.hypot(dx, dz);
+1479:           // Only the barrels the car can actually reach (low on the pile), and
+1480:           // only when they are not already off and rolling.
+1481:           if (b.y > b.radius * 2.4 || dist >= b.radius + 1.4) continue;
+1482:           if (Math.hypot(b.vx, b.vz) > 0.5) continue;
+1483:           knockBarrel(b, dist > 1e-3 ? dx / dist : 1, dist > 1e-3 ? dz / dist : 0, push);
+1484:         }
+1485:       }
+1486:       for (const b of barrels) {
+1487:         if (b.state === 'falling') {
+1488:           b.vy -= 26 * delta;
+1489:           b.y += b.vy * delta;
+1490:           b.x += b.vx * delta;
+1491:           b.z += b.vz * delta;
+1492:           b.roll += (Math.hypot(b.vx, b.vz) / b.radius) * delta * 0.5;
+1493:           if (b.y <= b.radius) {
+1494:             b.y = b.radius;
+1495:             b.vy = 0;
+1496:             b.vx *= 0.5; b.vz *= 0.5;
+1497:             b.state = 'rolling';
+1498:           }
+1499:         } else if (b.state === 'rolling') {
+1500:           if (stepBarrel(b, delta) <= 0.02) b.state = 'rest';
+1501:         }
+1502:         if (b.state !== 'stacked') {
+1503:           b.group.position.set(b.x, b.y, b.z);
+1504:           _qy.setFromAxisAngle(_up, b.axis);
+1505:           _q.setFromAxisAngle(_xAxis, b.roll);
+1506:           b.group.quaternion.copy(_qy).multiply(_q);
+1507:         }
+1508:       }
+1509: 
+1510:       // ---- Hay (only while the car is on the loft) ----
+1511:       const onLoft = car.y > BARN.loftY - 1.2 &&
+1512:         car.x > BARN.loftWest - 1 && car.x < BARN.x + BARN.halfW + 1 &&
+1513:         Math.abs(car.z - BARN.z) < BARN.halfD + 1;
+1514:       if (onLoft && Math.abs(car.speed) > 1.0) {
+1515:         const n = Math.min(6, 1 + Math.floor(Math.abs(car.speed) * 0.4));
+1516:         for (let i = 0; i < n && Math.random() < 0.9; i++) {
+1517:           hay.spawn(
+1518:             car.x + (Math.random() - 0.5) * 2, BARN.loftY + 0.4, car.z + (Math.random() - 0.5) * 2,
+1519:             (Math.random() - 0.5) * 3, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 3,
+1520:             1.4 + Math.random() * 0.9, 0.8 + Math.random() * 0.6
+1521:           );
+1522:         }
+1523:       }
+1524: 
+1525:       // ---- Squirrel ----
+1526:       // It runs about the orchard; when you get close it bolts up a tree and
+1527:       // lobs apples. One throw in three is a true hit (squirrelThrowHits).
+1528:       const sq = squirrel;
+1529:       const carDist = Math.hypot(car.x - sq.x, car.z - sq.z);
+1530:       sq.spin += delta;
+1531:       if (sq.state === 'idle') {
+1532:         if (carDist < SQUIRREL.throwRange && orchard.length) {
+1533:           sq.tree = orchard[(Math.random() * orchard.length) | 0];
+1534:           sq.state = 'run';
+1535:         } else if (!sq.node) {
+1536:           sq.node = {
+1537:             x: ORCHARD.x0 + Math.random() * (ORCHARD.x1 - ORCHARD.x0),
+1538:             z: ORCHARD.z0 + Math.random() * (ORCHARD.z1 - ORCHARD.z0),
+1539:           };
+1540:         }
+1541:       }
+1542:       if (sq.state === 'idle' || sq.state === 'run') {
+1543:         const tgt = sq.state === 'run' ? (sq.tree || sq.node) : sq.node;
+1544:         if (tgt) {
+1545:           const dx = tgt.x - sq.x, dz = tgt.z - sq.z;
+1546:           const d = Math.hypot(dx, dz);
+1547:           if (d < 0.4) {
+1548:             if (sq.state === 'run' && sq.tree) {
+1549:               sq.state = 'climb'; sq.timer = 0; sq.y = CORN_GROUND;
+1550:               sq.throwsLeft = SQUIRREL.shots; sq.shot = 0;
+1551:             } else { sq.node = null; sq.state = 'idle'; }
+1552:           } else {
+1553:             const step = SQUIRREL.runSpeed * delta;
+1554:             sq.x += (dx / d) * step;
+1555:             sq.z += (dz / d) * step;
+1556:             sq.mesh.rotation.y = Math.atan2(dx, dz);
+1557:           }
+1558:         }
+1559:       }
+1560:       if (sq.state === 'climb') {
+1561:         sq.timer += delta;
+1562:         const t = Math.min(1, sq.timer / SQUIRREL.climbTime);
+1563:         sq.y = CORN_GROUND + t * (sq.tree.topY - CORN_GROUND);
+1564:         if (t >= 1) { sq.state = 'throw'; sq.timer = 0; }
+1565:       }
+1566:       if (sq.state === 'throw') {
+1567:         sq.timer += delta;
+1568:         sq.mesh.rotation.y = Math.atan2(car.x - sq.x, car.z - sq.z);
+1569:         sq.mesh.userData.throwArm.rotation.x = -1.8 * Math.min(1, sq.timer / 0.25);
+1570:         if (sq.timer >= SQUIRREL.throwInterval) {
+1571:           sq.timer = 0;
+1572:           const hitThrow = squirrelThrowHits(sq.shot);
+1573:           sq.shot++;
+1574:           const sx = sq.x, sy = sq.y + 1.2, sz = sq.z;
+1575:           let aim = aimArc(sx, sy, sz, car.x, car.y + 0.6, car.z, SQUIRREL.appleSpeed);
+1576:           if (aim && !hitThrow) {
+1577:             const ang = (Math.random() < 0.5 ? -1 : 1) * (0.22 + Math.random() * 0.18);
+1578:             const ca = Math.cos(ang), sa = Math.sin(ang);
+1579:             aim = { vx: aim.vx * ca - aim.vz * sa, vy: aim.vy, vz: aim.vx * sa + aim.vz * ca };
+1580:           }
+1581:           if (aim) apples.spawn(sx, sy, sz, aim.vx, aim.vy, aim.vz, hitThrow);
+1582:           sq.mesh.userData.throwArm.rotation.x = 0.6;
+1583:           sq.throwsLeft--;
+1584:           if (sq.throwsLeft <= 0) { sq.state = 'descend'; sq.timer = 0; }
+1585:         }
+1586:       }
+1587:       if (sq.state === 'descend') {
+1588:         sq.timer += delta;
+1589:         const t = Math.min(1, sq.timer / SQUIRREL.climbTime);
+1590:         sq.y = sq.tree.topY + t * (CORN_GROUND - sq.tree.topY);
+1591:         if (t >= 1) { sq.state = 'idle'; sq.tree = null; sq.node = null; }
+1592:       }
+1593:       sq.mesh.position.set(sq.x, sq.y, sq.z);
+1594: 
+1595:       // ---- Thrown apples ----
+1596:       for (const a of apples.items) {
+1597:         if (!a.alive) continue;
+1598:         a.life -= delta;
+1599:         a.vy -= APPLE_GRAVITY * delta;
+1600:         a.x += a.vx * delta;
+1601:         a.y += a.vy * delta;
+1602:         a.z += a.vz * delta;
+1603:         a.mesh.position.set(a.x, a.y, a.z);
+1604:         a.mesh.rotation.x += a.vx * delta;
+1605:         a.mesh.rotation.z -= a.vz * delta;
+1606:         if (a.y < CORN_GROUND + 0.05 || a.life <= 0) { a.alive = false; a.mesh.visible = false; continue; }
+1607:         const ddx = a.x - car.x, ddz = a.z - car.z;
+1608:         if (a.hit && Math.hypot(ddx, ddz) < SQUIRREL.appleHitRadius && Math.abs(a.y - (car.y + 0.7)) < 1.7) {
+1609:           a.alive = false; a.mesh.visible = false;
+1610:           if (typeof car.onAppleHit === 'function') {
+1611:             const dl = Math.hypot(car.x - sq.x, car.z - sq.z) || 1;
+1612:             car.onAppleHit((car.x - sq.x) / dl, (car.z - sq.z) / dl);
+1613:           }
+1614:         }
+1615:       }
+1616: 
+1617:       // ---- AI tractor on its slow loop ----
+1618:       {
+1619:         const t = farmTractor;
+1620:         const wp = TRACTOR.path[t.wp];
+1621:         const dx = wp[0] - t.x, dz = wp[1] - t.z;
+1622:         const d = Math.hypot(dx, dz);
+1623:         if (d < 0.6) {
+1624:           t.wp = (t.wp + 1) % TRACTOR.path.length;
+1625:         } else {
+1626:           const nx = dx / d, nz = dz / d;
+1627:           t.x += nx * TRACTOR.speed * delta;
+1628:           t.z += nz * TRACTOR.speed * delta;
+1629:           let diff = Math.atan2(nz, -nx) - t.heading;
+1630:           while (diff > Math.PI) diff -= Math.PI * 2;
+1631:           while (diff < -Math.PI) diff += Math.PI * 2;
+1632:           t.heading += diff * Math.min(1, 3 * delta);
+1633:           t.spin += TRACTOR.speed * delta * 2.2;
+1634:           t.mesh.position.set(t.x, CORN_GROUND, t.z);
+1635:           t.mesh.rotation.y = t.heading;
+1636:           if (t.mesh.userData.wheels) for (const w of t.mesh.userData.wheels) w.rotation.y += TRACTOR.speed * delta * 2.6;
+1637:           const piv = t.mesh.userData.wheelPivots;
+1638:           if (piv) for (let i = 0; i < Math.min(2, piv.length); i++) piv[i].rotation.y = Math.sin(t.spin * 0.3) * 0.3;
+1639:         }
+1640:       }
+1641: 
+1642:       // ---- Runaway farm truck ----
+1643:       {
+1644:         const tr = truck;
+1645:         if (tr.state === 'parked') {
+1646:           const near = Math.hypot(car.x - tr.x, car.z - tr.z) < 4.5;
+1647:           if (near && Math.abs(car.speed) > 0.8) {
+1648:             tr.state = 'rolling';
+1649:             const ci = colliders.indexOf(truckCollider);
+1650:             if (ci >= 0) colliders.splice(ci, 1);   // let the player follow it
+1651:           }
+1652:         }
+1653:         if (tr.state === 'rolling') {
+1654:           tr.vz = Math.min(16, tr.vz + 9 * delta);
+1655:           tr.z += tr.vz * delta;
+1656:           if (tr.mesh.userData.wheels) for (const w of tr.mesh.userData.wheels) w.rotation.y += tr.vz * delta * 1.5;
+1657:           if (tr.z <= HILL.zFar - 1.5) {
+1658:             tr.y = HILL.topY;
+1659:           } else {
+1660:             if (hill.fence.visible) {
+1661:               hill.fence.visible = false;
+1662:               const fi = colliders.indexOf(truckFence);
+1663:               if (fi >= 0) colliders.splice(fi, 1);
+1664:             }
+1665:             tr.vy -= 22 * delta;
+1666:             tr.y += tr.vy * delta;
+1667:             tr.rotX += tr.vz * delta * 0.45;
+1668:           }
+1669:           if (tr.y <= -HILL.ravine.depth + 1.0) {
+1670:             tr.y = -HILL.ravine.depth + 1.0;
+1671:             tr.state = 'crashed';
+1672:             tr.settleSpin = tr.vz * 0.5;
+1673:           }
+1674:         } else if (tr.state === 'crashed') {
+1675:           tr.rotX += (Math.PI - tr.rotX) * Math.min(1, 3 * delta);
+1676:           if (tr.settleSpin > 0.05) {
+1677:             for (const w of tr.mesh.userData.wheels) w.rotation.y += tr.settleSpin * delta;
+1678:             tr.settleSpin *= Math.max(0, 1 - 1.0 * delta);
+1679:           }
+1680:         }
+1681:         tr.mesh.position.set(tr.x, tr.y, tr.z);
+1682:         tr.mesh.rotation.x = tr.rotX;
+1683:       }
+1684: 
+1685:       cobs.update(delta);
+1686:       hay.update(delta);
+1687:       stems.update(delta);
+1688:     },
+1689:     reset() {
+1690:       corn.reset();
+1691:       for (const p of pumpkins) {
+1692:         p.x = p.home.x; p.z = p.home.z; p.vx = 0; p.vz = 0; p.spin = 0;
+1693:         p.stemAttached = true; p.stem.visible = true;
+1694:         p.group.position.set(p.home.x, p.restY, p.home.z);
+1695:         p.group.quaternion.identity();
+1696:       }
+1697:       // stack every barrel back up where it started
+1698:       for (const b of barrels) {
+1699:         b.x = b.home.x; b.y = b.home.y; b.z = b.home.z;
+1700:         b.vx = 0; b.vz = 0; b.vy = 0; b.roll = 0; b.state = 'stacked';
+1701:         b.group.position.set(b.x, b.y, b.z);
+1702:         b.group.rotation.set(0, b.axis, 0);
+1703:         b.group.quaternion.setFromAxisAngle(_up, b.axis);
+1704:       }
+1705:       // squirrel
+

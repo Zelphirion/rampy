@@ -7,8 +7,9 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // runs whichever copy this unstamped URL happens to have cached. That is how the
 // brown bay kept refusing to send you into the house: the trigger was still the
 // grey garage's, from before the roles were swapped, and that door is now shut.
-import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000003';
+import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000004';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
+import { addCityOuter } from './cityOuter.js';
 import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
 
 // ===== Shared map materials =====
@@ -59,13 +60,12 @@ function makeNorthSlab(scene, w, d, x, z) {
 }
 
 function addGround(scene) {
-  // Asymmetric ground: the grass only extends far to the NORTH (the mega-ramp
-  // approach field, z up to ~126). The east/west/south edges end at ±90 like
-  // the original map. The box overhangs each wrap seam slightly (to ~±95) so
-  // no grass edge is ever visible through the seams.
+  // The city is a big FINITE rectangle (x ±180, z -180..246) inside a solid
+  // brick wall, so the grass is one large field that overhangs the wall line
+  // slightly (to ±186 / z -186..252) so no grass edge is ever visible under it.
   //
   // The ground is split into slabs with a rectangular HOLE over the abandoned
-  // mine shaft (x -60..-50, z 34..54). The descending-adit excavation lives in
+  // mine shaft (x -60..-49, z 32..44). The descending-adit excavation lives in
   // that hole, so the car visibly drives DOWN into the shaft instead of sinking
   // below a flat meadow plane.
   //
@@ -74,7 +74,8 @@ function addGround(scene) {
   // (cut in props.js) is no use on its own - without cutting the slab too, its
   // top surface would show through as a floor and flatten the shell's dish.
   // The slab hole is cut slightly tighter than the lawn hole so the turf keeps
-  // an unbroken lip over the shell's edge.
+  // an unbroken lip over the shell's edge. The hole follows the shell wherever
+  // the park sits, because the slab's own centre is handed to clamFanOutline().
   const groundY = -0.125;
   const groundH = 0.25;
   const makeSlab = (w, d, x, z) => {
@@ -83,14 +84,14 @@ function addGround(scene) {
     slab.receiveShadow = true;
     scene.add(slab);
   };
-  // South slab: z -95..32 (full width) — hole starts closer to the rocks.
-  makeSlab(190, 127, 0, -31.5);
-  // North slab: z 44..126 (full width), punched for the scallop.
-  makeNorthSlab(scene, 190, 82, 0, 85);
-  // West slab: x -95..-61, z 32..44 — wider hole.
-  makeSlab(34, 12, -78, 38);
-  // East slab: x -49..95, z 32..44 — wider hole.
-  makeSlab(144, 12, 23, 38);
+  // South slab: z -186..32 (full width).
+  makeSlab(372, 218, 0, -77);
+  // North slab: z 44..252 (full width), punched for the scallop.
+  makeNorthSlab(scene, 372, 208, 0, 148);
+  // West slab: x -186..-61, z 32..44 — flanks the mine hole on the west.
+  makeSlab(125, 12, -123.5, 38);
+  // East slab: x -49..186, z 32..44 — flanks the mine hole on the east.
+  makeSlab(235, 12, 68.5, 38);
 
   const hill = new THREE.Mesh(
     new THREE.CylinderGeometry(PORTAL_HILL.topRadius, PORTAL_HILL.baseRadius, PORTAL_HILL.height, 48),
@@ -461,6 +462,9 @@ export function buildMap(scene) {
   addRoads(scene);
   const { ramps } = addRamps(scene);
   addBuildings(scene, buildingColliders);
+  // The outer belt: the boundary wall (whose colliders join the shared list so
+  // it physically stops the car), the empty parking lots and the nature area.
+  addCityOuter(scene, buildingColliders);
   // A ribbon of tarmac from every front door to the nearest street, so all
   // fourteen buildings are genuinely drivable-up-to.
   const { driveways } = buildDriveways(scene, cityDoorTargets());

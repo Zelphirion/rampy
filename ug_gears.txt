@@ -1,0 +1,17 @@
+﻿5315:         && Math.abs(player.x - CONVEYOR.cx) < CONVEYOR.len / 2
+5316:         && Math.abs(player.z - CONVEYOR.cz) < CONVEYOR.wid / 2
+5317:         && player.y < 1.5) {
+5318:         player.x += CONVEYOR.dirX * CONVEYOR.speed * delta;
+5319:         player.z += CONVEYOR.dirZ * CONVEYOR.speed * delta;
+5320:       }
+5321:       // Factory machinery: spin the gears, run the steam press cycle and the
+5322:       // car wash (rollers, fans, water spray + exit sparkle).
+5323:       for (const sp of gearSpin) sp.mesh.rotation.z += delta * sp.speed;
+5324:       // Giant slat machine: beds and slats pump up and down in alternating
+5325:       // waves (beds up â†’ neighbouring slats down), like the gears drive them.
+5326:       machineT += delta;
+5327:       for (const bs of bedsAndSlats) {
+5328:         const wave = Math.sin(machineT * bs.speed + bs.phase);
+5329:         bs.mesh.position.y = bs.baseY + wave * (bs.amp * 0.75 + 0.25);
+5330:       }
+

@@ -1,0 +1,32 @@
+﻿1315:   // ---- AI tractor on its loop ----
+1316:   const tractorMesh = makeFarmallTractor();
+1317:   tractorMesh.position.set(TRACTOR.path[0][0], CORN_GROUND, TRACTOR.path[0][1]);
+1318:   scene.add(tractorMesh);
+1319:   const farmTractor = {
+1320:     mesh: tractorMesh,
+1321:     x: TRACTOR.path[0][0], z: TRACTOR.path[0][1],
+1322:     heading: 0, wp: 1, spin: 0,
+1323:   };
+1324: 
+1325:   // ---- runaway farm truck ----
+1326:   const truckMesh = makeFarmTruckModel();
+1327:   truckMesh.position.set(FARM_TRUCK.x, HILL.topY, FARM_TRUCK.z);
+1328:   truckMesh.rotation.y = FARM_TRUCK.yaw;
+1329:   scene.add(truckMesh);
+1330:   const truck = {
+1331:     mesh: truckMesh,
+1332:     x: FARM_TRUCK.x, y: HILL.topY, z: FARM_TRUCK.z,
+1333:     vz: 0, vy: 0, rotX: 0,
+1334:     state: 'parked',        // parked | rolling | crashed
+1335:     settleSpin: 0,
+1336:   };
+1337: 
+1338:   const hillWalls = hillColliders();
+1339:   const truckFence = hillWalls.find((c) => c.truckFence);
+1340:   const colliders = [
+1341:     ...barnColliders(), ...siloColliders(), ...waterTowerColliders(),
+1342:     ...hillWalls, ...farmBoundsColliders(),
+1343:     // The parked truck is solid until it starts to roll.
+1344:     { x: FARM_TRUCK.x, z: FARM_TRUCK.z, halfW: 1.3, halfD: 3.3, h: 2.6, top: HILL.topY + 2.6, truck: true },
+1345:   ];
+

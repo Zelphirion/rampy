@@ -52,6 +52,17 @@ const M = {
   wood: new THREE.MeshStandardMaterial({ color: 0x8a6136, roughness: 0.85 }),
   woodDark: new THREE.MeshStandardMaterial({ color: 0x54381f, roughness: 0.85 }),
   door: new THREE.MeshStandardMaterial({ color: 0x6b4026, roughness: 0.8 }),
+  // The big green front door on the brown-roofed house, and the panels let into
+  // it. These are the house interior's own door colours (see levels/house),
+  // because that door is what this one is a scaled copy of.
+  doorGreen: new THREE.MeshStandardMaterial({ color: 0x2f4a3c, roughness: 0.55 }),
+  doorGreenDark: new THREE.MeshStandardMaterial({ color: 0x22392e, roughness: 0.5 }),
+  // The padlock on it, and the glass in the fanlight over the top.
+  lockRed: new THREE.MeshStandardMaterial({ color: 0xc03a2e, roughness: 0.4, metalness: 0.3 }),
+  glass: new THREE.MeshStandardMaterial({
+    color: 0xcfe6f2, roughness: 0.05, metalness: 0, transparent: true, opacity: 0.22,
+    side: THREE.DoubleSide,
+  }),
   // Rear-elevation dressing. A service door reads as a flat dark hole in the
   // wall at any distance, which is exactly what a blank elevation needs.
   doorDark: new THREE.MeshStandardMaterial({ color: 0x2b2622, roughness: 0.85 }),
@@ -65,6 +76,11 @@ const M = {
   metal: new THREE.MeshStandardMaterial({ color: 0x8f96a0, roughness: 0.4, metalness: 0.7 }),
   metalDark: new THREE.MeshStandardMaterial({ color: 0x4a5058, roughness: 0.5, metalness: 0.6 }),
   brass: new THREE.MeshStandardMaterial({ color: 0xc9a24a, roughness: 0.3, metalness: 0.85 }),
+  // The bright end of the bolt on the front door, and the two odds and ends in
+  // the bay that were being drawn with no material at all.
+  chrome: new THREE.MeshStandardMaterial({ color: 0xdfe6ec, roughness: 0.12, metalness: 0.9 }),
+  rubber: new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.95 }),
+  paper: new THREE.MeshStandardMaterial({ color: 0xcfc7b4, roughness: 0.9 }),
   // Fire station
   bayRed: new THREE.MeshStandardMaterial({ color: 0xb8231b, roughness: 0.55 }),
   // Glass + light
@@ -549,9 +565,13 @@ function cornice(parent, w, d, y, h, overhang, material) {
 }
 
 // A flat roof: a dark tar deck inside a raised parapet lip all the way round.
+// The deck is inset a hair under the parapet's outer rim: sized to the SAME
+// extent, the deck's vertical edge faces and the parapet's outer faces would be
+// coplanar the whole way up, and that seam flickers. Standing the parapet proud
+// keeps the joint a clean overlap instead of a depth-buffer coin-flip.
 function flatRoof(parent, w, d, y, parapetH, overhang, material) {
-  box(parent, w + overhang, 0.3, d + overhang, 0, y, 0, M.tar);
   const t = 0.28;
+  box(parent, w + overhang - 0.06, 0.3, d + overhang - 0.06, 0, y, 0, M.tar);
   box(parent, w + overhang, parapetH, t, 0, y + parapetH / 2, (d + overhang) / 2 - t / 2, material);
   box(parent, w + overhang, parapetH, t, 0, y + parapetH / 2, -(d + overhang) / 2 + t / 2, material);
   box(parent, t, parapetH, d + overhang - t * 2, (w + overhang) / 2 - t / 2, y + parapetH / 2, 0, material);
@@ -1444,7 +1464,7 @@ function gasStation() {
 
   // ---- Cashier office ----
   box(g, OW, OH, OD, OX, OH / 2, 0, M.limestone);
-  box(g, OW + 0.5, 0.3, OD + 0.5, OX, OH + 0.15, 0, M.flatRoof);
+  box(g, OW + 0.5, 0.3, OD + 0.5, OX, OH + 0.2, 0, M.flatRoof);
   // Serving window with a shutter hood, facing the pumps.
   box(g, 0.3, 1.2, 3.0, OX + OW / 2 + 0.02, 2.0, 0, M.storefront, false);
   box(g, 0.8, 0.2, 3.4, OX + OW / 2 + 0.35, 2.75, 0, M.trimWhite, false);
@@ -1578,7 +1598,9 @@ function hospital() {
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) box(g, 0.35, BODY - 5.5, 0.35, sx * (W / 2 - 0.4), 5.5 + (BODY - 5.5) / 2, sz * (D / 2 - 0.4), M.concrete, false);
   }
-  box(g, W + 0.6, 0.5, D + 0.6, 0, BODY + 0.25, 0, M.trimWhite);
+  // Coping band: lifted a hair clear of the slab top below it. Sat flush, the
+  // band's underside and the slab's roof face occupy the same plane and flicker.
+  box(g, W + 0.6, 0.5, D + 0.6, 0, BODY + 0.3, 0, M.trimWhite);
   // Plant enclosure and vents on the roof.
   box(g, 4.5, 1.3, 3.5, -5, BODY + 1.15, -1.5, M.metal, false);
   for (let i = 0; i < 3; i++) box(g, 1.2, 0.7, 1.2, 4 + i * 2, BODY + 0.85, -2.5, M.metal, false);
@@ -1791,21 +1813,46 @@ function houseWithGarage() {
 // ============================================================================
 // 8. Suburban House — standard
 // ============================================================================
-// A compact gabled house with a garage door on the end wall, a dormer, a front
-// path and a picket-fenced lawn. The fence is low and its gate is left open.
+// A big gabled house with an open garage bay in the front elevation, a scaled
+// twin of the house interior's own front door in the wall beside that bay, a
+// dormer over the door, and a picket-fenced lawn behind.
 function houseStandard() {
   const g = new THREE.Group();
-  // A big SQUARE footprint (11 x 11), matching the giant square of the world
-  // inside the front door. It used to be 11 wide by 10 deep.
-  const W = 11, D = 11, BODY = 3.6;
+  // A big footprint: 20 wide by 12 deep, matching the giant square of the world
+  // inside the front door. It used to be a compact 11 by 11, which was the size
+  // of the house back when the door on it was a plain 1-wide box with a canopy.
+  const W = 20, D = 12, BODY = 6.6;
   // The garage here is a ROOM, not a door: an open bay in the front elevation
   // with a floor, a back wall and a ceiling that you drive into. GX/GW2/GH2
-  // describe that opening. 5.5 wide is the most the 11-wide elevation gives up
-  // once the front door and its two windows keep the west end, and it leaves
-  // 0.55 either side of the 2.2-radius car, which is tight but drivable.
-  const GX = 2.25, GW2 = 5.5, GH2 = 2.6;
+  // describe that opening. 6.4 wide is what the 20-wide elevation gives up
+  // once the front door and its window keep the west end, and it leaves 1.0
+  // either side of the 2.2-radius car, which is room to line up in.
+  const GX = 4.6, GW2 = 6.4, GH2 = 3.8;
   const gx0 = GX - GW2 / 2, gx1 = GX + GW2 / 2;   // opening edges in x
   const gz1 = D / 2, gz0 = 0;                    // mouth at the front, back wall at z 0
+  // ---- The front door: the house interior's own door, scaled down ----------
+  // The house level has two doors of this kind, and they are now the same door:
+  // a normal single leaf, 12 wide and 22 tall. They used to be 20 wide - as
+  // wide as they were tall, which reads as a barn opening rather than as a
+  // door - and the interior's front door has been narrowed to match its back
+  // one. So this is that leaf, worn on the street.
+  //
+  // The scale is taken off the bay's HEIGHT, not its width, because the door
+  // has to be PROPORTIONATE to the garage beside it: the leaf's head sits
+  // three quarters of the way up the opening, so it is under the lintel rather
+  // than taller than the bay it stands next to. At the old factor - taken off
+  // the bay's width - the door came out 4.6 wide and 5.0 tall, which is
+  // taller than the 3.8 bay and reads as a hole in the wall.
+  //
+  // The gap to the bay is still the interior's own: the house's front door
+  // stands 13 clear of the roller door the car comes out of, and this bay is
+  // that roller door's twin, so the door stands in the same place relative to
+  // the way in.
+  const K = GH2 * 0.75 / 22;            // the interior's 22-tall leaf, at 3/4 of the bay
+  const DOOR_W = 12 * K, DOOR_H = 22 * K, DOOR_GAP = 13 * K;
+  const DOOR_X = gx0 - DOOR_GAP - DOOR_W / 2;   // 13 clear of the bay's west edge
+  const WIN_X = -8.6;                 // the one window on the west end of the front
+  const LAMP_X = DOOR_X + DOOR_W / 2 + 0.4;     // the porch lamp, east of the door
   const colliders = [];
 
   // The shell is built in pieces AROUND the bay void rather than as one solid
@@ -1819,13 +1866,18 @@ function houseStandard() {
   roof.position.y = BODY;
   gableRoof(roof, W, D, 2.6, 0.5, M.shingleWarm);
   g.add(roof);
-  // Front dormer, over the front door rather than over the garage gable.
-  box(g, 2.4, 1.5, 2.2, -3.2, BODY + 1.1, D / 2 - 1.4, M.whiteStucco, false);
+  // Front dormer, over the front door rather than over the garage gable. It is
+  // sized off the DOOR below (the door assembly is 1.8 wide once its
+  // architrave is counted), so the dormer covers the door and not one panel
+  // more. Its depth is unchanged, so its face still sits just behind the
+  // house's own front wall.
+  const DORMER_W = DOOR_W + 2.6 * K, DORMER_H = 12 * K;
   const dRoof = new THREE.Group();
-  dRoof.position.set(-3.2, BODY + 1.85, D / 2 - 1.4);
-  gableRoof(dRoof, 2.6, 2.4, 1.0, 0.3, M.shingleWarm);
+  dRoof.position.set(DOOR_X, BODY + DORMER_H, gz1 - 1.5);
+  gableRoof(dRoof, DORMER_W + 0.2, 2.8, 1.2, 0.3, M.shingleWarm);
   g.add(dRoof);
-  panel(g, 1.0, 1.0, -3.2, BODY + 1.2, D / 2 - 0.28, 0, M.windowLit);
+  box(g, DORMER_W, DORMER_H, 2.6, DOOR_X, BODY + DORMER_H / 2, gz1 - 1.5, M.whiteStucco, false);
+  panel(g, DORMER_W * 0.6, DORMER_H * 0.7, DOOR_X, BODY + DORMER_H / 2, gz1 - 0.18, 0, M.windowLit);
 
   // ---- Garage: an open bay built into the front elevation ----
   // It used to sit on the +X end wall, which meant the roller door pointed at
@@ -1841,7 +1893,7 @@ function houseStandard() {
   // Its own little gable, turned so the triangle faces the street.
   const gRoof = new THREE.Group();
   gRoof.position.set(GX, BODY, D / 2 - 0.6);
-  gableRoof(gRoof, 5.8, 3.0, 1.2, 0.3, M.shingleWarm);
+  gableRoof(gRoof, GW2 + 0.3, 3.0, 1.2, 0.3, M.shingleWarm);
   gRoof.rotation.y = Math.PI / 2;
   g.add(gRoof);
   // Driveway apron from the bay out to the kerb, in the same cement as the bay
@@ -1929,25 +1981,91 @@ function houseStandard() {
       .rotation.x = Math.PI / 2;                                                    // coiled hose
   }
 
-  // Front: door with a canopy, two windows, a path to the kerb. All on the west
-  // half of the elevation, clear of the garage.
-  box(g, 1.0, 2.1, 0.16, -3.2, 1.05, D / 2 + 0.02, M.door, false);
-  box(g, 1.8, 0.14, 0.9, -3.2, 2.3, D / 2 + 0.45, M.trimWhite, false);
-  for (const s of [-1, 1]) cyl(g, 0.07, 0.07, 2.2, -3.2 + s * 0.75, 1.1, D / 2 + 0.8, M.trimWhite, 6, false);
-  // The west window sits at -1.4, not -1.0. The garage bay's west edge is at
-  // -0.5, and a 1.3-wide window centred on -1.0 would run to -0.35 and hang
-  // 0.15 into the opening — glass across the corner of a driveable bay.
-  for (const x of [-1.4, -4.4]) panel(g, 1.3, 1.3, x, 1.7, D / 2 + 0.03, 0, M.windowLit);
-  flatPanel(g, 1.1, 4.0, -3.2, 0.03, D / 2 + 2.2, M.concrete);
+  // ---- The front door, and the wall it stands in --------------------------
+  // Everything here is the house interior's own front door (levels/house,
+  // buildFrontDoor) multiplied by K: the architrave, the green panelled leaf
+  // with its four raised panels, the glazed fanlight over the top, and the
+  // hardware - knocker, letterbox, deadbolt, hasp and padlock, and the chain
+  // that is permanently on - which is the whole reason the door does not open.
+  //
+  // The leaf is NARROWER than the interior's barn-wide one, so the furniture
+  // that is measured ACROSS the leaf is measured as a fraction of it, the way
+  // the interior's own door measures its panels and its fanlight: the
+  // knocker 0.13 in from the left edge, the letterbox 0.275 wide and 0.1
+  // across, the hasp 0.13 in from the right edge, and the chain's seven links
+  // 0.11 wide on a 0.12 pitch. Everything else keeps the interior's own sizes,
+  // because those are about how thick the door is rather than how wide.
+  //
+  // The one thing that is turned round is the face of it. Inside the house the
+  // leaf hangs on the ROOM side of the wall, so from the street you would only
+  // ever see its back; out here it is the front of the door, facing the road,
+  // with the hardware on show.
+  const faceZ = gz1;                       // the front wall's outer face
+  const leafZ = faceZ + 0.35 * K;          // the leaf stands proud of the stucco
+  // The architrave: two uprights and a head, all standing a little off the wall.
+  for (const s of [-1, 1]) {
+    box(g, 1.1 * K, DOOR_H + 1.2 * K, 0.5 * K, DOOR_X + s * (DOOR_W / 2 + 0.4 * K),
+      (DOOR_H + 1.2 * K) / 2, faceZ + 0.1 * K, M.trimWhite, false);
+  }
+  box(g, DOOR_W + 2.4 * K, 0.6 * K, 0.5 * K, DOOR_X, DOOR_H + 0.3 * K, faceZ + 0.1 * K, M.trimWhite, false);
+  // The leaf itself, and the four panels let into it.
+  box(g, DOOR_W, DOOR_H, 0.9 * K, DOOR_X, DOOR_H / 2, leafZ, M.doorGreen, false);
+  for (let r = 0; r < 2; r++) {
+    for (let c = 0; c < 2; c++) {
+      box(g, DOOR_W * 0.34, DOOR_H * 0.3, 0.4 * K, DOOR_X + (c - 0.5) * DOOR_W * 0.42,
+        DOOR_H * (0.2 + r * 0.42), leafZ + 0.7 * K, M.doorGreenDark, false);
+    }
+  }
+  // The fanlight over the door, glazed, with its four bars.
+  box(g, DOOR_W * 0.8, 5 * K, 0.5 * K, DOOR_X, DOOR_H + 2.6 * K, faceZ + 0.35 * K, M.glass, false);
+  for (let i = 0; i < 4; i++) {
+    box(g, 0.45 * K, 5 * K, 0.55 * K, DOOR_X - DOOR_W * 0.3 + i * (DOOR_W * 0.2),
+      DOOR_H + 2.6 * K, faceZ + 0.45 * K, M.trimWhite, false);
+  }
+  // ---- The hardware, which is the whole point ------------------------------
+  // A ring knocker high up, a letterbox, and then a row of things that all say
+  // the same message in different ways: this door does not open.
+  const knobZ = leafZ + 1.1 * K;
+  sph(g, 0.9 * K, DOOR_X - DOOR_W / 2 + DOOR_W * 0.13, 9 * K, knobZ, M.metal);        // knocker
+  box(g, DOOR_W * 0.275, 2.4 * K, 1.2 * K, DOOR_X + DOOR_W * 0.1, 9 * K, knobZ, M.metalDark, false);   // letterbox
+  box(g, DOOR_W * 0.275, 0.5 * K, 0.5 * K, DOOR_X + DOOR_W * 0.1, 11.4 * K, knobZ + 0.5 * K, M.metal, false);
+  // Deadbolt: a big sliding bolt, thrown.
+  box(g, 2.6 * K, 1.6 * K, 0.9 * K, DOOR_X - DOOR_W / 2 + DOOR_W * 0.13, 6 * K, knobZ + 0.2 * K, M.metal, false);
+  box(g, 1.4 * K, 1.2 * K, 0.6 * K, DOOR_X - DOOR_W / 2 + DOOR_W * 0.13, 6 * K, knobZ + 0.7 * K, M.chrome, false);
+  // Hasp and staple with a padlock hanging shut through them.
+  box(g, 3.2 * K, 1.2 * K, 0.8 * K, DOOR_X + DOOR_W / 2 - DOOR_W * 0.13, 3.4 * K, knobZ + 0.2 * K, M.metal, false);
+  box(g, 1.1 * K, 3.2 * K, 1.1 * K, DOOR_X + DOOR_W / 2 - DOOR_W * 0.13, 2.4 * K, knobZ + 0.6 * K, M.lockRed, false);
+  // A security chain, drawn across the opening, permanently on.
+  for (let i = 0; i < 7; i++) {
+    box(g, DOOR_W * 0.11, 0.5 * K, 0.5 * K, DOOR_X - DOOR_W / 2 + DOOR_W * 0.13 + i * DOOR_W * 0.12,
+      (17.5 - i * 0.55) * K, leafZ + (0.4 + i * 0.35) * K, M.metal, false);
+  }
+  // The porch light. Inside the house it hangs over the door, but there it is
+  // outside the wall and the fanlight is inside it; here both would be on the
+  // same face, so the lamp is moved to the side of the door where it lights
+  // the step without burying the fanlight behind it.
+  box(g, 2.2 * K, 2.2 * K, 2.2 * K, LAMP_X, DOOR_H + 3 * K, faceZ + 1.1 * K, M.metalDark, false);
+  sph(g, 0.7 * K, LAMP_X, DOOR_H + 1.7 * K, faceZ + 1.1 * K, M.windowLit, false);
+  // The step outside the door, and a path from it to the kerb.
+  box(g, DOOR_W + 1.2, 0.22, 0.7, DOOR_X, 0.11, gz1 + 0.35, M.concreteDark, false);
+  flatPanel(g, 2.4, 6.0, DOOR_X, 0.03, gz1 + 3.0, M.concrete);
+  // One window on the west end of the elevation. The house used to have two,
+  // either side of the old door; the door is 1.6 wide now, so there is room
+  // for the window and not much else.
+  panel(g, 1.7, 1.7, WIN_X, 1.9, gz1 + 0.03, 0, M.windowLit);
+  // House number, beside the door.
+  panel(g, 0.5, 0.3, DOOR_X - DOOR_W / 2 - 0.45, 2.0, gz1 + 0.05, 0, M.signAmber);
   // Windows on the returns and the rear.
   for (const s of [-1, 1]) panel(g, 1.1, 1.1, s * (W / 2 + 0.03), 1.8, -2.0, s * Math.PI / 2, M.windowCool);
   for (const s of [-1, 1]) panel(g, 1.2, 1.2, s * 2.4, 1.7, -D / 2 - 0.03, Math.PI, M.windowCool);
-  // Brick chimney on the -X flank.
-  box(g, 0.8, 5.2, 0.8, -W / 2 + 0.6, 2.6, -2.0, M.brickRed, false);
-  box(g, 1.0, 0.2, 1.0, -W / 2 + 0.6, 5.25, -2.0, M.concreteDark, false);
+  // Brick chimney on the -X flank, tall enough to clear the new eaves.
+  box(g, 0.9, BODY + 2.4, 0.9, -W / 2 + 0.8, (BODY + 2.4) / 2, -2.0, M.brickRed, false);
+  box(g, 1.1, 0.25, 1.1, -W / 2 + 0.8, BODY + 2.5, -2.0, M.concreteDark, false);
 
   // ---- Picket-fenced lawn with an open gate ----
-  frontYard(g, W, D);
+  // The driveway's west edge goes in too, so the beds can be kept off the apron
+  // rather than parked in the middle of it.
+  frontYard(g, W, D, DOOR_X, DOOR_W, WIN_X, GX - (GW2 + 0.6) / 2);
   // Air-con unit on the rear wall.
   box(g, 0.8, 0.6, 0.8, 3.0, 0.5, -D / 2 - 0.3, M.metal, false);
 
@@ -1956,10 +2074,16 @@ function houseStandard() {
   // test with no height term, so these three are what enclose the room on three
   // sides and the mouth is simply the space between them. The lintel over the
   // opening needs no collider either: one there would stop the car dead even
-  // though it is 2.6 up, which is the same trap that sealed the house interior's
+  // though it is 3.8 up, which is the same trap that sealed the house interior's
   // own garage exit.
   const H = BODY + 0.6;
   colliders.push({ x: (gx0 - W / 2) / 2, z: 0, halfW: (gx0 + W / 2) / 2, halfD: D / 2, h: H });
+  // The east end wall runs from the bay's east edge (gx1) to the house's own
+  // edge (W / 2) - NOT from the house's edge to the centre. Measuring it the
+  // other way made the collider reach back across the mouth and seal the bay
+  // shut, which is exactly what happened when the house was resized: the bay
+  // is 6.4 wide and the wall either side of it is 1.0, so the collider has to
+  // be half of that.
   colliders.push({ x: (gx1 + W / 2) / 2, z: 0, halfW: (W / 2 - gx1) / 2, halfD: D / 2, h: H });
   colliders.push({ x: GX, z: (gz0 - D / 2) / 2, halfW: GW2 / 2, halfD: (gz0 + D / 2) / 2, h: H });
 
@@ -1987,7 +2111,7 @@ function houseStandard() {
     // Where the watch camera stands while you drive in: out on the driveway, off
     // to one side and above the roofline, so the bay's own gable never gets
     // between it and the car.
-    camX: GX + 3.6, camY: 5.0, camZ: gz1 + 8.5,
+    camX: GX + 3.6, camY: 7.0, camZ: gz1 + 8.5,
   };
   return { group: g, colliders, h: BODY + 0.6 };
 }
@@ -2489,7 +2613,7 @@ function substation() {
     box(g, 0.5, 0.16, 0.06, cx2, 2.05, -3.46, M.signAmber, false);
   }
   box(g, 2.4, 2.6, 2.0, -4.4, 1.3, 3.4, M.whiteStucco, false);
-  box(g, 2.6, 0.16, 2.2, -4.4, 2.68, 3.4, M.shingle, false);
+  box(g, 2.6, 0.16, 2.2, -4.4, 2.7, 3.4, M.shingle, false);
   panel(g, 1.4, 1.0, -4.4, 1.5, 4.42, 0, M.windowCool);
   box(g, 0.9, 2.0, 0.12, -3.2, 1.0, 4.42, M.metalDark, false);
 
@@ -2578,7 +2702,7 @@ function substation() {
 // driveway:
 //
 //   block  x -72..-45, z  12..39   bodega              (clear of the mine adit)
-//   block  x -31..-12, z  12..39   fountain plaza      (a square on the drag)
+//   block  x -31..-12, z  12..39   the bodega block     (a square on the drag)
 //   block  x  12..48, z  12..39   school              (the big civic block)
 //   block  x  12..48, z  43..65   park + library      (off park-spine)
 //   block  x -72..-12, z  79..106  city hall + bank    (the far-north civic row)
@@ -2595,7 +2719,7 @@ function substation() {
 
 const LAYOUT = [
   // The bodega fronts the main drag from the block between west-spine and the
-  // main street, with the fountain plaza behind it. It used to sit south of the
+  // main street. It used to sit south of the
   // mine shaft, directly in the line of the drive-in, which is why the shaft
   // could not be seen from the road.
   { name: 'bodega',        build: bodega,        x: -22.5, z: 19.6, face: 'S' },
@@ -2607,18 +2731,24 @@ const LAYOUT = [
   { name: 'bank',          build: bank,          x: -24,   z: 92,   face: 'E' },
   { name: 'hospital',      build: hospital,      x: 26,    z: 95,   face: 'S' },
   { name: 'apartments',    build: apartments,    x: -58,   z: -22,  face: 'N' },
-  // Both houses turn EAST onto arterial-ns. They used to face north, which put
-  // their front doors on an empty lawn with the tarmac off to one side; facing
-  // the street means the door, the path and the garage apron all land on the
-  // road. The garage house has its bay open, so you can drive in off the drag.
-  { name: 'houseStandard', build: houseStandard, x: -22,   z: -68,  face: 'E' },
-  // The house-with-garage sits 2.5 further south than it used to (z -49, not
-  // -46.5) because its garage went from 5 wide to 7. The garage is hung on the
-  // house's -X side, which after the E facing lands on world -Z, so every extra
-  // unit of width pushes the whole building 1 further south. At -46.5 the widened
-  // garage's outer wall would have run into the retained block at z -36.2; at
-  // -49 it clears it by 1.6 and still leaves 4.6 between the two houses.
-  { name: 'houseGarage',   build: houseGarage,   x: -22,   z: -49,  face: 'E' },
+  // Both houses turn EAST onto the outer-belt cul-de-sac. The only house with
+  // an open garage is the brown-roofed one (houseStandard), and its garage bay
+  // must face the same way as the house level's garage (EAST). The grey-roofed
+  // house (houseGarage) has its roller door shut, as before. Both sit west of
+  // the cul-de-sac so their fronts open onto the tarmac, same as they used to
+  // open onto arterial-ns.
+  //
+  // They are spaced 19 apart along z, the same gap they kept on the old
+  // residential street. The grey-roofed house is the TALL one in z: its garage
+  // is hung off the local -X side, which after the E facing lands on world +Z,
+  // so it reaches 9.25 north of its origin while houseStandard reaches 10. The
+  // brown house was made bigger (20 x 12, where it used to be 11 x 11) to fit
+  // a scaled copy of the house interior's front door on it, and it was pushed
+  // half a unit back in x so its front face stayed on the same line - 109.5 -
+  // as before. Any closer and the grey garage would push into the brown
+  // house's back wall.
+  { name: 'houseStandard', build: houseStandard, x: 103.5, z: 52,   face: 'E' },
+  { name: 'houseGarage',   build: houseGarage,   x: 104,   z: 71,   face: 'E' },
   // The substation fills the far corner and the two public buildings face the
   // street. The gas station sits back from south-main so its drive-in forecourt
   // has room: its canopy starts 6 south of the kerb. The substation is pushed
@@ -3171,7 +3301,16 @@ export function newspaperRack(parent, x, z) {
 
 // The picket-fenced lawn and garden dressing around a suburban house, in the
 // house's own local frame (W and D are the house block's width and depth).
-export function frontYard(parent, W, D) {
+//
+// doorX/doorW are the front door's centre and width and winX is the window on
+// the same elevation: the planting is arranged around all three, so the beds
+// and the pot land where there is no door and no glass.
+//
+// driveX, when given, is the west edge of the driveway in front of the house.
+// The bed east of the door is tucked up against it rather than left to land on
+// the concrete, because a flower bed parked on a driveway reads as broken
+// rather than quaint.
+export function frontYard(parent, W, D, doorX = -3.2, doorW = 1.0, winX = -1.4, driveX = null) {
   const picketMat = cached('picket', () => new THREE.MeshStandardMaterial({ color: 0xf0efe6, roughness: 0.8 }));
   const picketLine = (z, from, to) => {
     const n = Math.max(2, Math.round(Math.abs(to - from) / 0.5));
@@ -3192,12 +3331,19 @@ export function frontYard(parent, W, D) {
   // Garden: everything is kept to the WEST half now. The east half of the front
   // is the garage apron, and a flower bed parked on a driveway is exactly the
   // kind of thing that reads as broken rather than quaint.
-  cornerBush(parent, -W / 2 + 0.9, D / 2 + 1.0, 0.5);
   cornerBush(parent, -W / 2 + 0.8, -D / 2 - 1.6, 0.55);
   cornerBush(parent, W / 2 - 0.7, D / 2 + 1.1, 0.55);
-  pottedPlant(parent, -3.2, D / 2 + 0.5, 1.0);
-  flowerBed(parent, -1.4, D / 2 + 1.1, 1.8, 1.0);
-  flowerBed(parent, -4.4, D / 2 + 1.1, 1.6, 1.0);
+  // A bed under the window, one beside the door, and a pot by the step. The
+  // beds sit either side of the door rather than in front of it, and the one
+  // east of the door keeps clear of the driveway.
+  const bedEW = 1.6;
+  const bedEast = driveX === null
+    ? doorX + doorW / 2 + 1.5
+    : Math.min(doorX + doorW / 2 + 1.5, driveX - 0.1 - bedEW / 2);
+  flowerBed(parent, winX, D / 2 + 1.0, 2.0, 0.9);
+  flowerBed(parent, doorX - doorW / 2 - 0.85, D / 2 + 1.0, 1.4, 0.9);
+  flowerBed(parent, bedEast, D / 2 + 1.0, bedEW, 0.9);
+  pottedPlant(parent, doorX + doorW / 2 + 0.45, D / 2 + 0.45, 1.0);
 }
 
 // One of the city's buildings as a standalone model - the SAME geometry the

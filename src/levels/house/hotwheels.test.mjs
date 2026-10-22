@@ -7,8 +7,10 @@ import assert from 'node:assert/strict';
 import {
   hotwheelsNodes, buildTrack, sampleTrack, poseOnTrack, nearestTrackS,
   trackStick, trackStickSpeed, stepTrack, createTrackState, boostAt,
-  circleLoopNodes, releaseYaw, TRACK_LIFT, TRACK_MAX,
-} from './hotwheels.mjs';
+  circleLoopNodes, releaseYaw, createLaunchFlight, stepLaunchFlight,
+  launchRampStart,
+  TRACK_LIFT, TRACK_MAX,
+} from './hotwheels.mjs?v=1800000000020';
 
 const G = 18;
 const mag = (x, y, z) => Math.hypot(x, y, z);
@@ -250,4 +252,117 @@ test('circleLoopNodes makes a full vertical circle with inward-facing ups', () =
   assert.ok(Math.abs(loop[0].uy - 1) < 1e-9, 'starts at the bottom, up = +Y');
   const topIdx = loop.findIndex((p) => p.y > cy + r - 1e-6);
   assert.ok(Math.abs(loop[topIdx].uy + 1) < 1e-9, 'top of the loop is inverted');
+});
+
+// ===== The launch ramp =====
+//
+// The car leaves the loops and climbs the ramp that fires it into the living
+// room. The climb used to happen inside the loops' fixed camera shot, so the
+// car climbed away from the lens and shrank to nothing on the way up - which
+// reads on screen as the car stalling at the lip. The ramp therefore has a
+// shot of its own, and that shot starts where the climb starts: these tests
+// pin that boundary.
+
+test('the launch ramp starts at the foot of the climb', () => {
+  const s = launchRampStart(track);
+  const foot = sampleTrack(track, s);
+  assert.ok(Math.abs(foot.x + 22) < 1, `the ramp is the straight run at x = -22 (got ${foot.x.toFixed(1)})`);
+  assert.ok(Math.abs(foot.y - 1.5) < 1, `it starts on the playroom floor (y = ${foot.y.toFixed(1)})`);
+  assert.ok(Math.abs(foot.z + 62) < 2, `at the far end of the playroom (z = ${foot.z.toFixed(1)})`);
+  // The tangent points up from here: this is the bottom of the climb.
+  assert.ok(sampleTrack(track, s + 2).ty > 0.3, 'the track climbs from here');
+});
+
+test('the ramp climbs the storey from the playroom floor to the lip', () => {
+  const s = launchRampStart(track);
+  const foot = sampleTrack(track, s);
+  const lip = sampleTrack(track, track.length);
+  assert.ok(lip.y - foot.y > 12, `the ramp gains a storey (${foot.y.toFixed(1)} -> ${lip.y.toFixed(1)})`);
+  // And it is a climb all the way up, not a lift and a drop.
+  for (let t = s + 2; t <= s + 26; t += 2) {
+    assert.ok(sampleTrack(track, t).ty > 0.3, `still climbing at s=${t.toFixed(1)}`);
+  }
+});
+
+test('the ramp starts after the loops, so the two shots never overlap', () => {
+  let lastInverted = 0;
+  for (const p of track.samples) if (p.uy < 0.2) lastInverted = p.s;
+  const s = launchRampStart(track);
+  assert.ok(s > lastInverted,
+    `the ramp is after the loops (loops end ${lastInverted.toFixed(1)}, ramp ${s.toFixed(1)})`);
+  assert.ok(s < track.length - 30, 'and well before the lip');
+});
+
+// ===== The launch flight =====
+//
+// Leaving the lip of the launch ramp used to drop the car straight down where
+// the ramp ended: the launch cinematic owns the frame, so the house's drive
+// block - the only thing in the house that moves the car sideways - is off and
+// nothing moved it. The car is now a projectile with a flight of its own, and
+// these tests pin that flight: it has to leave the ramp with speed, sail
+// through the playroom doorway and come down in the living room.
+
+// The living room and the doorway it is entered through (layout.js).
+const LIVING = { x0: -90, x1: 6, z0: -20, z1: 46 };
+const DOORWAY = { x0: -30, x1: -10, head: 22 };
+
+// Drive the whole route at full throttle and fly the car off the end of it.
+function flyTheLaunch() {
+  const st = createTrackState(0);
+  let guard = 0;
+  while (!st.atEnd && guard++ < 20000) stepTrack(track, st, { throttle: 1 }, 1 / 60, G);
+  const pose = poseOnTrack(track, track.length, TRACK_LIFT);
+  const f = createLaunchFlight(track, track.length, st.speed, pose.px, pose.py, pose.pz);
+  const dt = 1 / 60;
+  let t = 0;
+  while (t < 8 && f.y > 0) { stepLaunchFlight(f, dt, G); t += dt; }
+  return { st, f, t };
+}
+
+test('the car leaves the launch ramp with its speed, fired north', () => {
+  const { st } = flyTheLaunch();
+  assert.ok(st.atEnd, 'the car reaches the end of the track');
+  assert.ok(st.speed > 20, `and it is still quick there (${st.speed.toFixed(1)})`);
+
+  const lip = sampleTrack(track, track.length);
+  assert.ok(lip.ty >= 0 && lip.ty < 0.1, 'the lip is deliberately near-flat');
+  const f = createLaunchFlight(track, track.length, st.speed, lip.x, lip.y + TRACK_LIFT, lip.z);
+  assert.ok(Math.hypot(f.vx, f.vz) > 20, 'the flight keeps the speed off the rails');
+  assert.ok(f.vz > 0 && Math.abs(f.vx) < 1e-6, 'and it is fired due north, down the room');
+});
+
+test('the launch sails through the playroom doorway into the living room', () => {
+  const { f, t } = flyTheLaunch();
+  assert.ok(t > 0.8, `the car is in the air for a while (${t.toFixed(2)}s)`);
+  // The flight must pass through the gap in the wall, not through the plaster.
+  assert.ok(f.x > DOORWAY.x0 && f.x < DOORWAY.x1, `it goes through the doorway (x=${f.x.toFixed(1)})`);
+  // ...and under its head, so it does not clip the lintel on the way past.
+  const lip = sampleTrack(track, track.length);
+  assert.ok(lip.y + TRACK_LIFT < DOORWAY.head, 'it flies under the door head');
+  // It lands in the living room, with room to spare before the far wall.
+  assert.ok(f.z > LIVING.z0 + 20, `it crosses the living room (landed at z=${f.z.toFixed(1)})`);
+  assert.ok(f.z < LIVING.z1 - 4, 'and does not slam into the far wall');
+  assert.ok(f.x > LIVING.x0 && f.x < LIVING.x1, 'landing inside the living room');
+});
+
+test('the flight is ballistic: it falls under gravity and slows in the air', () => {
+  const { st } = flyTheLaunch();
+  const f = createLaunchFlight(track, track.length, st.speed, 0, 16.4, -20);
+  const startSpeed = Math.hypot(f.vx, f.vz);
+  const startVy = f.vy;
+  assert.ok(startVy > 0, 'the ramp kicks it up a little as it leaves');
+  stepLaunchFlight(f, 1 / 60, G);
+  assert.ok(f.vy < startVy, 'gravity pulls it down');
+  for (let i = 0; i < 20; i++) stepLaunchFlight(f, 1 / 60, G);
+  assert.ok(f.vy < 0, 'and after a moment it is falling');
+  assert.ok(Math.hypot(f.vx, f.vz) < startSpeed, 'air drag takes the edge off the speed');
+  assert.ok(f.pitch > 0, 'and the body noses down as it falls');
+});
+
+test('the launch hands the car back at a sane speed, not the launch speed', () => {
+  const { st, f } = flyTheLaunch();
+  const handover = Math.min(Math.hypot(f.vx, f.vz) * 0.3, 12);
+  assert.ok(handover > 2, 'the car still rolls on when the player gets the wheel back');
+  assert.ok(handover <= 12, 'but not at the speed it was launched at');
+  assert.ok(handover < st.speed * 0.5);
 });

@@ -1,0 +1,805 @@
+﻿210: function buildGround(scene) {
+211:   // Ground is built as four planes around the ravine hole, so the ravine is a
+212:   // real drop instead of a pit painted onto a solid floor.
+213:   const plane = (x0, x1, z0, z1) => {
+214:     const w = x1 - x0, d = z1 - z0;
+215:     if (w <= 0 || d <= 0) return;
+216:     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), M.grass);
+217:     m.rotation.x = -Math.PI / 2;
+218:     m.position.set((x0 + x1) / 2, CORN_GROUND, (z0 + z1) / 2);
+219:     m.receiveShadow = true;
+220:     scene.add(m);
+221:   };
+222:   const EX = 180;
+223:   const hx0 = HILL.x0, hx1 = HILL.x1, hz0 = HILL.zFar, hz1 = HILL.ravine.z1;
+224:   plane(-EX, EX, -EX, hz0);
+225:   plane(-EX, EX, hz1, EX);
+226:   plane(-EX, hx0, hz0, hz1);
+227:   plane(hx1, EX, hz0, hz1);
+228: 
+229:   // The cornfield's dirt bed, so the field reads as worked ground.
+230:   const bed = new THREE.Mesh(
+231:     new THREE.PlaneGeometry(CORNFIELD_RECT.x1 - CORNFIELD_RECT.x0 + 6, CORNFIELD_RECT.z1 - CORNFIELD_RECT.z0 + 6),
+232:     M.dirt
+233:   );
+234:   bed.rotation.x = -Math.PI / 2;
+235:   bed.position.set((CORNFIELD_RECT.x0 + CORNFIELD_RECT.x1) / 2, CORN_GROUND + 0.02, (CORNFIELD_RECT.z0 + CORNFIELD_RECT.z1) / 2);
+236:   bed.receiveShadow = true;
+237:   scene.add(bed);
+238: 
+239:   // A dirt yard around the barn/silo so the farm reads as a farm.
+240:   const yard = new THREE.Mesh(new THREE.PlaneGeometry(70, 60), M.dirt);
+241:   yard.rotation.x = -Math.PI / 2;
+242:   yard.position.set(24, CORN_GROUND + 0.015, 8);
+243:   yard.receiveShadow = true;
+244:   scene.add(yard);
+245: }
+246: 
+247: // ===== Corn field =====
+248: // A corn plant is a lot of little parts â€” a tapered stem with leaf nodes, six
+249: // big alternating leaves, a spray of tassel at the crown and one or two husked
+250: // ears with a yellow cob poking out. Drawing that per stalk with a dozen meshes
+251: // each would be thousands of draw calls, so the whole plant is baked into ONE
+252: // vertex-coloured geometry and stamped across the field with InstancedMesh.
+253: // Colour lives in the vertices (stem / leaf / husk / cob / tassel), which lets a
+254: // single double-sided material draw it all, and the field stays three draws
+255: // wide. A handful of variants (different leaf angles and ear placement) breaks
+256: // up the repetition.
+257: 
+258: // One leaf: a long tapered blade lying along +X and arching up towards +Y,
+259: // widest around the middle and pointed at both ends.
+260: function makeCornLeafGeometry() {
+261:   const segs = 6;
+262:   const pos = [];
+263:   const idx = [];
+264:   for (let i = 0; i <= segs; i++) {
+265:     const t = i / segs;
+266:     const y = 0.42 * Math.sin(Math.PI * t);
+267:     const w = 0.5 * 0.5 * Math.pow(Math.sin(Math.PI * t), 0.65);
+268:     pos.push(t, y, -w, t, y, w);
+269:   }
+270:   for (let s = 0; s < segs; s++) {
+271:     const a = s * 2;
+272:     idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+273:   }
+274:   const g = new THREE.BufferGeometry();
+275:   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+276:   g.setIndex(idx);
+277:   g.computeVertexNormals();
+278:   return g;
+279: }
+280: const CORN_LEAF_GEO = makeCornLeafGeometry();
+281: 
+282: const _euler = new THREE.Euler();
+283: // A transform with an optional rotation (applied Y-X-Z) and scale.
+284: function cornPlace(x, y, z, rx, ry, rz, sx = 1, sy = sx, sz = sx) {
+285:   const q = new THREE.Quaternion().setFromEuler(_euler.set(rx, ry, rz, 'YXZ'));
+286:   return new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(sx, sy, sz));
+287: }
+288: // Copy a geometry's verts into an accumulating buffer, transformed and tinted.
+289: function cornPart(acc, geo, matrix, color) {
+290:   const p = geo.attributes.position.array;
+291:   const nrm = geo.attributes.normal.array;
+292:   const nm = new THREE.Matrix3().getNormalMatrix(matrix);
+293:   const base = acc.pos.length / 3;
+294:   const v = new THREE.Vector3();
+295:   for (let i = 0; i < p.length; i += 3) {
+296:     v.set(p[i], p[i + 1], p[i + 2]).applyMatrix4(matrix);
+297:     acc.pos.push(v.x, v.y, v.z);
+298:     v.set(nrm[i], nrm[i + 1], nrm[i + 2]).applyMatrix3(nm).normalize();
+299:     acc.nrm.push(v.x, v.y, v.z);
+300:     acc.col.push(color.r, color.g, color.b);
+301:   }
+302:   const gi = geo.index.array;
+303:   for (let i = 0; i < gi.length; i++) acc.idx.push(base + gi[i]);
+304: }
+305: 
+306: const CORN_STALK_COL = new THREE.Color(0x6f9a3c);
+307: const CORN_LEAF_COL = new THREE.Color(0x55913d);
+308: const CORN_HUSK_COL = new THREE.Color(0xb2d26c);
+309: const CORN_COB_COL = new THREE.Color(0xf3c637);
+310: const CORN_TASSEL_COL = new THREE.Color(0xcbb45a);
+311: 
+312: // Bake one whole corn plant into a single geometry. `seed` nudges the leaf and
+313: // ear placement so a few variants can share the field without looking cloned.
+314: function buildCornStalkGeometry(seed) {
+315:   let s = 1 + seed * 17.3;
+316:   const rnd = () => { s = (s * 9301 + 49297) % 233280; return (s / 233280) * 2 - 1; };
+317:   const H = CORN.stalkH;
+318:   const acc = { pos: [], nrm: [], idx: [], col: [] };
+319: 
+320:   // Stem: a tapered stalk with a few swollen leaf nodes up its length.
+321:   cornPart(acc, new THREE.CylinderGeometry(0.1, 0.19, H, 6), cornPlace(0, H / 2, 0, 0, 0, 0), CORN_STALK_COL);
+322:   for (let k = 0; k < 3; k++) {
+323:     cornPart(acc, new THREE.CylinderGeometry(0.15, 0.15, 0.1, 6), cornPlace(0, H * (0.3 + k * 0.22), 0, 0, 0, 0), CORN_STALK_COL);
+324:   }
+325: 
+326:   // Six big leaves, each twisted to a new angle around the stalk and alternated
+327:   // between an upright and a droopy arch.
+328:   for (let i = 0; i < 6; i++) {
+329:     const y = H * (0.15 + i * 0.115) + rnd() * 0.06;
+330:     const yaw = i * 2.399963 + rnd() * 0.4;
+331:     const droop = i % 2 ? 0.72 : 0.42;
+332:     const len = 1.35 + rnd() * 0.45;
+333:     cornPart(acc, CORN_LEAF_GEO, cornPlace(0, y, 0, -0.12, yaw, droop + rnd() * 0.12, len, len * 0.9, len), CORN_LEAF_COL);
+334:   }
+335: 
+336:   // Ears: husk blades fanning out of the stem, a yellow cob poking free of them,
+337:   // and a little brown silk tuft at the tip.
+338:   for (let e = 0; e < 2; e++) {
+339:     const ey = H * (0.5 + e * 0.14) + rnd() * 0.05;
+340:     const yaw = e * 3.1 + 0.6 + rnd() * 0.5;
+341:     const pitch = 0.85 + rnd() * 0.2;
+342:     const dx = Math.sin(pitch) * Math.sin(yaw);
+343:     const dz = Math.sin(pitch) * Math.cos(yaw);
+344:     for (let h = 0; h < 3; h++) {
+345:       cornPart(acc, CORN_LEAF_GEO, cornPlace(dx * 0.08, ey, dz * 0.08, -0.05, yaw + h * 2.0944, 0.8, 0.55, 0.6, 0.55), CORN_HUSK_COL);
+346:     }
+347:     cornPart(acc, new THREE.CylinderGeometry(0.075, 0.06, 0.42, 8), cornPlace(dx * 0.2, ey + Math.cos(pitch) * 0.2, dz * 0.2, pitch, yaw, 0), CORN_COB_COL);
+348:     cornPart(acc, new THREE.ConeGeometry(0.03, 0.16, 4), cornPlace(dx * 0.44, ey + Math.cos(pitch) * 0.44, dz * 0.44, pitch, yaw, 0), CORN_HUSK_COL);
+349:   }
+350: 
+351:   // Tassel: a spray of thin spikes above the crown.
+352:   for (let t = 0; t < 5; t++) {
+353:     const a = t * 1.2566;
+354:     const lean = 0.35 + (t % 2) * 0.28;
+355:     cornPart(acc, new THREE.ConeGeometry(0.035, 0.6, 4), cornPlace(Math.sin(a) * 0.05, H + 0.22, Math.cos(a) * 0.05, lean, a, 0), CORN_TASSEL_COL);
+356:   }
+357: 
+358:   const g = new THREE.BufferGeometry();
+359:   g.setAttribute('position', new THREE.Float32BufferAttribute(acc.pos, 3));
+360:   g.setAttribute('normal', new THREE.Float32BufferAttribute(acc.nrm, 3));
+361:   g.setAttribute('color', new THREE.Float32BufferAttribute(acc.col, 3));
+362:   g.setIndex(acc.idx);
+363:   return g;
+364: }
+365: 
+366: function buildCorn(scene) {
+367:   const pts = cornGrid();
+368:   const n = pts.length;
+369: 
+370:   // Split the field across a few geometry variants so the rows aren't identical.
+371:   const VARIANTS = 3;
+372:   const counts = new Array(VARIANTS).fill(0);
+373:   for (let i = 0; i < n; i++) counts[i % VARIANTS]++;
+374:   const meshes = [];
+375:   for (let v = 0; v < VARIANTS; v++) {
+376:     const im = new THREE.InstancedMesh(buildCornStalkGeometry(v + 1), M.cornStalk, counts[v]);
+377:     im.frustumCulled = false;
+378:     im.castShadow = true;
+379:     scene.add(im);
+380:     meshes.push(im);
+381:   }
+382: 
+383:   const knocked = new Uint8Array(n);
+384:   const done = new Uint8Array(n);
+385:   const angle = new Float32Array(n);
+386:   const dirX = new Float32Array(n);
+387:   const dirZ = new Float32Array(n);
+388:   const meshOf = new Uint8Array(n);
+389:   const slot = new Int32Array(n);
+390:   const yaw = new Float32Array(n);
+391:   const scale = new Float32Array(n);
+392:   const cursor = new Array(VARIANTS).fill(0);
+393:   for (let i = 0; i < n; i++) {
+394:     const v = i % 3;
+395:     meshOf[i] = v;
+396:     slot[i] = cursor[v]++;
+397:     yaw[i] = (i * 2.399963) % (Math.PI * 2);
+398:     scale[i] = 0.9 + ((i * 37) % 21) / 100;
+399:   }
+400: 
+401:   const writeStalk = (i, a) => {
+402:     const p = pts[i];
+403:     _q.identity();
+404:     if (a > 0.0001) {
+405:       _axis.set(dirZ[i], 0, -dirX[i]);
+406:       if (_axis.lengthSq() < 1e-6) _axis.set(1, 0, 0);
+407:       _axis.normalize();
+408:       _q.setFromAxisAngle(_axis, a);
+409:     }
+410:     _q.multiply(_qy.setFromAxisAngle(_up, yaw[i]));
+411:     _v.set(p.x, CORN_GROUND, p.z);
+412:     _m.compose(_v, _q, _sc.setScalar(scale[i]));
+413:     meshes[meshOf[i]].setMatrixAt(slot[i], _m);
+414:   };
+415:   for (let i = 0; i < n; i++) writeStalk(i, 0);
+416:   for (const im of meshes) im.instanceMatrix.needsUpdate = true;
+417: 
+418:   return {
+419:     count: n,
+420:     pts, knocked, done, angle, dirX, dirZ, meshes,
+421:     // Bend one stalk over in the direction the car is travelling.
+422:     knock(i, headingX, headingZ, onCob) {
+423:       if (knocked[i]) return;
+424:       knocked[i] = 1;
+425:       dirX[i] = headingX; dirZ[i] = headingZ;
+426:       angle[i] = 0;
+427:       onCob(pts[i]);
+428:     },
+429:     // Advance the fall animation.
+430:     step(dt) {
+431:       let any = false;
+432:       for (let i = 0; i < n; i++) {
+433:         if (!knocked[i] || done[i]) continue;
+434:         angle[i] += (Math.PI / 2) * (dt / CORN.fallTime);
+435:         if (angle[i] >= Math.PI / 2) { angle[i] = Math.PI / 2; done[i] = 1; }
+436:         writeStalk(i, angle[i]);
+437:         any = true;
+438:       }
+439:       if (any) for (const im of meshes) im.instanceMatrix.needsUpdate = true;
+440:     },
+441:     reset() {
+442:       for (let i = 0; i < n; i++) { knocked[i] = 0; done[i] = 0; angle[i] = 0; }
+443:       for (let i = 0; i < n; i++) writeStalk(i, 0);
+444:       for (const im of meshes) im.instanceMatrix.needsUpdate = true;
+445:     },
+446:   };
+447: }
+448: 
+449: // ===== Barn =====
+450: function buildBarn(scene) {
+451:   const cx = BARN.x, cz = BARN.z;
+452:   const hw = BARN.halfW, hd = BARN.halfD, h = BARN.wallH;
+453: 
+454:   // Walls as thin boxes (the doorway is the gap in the west wall).
+455:   const wall = (w, d, x, y, z, mat) => {
+456:     const m = new THREE.Mesh(new THREE.BoxGeometry(w, y ? y * 2 : h, d), mat);
+457:     m.position.set(x, y || h / 2, z);
+458:     m.castShadow = true; m.receiveShadow = true;
+459:     scene.add(m);
+460:     return m;
+461:   };
+462:   wall(1.0, hd * 2, cx + hw, 0, cz, M.barn);                       // east
+463:   wall(hw * 2, 1.0, cx, 0, cz - hd, M.barn);                       // south
+464:   wall(hw * 2, 1.0, cx, 0, cz + hd, M.barn);                       // north
+465:   const segD = hd - BARN.doorHalf;
+466:   wall(1.0, segD, cx - hw, 0, cz - (hd + BARN.doorHalf) / 2, M.barn); // west (south of door)
+467:   wall(1.0, segD, cx - hw, 0, cz + (hd + BARN.doorHalf) / 2, M.barn); // west (north of door)
+468:   // Door header.
+469:   const header = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.0, BARN.doorHalf * 2), M.barnTrim);
+470:   header.position.set(cx - hw, 6.0, cz);
+471:   scene.add(header);
+472: 
+473:   // Gable roof: two slanted slabs meeting at the ridge.
+474:   const ridgeY = h + 4;
+475:   for (const s of [-1, 1]) {
+476:     const len = Math.hypot(hw, ridgeY - h);
+477:     const r = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, hd * 2 + 1.0), M.roof);
+478:     r.position.set(cx + s * hw / 2, (h + ridgeY) / 2, cz);
+479:     r.rotation.z = -s * Math.atan2(ridgeY - h, hw);
+480:     r.castShadow = true;
+481:     scene.add(r);
+482:   }
+483: 
+484:   // Hayloft floor (also the soft collider, built in barnColliders()).
+485:   const loftW = (BARN.x + hw) - BARN.loftWest;
+486:   const loft = new THREE.Mesh(new THREE.BoxGeometry(loftW, 0.4, hd * 2), M.wood);
+487:   loft.position.set(BARN.loftWest + loftW / 2, BARN.loftY - 0.2, cz);
+488:   loft.castShadow = true; loft.receiveShadow = true;
+489:   scene.add(loft);
+490: 
+491:   // Wooden ramp up to the loft (visual wedge; the ramp def drives the car).
+492:   const run = BARN_RAMP.len, rise = BARN_RAMP.height;
+493:   const shape = new THREE.Shape();
+494:   shape.moveTo(0, 0); shape.lineTo(run, 0); shape.lineTo(run, rise); shape.closePath();
+495:   const rampGeo = new THREE.ExtrudeGeometry(shape, { depth: BARN_RAMP.width, bevelEnabled: false });
+496:   rampGeo.translate(-run / 2, 0, -BARN_RAMP.width / 2);
+497:   const ramp = new THREE.Mesh(rampGeo, M.wood);
+498:   ramp.rotation.y = Math.atan2(-BARN_RAMP.runZ, BARN_RAMP.runX);
+499:   ramp.position.set(BARN_RAMP.x, 0, BARN_RAMP.z);
+500:   ramp.castShadow = true; ramp.receiveShadow = true;
+501:   scene.add(ramp);
+502: 
+503:   // Hay bales up on the loft (decor; the hay burst is spawned by update()).
+504:   const bales = [];
+505:   const baleSpots = [
+506:     [26, BARN.loftY + 0.35, -5], [31, BARN.loftY + 0.35, -5],
+507:     [26, BARN.loftY + 0.35, 5], [31, BARN.loftY + 0.35, 5],
+508:     [29, BARN.loftY + 0.95, 0],
+509:   ];
+510:   for (const [bx, by, bz] of baleSpots) {
+511:     const bale = new THREE.Mesh(new THREE.BoxGeometry(3.0, 1.3, 1.6), M.hay);
+512:     bale.position.set(bx, by, bz);
+513:     bale.rotation.y = (bx + bz) * 0.3;
+514:     bale.castShadow = true;
+515:     scene.add(bale);
+516:     bales.push(bale);
+517:   }
+518:   return { bales };
+519: }
+520: 
+521: // ===== Silo =====
+522: function buildSilo(scene) {
+523:   const gapHalf = 0.5;
+524:   // Wall: an open-ended cylinder with a door gap carved out at -Z (theta = PI).
+525:   const wallGeo = new THREE.CylinderGeometry(
+526:     SILO.r, SILO.r, SILO.h, 40, 1, true,
+527:     Math.PI + gapHalf, TWO_PI - 2 * gapHalf
+528:   );
+529:   const wall = new THREE.Mesh(wallGeo, M.metal);
+530:   wall.position.set(SILO.x, SILO.h / 2, SILO.z);
+531:   wall.castShadow = true; wall.receiveShadow = true;
+532:   scene.add(wall);
+533: 
+534:   // Horizontal rings for a banded-metal look.
+535:   for (let k = 1; k <= 3; k++) {
+536:     const ring = new THREE.Mesh(new THREE.TorusGeometry(SILO.r + 0.02, 0.12, 6, 40), M.metalDark);
+537:     ring.rotation.x = Math.PI / 2;
+538:     ring.position.set(SILO.x, (SILO.h / 4) * k, SILO.z);
+539:     scene.add(ring);
+540:   }
+541:   // Rim cap.
+542:   const rim = new THREE.Mesh(new THREE.TorusGeometry(SILO.r, 0.16, 6, 40), M.metalDark);
+543:   rim.rotation.x = Math.PI / 2;
+544:   rim.position.set(SILO.x, SILO.h, SILO.z);
+545:   scene.add(rim);
+546: 
+547:   // A little roof over the entrance mouth (at -Z).
+548:   const doorRoof = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 3.2), M.metalDark);
+549:   doorRoof.position.set(SILO.x, 3.6, SILO.z - SILO.r + 1.0);
+550:   doorRoof.castShadow = true;
+551:   scene.add(doorRoof);
+552: 
+553:   return { gapHalf };
+554: }
+555: 
+556: // ===== Water tower =====
+557: // A steel tank on four braced legs in the barnyard south-west of the barn. The
+558: // legs lean in from wide feet to a narrow platform; X-braces tie the faces
+559: // together, a ladder climbs the south face and a downpipe hugs the NE leg.
+560: function buildWaterTower(scene) {
+561:   const { x: cx, z: cz, legH, tankR, tankH, roofH, legBase, legTop } = WATER_TOWER;
+562: 
+563:   // A strut between two points: a thin box oriented along the segment.
+564:   const strut = (ax, ay, az, bx, by, bz, t, mat) => {
+565:     const dx = bx - ax, dy = by - ay, dz = bz - az;
+566:     const len = Math.hypot(dx, dy, dz) || 0.001;
+567:     const m = new THREE.Mesh(new THREE.BoxGeometry(t, len, t), mat);
+568:     m.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+569:     m.quaternion.setFromUnitVectors(_up, _v.set(dx / len, dy / len, dz / len));
+570:     m.castShadow = true;
+571:     scene.add(m);
+572:     return m;
+573:   };
+574:   // Point on a leaning leg at height y.
+575:   const legPt = (sx, sz, y) => {
+576:     const s = legBase + (legTop - legBase) * (y / legH);
+577:     return [cx + sx * s, y, cz + sz * s];
+578:   };
+579: 
+580:   // Legs.
+581:   const feet = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+582:   for (const [sx, sz] of feet) {
+583:     strut(...legPt(sx, sz, 0), ...legPt(sx, sz, legH), 0.42, M.metalDark);
+584:   }
+585: 
+586:   // X-bracing on all four faces at two levels.
+587:   const faces = [
+588:     [[-1, -1], [1, -1]], [[-1, 1], [1, 1]],
+589:     [[-1, -1], [-1, 1]], [[1, -1], [1, 1]],
+590:   ];
+591:   for (const [a, b] of faces) {
+592:     for (const y0 of [legH * 0.28, legH * 0.62]) {
+593:       const y1 = Math.min(y0 + legH * 0.28, legH);
+594:       strut(...legPt(a[0], a[1], y0), ...legPt(b[0], b[1], y1), 0.14, M.metalDark);
+595:       strut(...legPt(a[0], a[1], y1), ...legPt(b[0], b[1], y0), 0.14, M.metalDark);
+596:     }
+597:   }
+598: 
+599:   // Platform the tank sits on, with a walkway lip.
+600:   const platform = new THREE.Mesh(new THREE.CylinderGeometry(tankR + 0.7, tankR + 0.7, 0.3, 20), M.metalDark);
+601:   platform.position.set(cx, legH + 0.15, cz);
+602:   platform.castShadow = true; platform.receiveShadow = true;
+603:   scene.add(platform);
+604: 
+605:   // Tank body with banding.
+606:   const tank = new THREE.Mesh(new THREE.CylinderGeometry(tankR, tankR, tankH, 24), M.waterTank);
+607:   tank.position.set(cx, legH + 0.3 + tankH / 2, cz);
+608:   tank.castShadow = true; tank.receiveShadow = true;
+609:   scene.add(tank);
+610:   for (let k = 1; k <= 2; k++) {
+611:     const band = new THREE.Mesh(new THREE.TorusGeometry(tankR + 0.02, 0.1, 6, 28), M.metalDark);
+612:     band.rotation.x = Math.PI / 2;
+613:     band.position.set(cx, legH + 0.3 + (tankH / 3) * k, cz);
+614:     scene.add(band);
+615:   }
+616: 
+617:   // Conical roof + finial.
+618:   const roofY = legH + 0.3 + tankH;
+619:   const roof = new THREE.Mesh(new THREE.ConeGeometry(tankR + 0.35, roofH, 24), M.metalDark);
+620:   roof.position.set(cx, roofY + roofH / 2, cz);
+621:   roof.castShadow = true;
+622:   scene.add(roof);
+623:   const finial = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), M.metal);
+624:   finial.position.set(cx, roofY + roofH + 0.15, cz);
+625:   scene.add(finial);
+626: 
+627:   // Walkway railing around the platform.
+628:   const rail = new THREE.Mesh(new THREE.TorusGeometry(tankR + 0.55, 0.06, 6, 28), M.metal);
+629:   rail.rotation.x = Math.PI / 2;
+630:   rail.position.set(cx, legH + 1.1, cz);
+631:   scene.add(rail);
+632:   for (let i = 0; i < 8; i++) {
+633:     const a = (i / 8) * TWO_PI;
+634:     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.95, 5), M.metal);
+635:     post.position.set(cx + (tankR + 0.55) * Math.cos(a), legH + 0.65, cz + (tankR + 0.55) * Math.sin(a));
+636:     scene.add(post);
+637:   }
+638: 
+639:   // Ladder up the south face, leaning with the legs.
+640:   const ladderZ = (y) => cz - (legBase + (legTop - legBase) * (y / legH)) - 0.28;
+641:   for (const sx of [-1, 1]) {
+642:     strut(cx + sx * 0.35, 0.1, ladderZ(0.1), cx + sx * 0.35, legH + 0.3, ladderZ(legH + 0.3), 0.09, M.metal);
+643:   }
+644:   for (let y = 0.7; y < legH + 0.2; y += 0.7) {
+645:     strut(cx - 0.35, y, ladderZ(y), cx + 0.35, y, ladderZ(y), 0.07, M.metal);
+646:   }
+647: 
+648:   // Downpipe from the tank floor, hugging the inside of the NE leg.
+649:   const dp0 = legPt(1, 1, 0), dp1 = legPt(1, 1, legH);
+650:   strut(dp0[0] - 0.45, 0, dp0[2] - 0.45, dp1[0] - 0.45, legH + 0.2, dp1[2] - 0.45, 0.26, M.metal);
+651: }
+652: 
+653: // ===== Pumpkin patch =====
+654: function buildPumpkins(scene) {
+655:   const patch = [];
+656:   // The snake the vines coil around is the pumpkin patch's own centre.
+657:   const cx = (PUMPKIN_PATCH.x0 + PUMPKIN_PATCH.x1) / 2;
+658:   const cz = (PUMPKIN_PATCH.z0 + PUMPKIN_PATCH.z1) / 2;
+659: 
+660:   // Snaky ground vines: a few wandering, sometimes-crossing loops of tube.
+661:   const vineMat = M.leaf;
+662:   const makeVine = (seed, loops) => {
+663:     const pts = [];
+664:     const steps = 46;
+665:     for (let i = 0; i <= steps; i++) {
+666:       const t = i / steps;
+667:       const a = t * TWO_PI * loops + seed;
+668:       const rr = 6 + 4 * Math.sin(t * TWO_PI * (loops + 1) + seed * 2);
+669:       pts.push(new THREE.Vector3(
+670:         cx + Math.cos(a) * rr * 0.9 + Math.sin(t * 9 + seed) * 2.2,
+671:         CORN_GROUND + 0.12,
+672:         cz + Math.sin(a) * rr * 0.75 + Math.cos(t * 7 + seed) * 2.0
+673:       ));
+674:     }
+675:     const curve = new THREE.CatmullRomCurve3(pts, true);
+676:     const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 120, 0.28, 6, true), vineMat);
+677:     tube.receiveShadow = true;
+678:     scene.add(tube);
+679:     // Leaves + nodules scattered along the vine.
+680:     for (let i = 0; i < 24; i++) {
+681:       const p = curve.getPointAt(i / 24);
+682:       const leaf = new THREE.Mesh(new THREE.SphereGeometry(0.5, 7, 5), M.husk);
+683:       leaf.scale.set(1.4, 0.25, 0.9);
+684:       leaf.position.set(p.x, CORN_GROUND + 0.18, p.z);
+685:       leaf.rotation.y = i * 1.3;
+686:       scene.add(leaf);
+687:     }
+688:   };
+689:   for (let v = 0; v < 4; v++) makeVine(v * 1.9, 2 + (v % 2));
+690: 
+691:   // Giant rolling pumpkins.
+692:   const spots = [
+693:     [-4, 42], [8, 48], [20, 44], [-8, 58], [10, 62],
+694:     [26, 56], [0, 70], [18, 72],
+695:   ];
+696:   for (const [px, pz] of spots) {
+697:     const r = 1.5 + ((px * 7 + pz) % 5) * 0.08;
+698:     const g = new THREE.Group();
+699:     g.position.set(px, CORN_GROUND + r * 0.7, pz);
+700:     const body = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), M.pumpkin);
+701:     body.scale.set(1, 0.72, 1);
+702:     body.castShadow = true; body.receiveShadow = true;
+703:     g.add(body);
+704:     // Ribs.
+705:     for (let i = 0; i < 6; i++) {
+706:       const a = (i / 6) * TWO_PI;
+707:       const rib = new THREE.Mesh(new THREE.TorusGeometry(r * 0.86, 0.07, 5, 12, Math.PI), M.pumpkinDark);
+708:       rib.rotation.y = a;
+709:       rib.rotation.x = Math.PI / 2;
+710:       rib.scale.set(1, 0.72, 1);
+711:       g.add(rib);
+712:     }
+713:     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 0.5, 6), M.stem);
+714:     stem.position.set(0, r * 0.72 + 0.2, 0);
+715:     stem.rotation.z = 0.15;
+716:     g.add(stem);
+717:     scene.add(g);
+718:     patch.push({
+719:       group: g, stem, body, radius: r,
+720:       x: px, z: pz, vx: 0, vz: 0, spin: 0,
+721:       stemAttached: true, home: { x: px, z: pz }, restY: CORN_GROUND + r * 0.7,
+722:     });
+723:   }
+724:   return patch;
+725: }
+726: 
+727: // ===== Apple orchard =====
+728: function makeAppleTree() {
+729:   const g = new THREE.Group();
+730:   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, APPLE_TREE.trunkH, 7), M.bark);
+731:   trunk.position.y = APPLE_TREE.trunkH / 2;
+732:   trunk.castShadow = true;
+733:   g.add(trunk);
+734: 
+735:   const lobes = [
+736:     [0, APPLE_TREE.trunkH + 1.0, 0, APPLE_TREE.canopyR],
+737:     [1.15, APPLE_TREE.trunkH + 0.35, 0.4, APPLE_TREE.canopyR * 0.66],
+738:     [-1.05, APPLE_TREE.trunkH + 0.5, -0.5, APPLE_TREE.canopyR * 0.6],
+739:   ];
+740:   for (const [cx, cy, cz, r] of lobes) {
+741:     const c = new THREE.Mesh(new THREE.SphereGeometry(r, 10, 8), M.orchardLeaf);
+742:     c.position.set(cx, cy, cz);
+743:     c.castShadow = true;
+744:     g.add(c);
+745:   }
+746: 
+747:   const apples = [];
+748:   for (let i = 0; i < APPLE_TREE.apples; i++) {
+749:     const a = (i / APPLE_TREE.apples) * Math.PI * 2 + (i % 3) * 0.7;
+750:     const rr = APPLE_TREE.canopyR * (0.7 + 0.3 * Math.abs(Math.sin(i * 2.3)));
+751:     const ay = APPLE_TREE.trunkH + 0.35 + Math.sin(i * 1.7) * 1.25;
+752:     const apple = new THREE.Mesh(new THREE.SphereGeometry(0.17, 8, 6), M.apple);
+753:     apple.position.set(Math.cos(a) * rr, ay, Math.sin(a) * rr);
+754:     g.add(apple);
+755:     apples.push(apple);
+756:   }
+757:   return { group: g, apples };
+758: }
+759: 
+760: function buildOrchard(scene) {
+761:   const trees = [];
+762:   for (const p of orchardGrid()) {
+763:     const t = makeAppleTree();
+764:     t.group.position.set(p.x, CORN_GROUND, p.z);
+765:     t.group.rotation.y = p.x * 0.6 + p.z * 1.1;
+766:     scene.add(t.group);
+767:     trees.push({ x: p.x, z: p.z, group: t.group, topY: CORN_GROUND + APPLE_TREE.trunkH + 1.0 });
+768:   }
+769:   return trees;
+770: }
+771: 
+772: // ===== Squirrel =====
+773: function makeSquirrel() {
+774:   const g = new THREE.Group();
+775:   const body = new THREE.Mesh(new THREE.SphereGeometry(0.32, 10, 8), M.squirrel);
+776:   body.scale.set(1.05, 0.9, 1.35);
+777:   body.position.y = 0.34;
+778:   body.castShadow = true;
+779:   g.add(body);
+780: 
+781:   const belly = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), M.squirrelBelly);
+782:   belly.scale.set(1, 0.8, 1.2);
+783:   body.add(belly);
+784:   belly.position.set(0, -0.05, 0.55);
+785: 
+786:   const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), M.squirrel);
+787:   head.position.set(0, 0.64, 0.36);
+788:   g.add(head);
+789:   const snout = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), M.squirrelBelly);
+790:   snout.position.set(0, 0.58, 0.55);
+791:   g.add(snout);
+792:   for (const sx of [-0.1, 0.1]) {
+793:     const ear = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.16, 6), M.squirrel);
+794:     ear.position.set(sx, 0.82, 0.32);
+795:     g.add(ear);
+796:     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), M.tire);
+797:     eye.position.set(sx, 0.66, 0.5);
+798:     g.add(eye);
+799:   }
+800: 
+801:   const tail = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), M.squirrel);
+802:   tail.scale.set(0.7, 1.5, 0.7);
+803:   tail.position.set(0, 0.62, -0.5);
+804:   tail.rotation.x = -0.6;
+805:   g.add(tail);
+806: 
+807:   const arm = new THREE.Group();
+808:   arm.position.set(0.24, 0.5, 0.18);
+809:   const armMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.34, 6), M.squirrel);
+810:   armMesh.position.y = -0.17;
+811:   arm.add(armMesh);
+812:   g.add(arm);
+813:   g.userData.throwArm = arm;
+814:   return g;
+815: }
+816: 
+817: function buildSquirrel(scene) {
+818:   const mesh = makeSquirrel();
+819:   mesh.position.set(SQUIRREL.home.x, CORN_GROUND, SQUIRREL.home.z);
+820:   scene.add(mesh);
+821:   return {
+822:     mesh,
+823:     x: SQUIRREL.home.x, z: SQUIRREL.home.z, y: CORN_GROUND,
+824:     state: 'idle',        // idle | run | climb | throw | descend
+825:     timer: 0,
+826:     node: null,           // {x,z} it is heading to
+827:     tree: null,
+828:     shot: 0,              // total throws this climb
+829:     throwsLeft: 0,
+830:     spin: 0,
+831:   };
+832: }
+833: 
+834: // A small pool of thrown apples.
+835: function makeApplePool(scene, max) {
+836:   const geo = new THREE.SphereGeometry(0.17, 8, 6);
+837:   const items = [];
+838:   for (let i = 0; i < max; i++) {
+839:     const mesh = new THREE.Mesh(geo, M.appleRed);
+840:     mesh.visible = false;
+841:     scene.add(mesh);
+842:     items.push({ mesh, alive: false, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, hit: false });
+843:   }
+844:   return {
+845:     items,
+846:     spawn(x, y, z, vx, vy, vz, hit) {
+847:       for (const a of items) {
+848:         if (a.alive) continue;
+849:         a.alive = true; a.hit = hit;
+850:         a.x = x; a.y = y; a.z = z;
+851:         a.vx = vx; a.vy = vy; a.vz = vz;
+852:         a.life = 3.5;
+853:         a.mesh.visible = true;
+854:         a.mesh.position.set(x, y, z);
+855:         return a;
+856:       }
+857:       return null;
+858:     },
+859:     reset() {
+860:       for (const a of items) { a.alive = false; a.mesh.visible = false; }
+861:     },
+862:   };
+863: }
+864: 
+865: const APPLE_GRAVITY = 22;
+866: 
+867: // Aim a ballistic arc from (sx,sy,sz) to (tx,ty,tz) at speed S.
+868: // Returns a velocity vector, or null when the target is out of practical range.
+869: function aimArc(sx, sy, sz, tx, ty, tz, speed) {
+870:   const dx = tx - sx, dz = tz - sz;
+871:   const dist = Math.hypot(dx, dz);
+872:   if (dist < 0.3) return null;
+873:   const t = dist / speed;
+874:   const nx = dx / dist, nz = dz / dist;
+875:   const vy = (ty - sy) / t + 0.5 * APPLE_GRAVITY * t;
+876:   return { vx: nx * speed, vy, vz: nz * speed };
+877: }
+878: 
+879: // ===== Corn stooks =====
+880: function buildStooks(scene) {
+881:   for (const s of STOOKS) {
+882:     const g = new THREE.Group();
+883:     const n = 7;
+884:     for (let i = 0; i < n; i++) {
+885:       const a = (i / n) * Math.PI * 2;
+886:       const stalk = new THREE.Mesh(new THREE.ConeGeometry(0.16, 2.4, 5), i % 2 ? M.husk : M.stalk);
+887:       stalk.position.set(Math.cos(a) * 0.35, 1.2, Math.sin(a) * 0.35);
+888:       stalk.rotation.z = Math.cos(a) * 0.28;
+889:       stalk.rotation.x = -Math.sin(a) * 0.28;
+890:       stalk.castShadow = true;
+891:       g.add(stalk);
+892:     }
+893:     const tie = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.08, 5, 10), M.woodDark);
+894:     tie.rotation.x = Math.PI / 2;
+895:     tie.position.y = 1.0;
+896:     g.add(tie);
+897:     g.position.set(s.x, CORN_GROUND, s.z);
+898:     scene.add(g);
+899:   }
+900: }
+901: 
+902: // ===== Barrels =====
+903: function makeBarrel(alongX, length, radius) {
+904:   const g = new THREE.Group();
+905:   const body = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 12), M.barrel);
+906:   body.rotation.z = Math.PI / 2;
+907:   body.castShadow = true;
+908:   g.add(body);
+909:   for (const ox of [-length * 0.3, length * 0.3]) {
+910:     const hoop = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.02, 0.05, 5, 12), M.hoop);
+911:     hoop.rotation.y = Math.PI / 2;
+912:     hoop.position.x = ox;
+913:     g.add(hoop);
+914:   }
+915:   if (!alongX) g.rotation.y = Math.PI / 2;
+916:   return g;
+917: }
+918: 
+919: // Barrels are stacked in pyramids but each one is a free body: bump the pile
+920: // and the barrels burst apart and roll away like logs. A barrel lies on its
+921: // side, so it only rolls broadside (see stepBarrel) â€” the long axis stays put.
+922: // `state` is 'stacked' (still on the pile), 'falling' (dropped off the pile),
+923: // 'rolling', or 'rest'. Every barrel above a knocked one comes down with it.
+924: function buildBarrels(scene) {
+925:   const barrels = [];
+926:   for (const stack of BARREL_STACKS) {
+927:     for (const b of barrelPyramid(stack)) {
+928:       const g = makeBarrel(true, b.radius * 2, b.radius);
+929:       const axis = b.alongX ? 0 : Math.PI / 2;
+930:       g.position.set(b.x, b.y, b.z);
+931:       g.rotation.set(0, axis, 0);
+932:       scene.add(g);
+933:       barrels.push({
+934:         group: g,
+935:         radius: b.radius,
+936:         axis,
+937:         x: b.x, y: b.y, z: b.z,
+938:         vx: 0, vz: 0, vy: 0, roll: 0,
+939:         state: 'stacked',
+940:         home: { x: b.x, y: b.y, z: b.z },
+941:         above: [],
+942:       });
+943:     }
+944:   }
+945:   // Which barrels rest on each barrel: anything a row or more higher that is
+946:   // within reach of its groove. Knock a barrel out and everything on top of it
+947:   // is released together.
+948:   for (const a of barrels) {
+949:     for (const c of barrels) {
+950:       if (c === a) continue;
+951:       if (c.y > a.y + 0.5 && Math.hypot(c.x - a.x, c.z - a.z) < a.radius * 1.7) a.above.push(c);
+952:     }
+953:   }
+954:   return barrels;
+955: }
+956: 
+957: // Knock one barrel into the field: roll it broadside (the hit projected onto the
+958: // plane perpendicular to its long axis, so even an end-on bump rolls it aside)
+959: // and release every barrel that was stacked on top of it.
+960: function knockBarrel(b, nx, nz, power) {
+961:   const ax = Math.cos(b.axis), az = -Math.sin(b.axis);
+962:   const along = nx * ax + nz * az;
+963:   let px = nx - along * ax;
+964:   let pz = nz - along * az;
+965:   let pl = Math.hypot(px, pz);
+966:   if (pl < 1e-3) { px = -az; pz = ax; pl = 1; }
+967:   b.vx = (px / pl) * power;
+968:   b.vz = (pz / pl) * power;
+969:   b.state = 'rolling';
+970:   for (const o of b.above) {
+971:     if (o.state !== 'stacked') continue;
+972:     o.state = 'falling';
+973:     const a = Math.random() * Math.PI * 2;
+974:     o.vx = Math.cos(a) * 0.9;
+975:     o.vz = Math.sin(a) * 0.9;
+976:     o.vy = 0;
+977:   }
+978: }
+979: 
+980: // ===== Perimeter fence =====
+981: function fenceLine(scene, ax, az, bx, bz, postEvery = 7) {
+982:   const dx = bx - ax, dz = bz - az;
+983:   const len = Math.hypot(dx, dz);
+984:   if (len < 0.01) return;
+985:   const nx = dx / len, nz = dz / len;
+986:   const rot = Math.atan2(-nz, nx);
+987:   for (const ry of [0.55, 1.15]) {
+988:     const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.12, 0.1), M.woodDark);
+989:     rail.position.set((ax + bx) / 2, CORN_GROUND + ry, (az + bz) / 2);
+990:     rail.rotation.y = rot;
+991:     rail.castShadow = true;
+992:     scene.add(rail);
+993:   }
+994:   const n = Math.max(2, Math.round(len / postEvery));
+995:   for (let i = 0; i <= n; i++) {
+996:     const t = i / n;
+997:     const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 1.7, 0.16), M.wood);
+998:     post.position.set(ax + dx * t, CORN_GROUND + 0.85, az + dz * t);
+999:     post.castShadow = true;
+1000:     scene.add(post);
+1001:   }
+1002: }
+1003: 
+1004: function buildFarmBoundary(scene) {
+1005:   const { x0, x1, z0, z1 } = FARM_BOUNDS;
+1006:   fenceLine(scene, x0, z0, x1, z0);
+1007:   fenceLine(scene, x1, z0, x1, z1);
+1008:   fenceLine(scene, x1, z1, x0, z1);
+1009:   fenceLine(scene, x0, z1, x0, z0);
+1010: }
+1011: 
+1012: // ===== Hill, plateau and ravine =====
+1013: // The embankment the truck rolls off. Returns { fence } so the crash can hide it.
+

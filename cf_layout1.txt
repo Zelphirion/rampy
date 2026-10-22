@@ -1,0 +1,221 @@
+﻿1: // Pure layout + logic for the cornfield level. No THREE import, so this module
+2: // can be unit-tested directly (same pattern as levels/house/layout.js).
+3: // levels/cornfield/index.js turns all of this into meshes.
+4: 
+5: // ===== Spawn / return =====
+6: export const CORN_GROUND = 0;
+7: // Spawn just south of the cornfield, facing +Z (north) straight into the rows.
+8: export const CORN_SPAWN = { x: -38, z: -62, yaw: Math.PI / 2 };
+9: // The hollow tree you drive back into (behind the spawn, facing +Z).
+10: export const CORN_RETURN = { x: -38, z: -76, halfW: 3.4, halfD: 5.5 };
+11: 
+12: // ===== Barn =====
+13: export const BARN = {
+14:   x: 24, z: 0,
+15:   halfW: 10, halfD: 8,     // footprint x 14..34, z -8..8
+16:   wallH: 7,
+17:   loftY: 5,
+18:   doorHalf: 3,             // doorway half-width (along z) in the west wall
+19:   loftWest: 22,            // west edge of the hayloft (the drop-off)
+20: };
+21: export const BARN_RAMP = {
+22:   x: 22.5, z: 0, runX: 1, runZ: 0, len: 15, width: 4,
+23:   height: BARN.loftY, baseY: 0, boost: 0,
+24: };
+25: 
+26: // ===== Silo =====
+27: // The wall is a THIN ring at r=6 so the spiral ramp (centred at r=3.2, width
+28: // 3.4 â†’ outer edge r=4.9) always stays inboard of it and the car never grazes
+29: // the wall. `spiralTop` is where the spiral tops out; the wall colliders stop
+30: // there so the car can drive out over the rim at the top.
+31: export const SILO = { x: 24, z: 24, r: 6, h: 14, spiralTop: 12, gapAngle: -Math.PI / 2 };
+32: 
+33: // ===== Water tower =====
+34: // A steel tank on four braced legs, standing in the barnyard south-west of the
+35: // barn. `legBase` is the foot half-spacing; the legs lean in to `legTop` where
+36: // they meet the platform at `legH`. The tank sits well overhead, so the car can
+37: // thread between the legs.
+38: export const WATER_TOWER = {
+39:   x: 10, z: -24,
+40:   legH: 10,
+41:   tankR: 3.4, tankH: 4.6,
+42:   roofH: 1.8,
+43:   legBase: 2.8, legTop: 1.9,
+44: };
+45: export function waterTowerColliders() {
+46:   const { x, z, legBase, legH } = WATER_TOWER;
+47:   return [
+48:     { x: x - legBase, z: z - legBase, halfW: 0.4, halfD: 0.4, h: legH, top: legH },
+49:     { x: x + legBase, z: z - legBase, halfW: 0.4, halfD: 0.4, h: legH, top: legH },
+50:     { x: x - legBase, z: z + legBase, halfW: 0.4, halfD: 0.4, h: legH, top: legH },
+51:     { x: x + legBase, z: z + legBase, halfW: 0.4, halfD: 0.4, h: legH, top: legH },
+52:   ];
+53: }
+54: 
+55: // ===== Field footprints =====
+56: // A wider field at a looser spacing: more stalks than before, but each plant is
+57: // a detailed multi-part model with room to be seen, so the rows read as rows
+58: // instead of a solid block of green.
+59: export const CORNFIELD_RECT = { x0: -78, x1: -14, z0: -54, z1: 54 };
+60: export const PUMPKIN_PATCH = { x0: -12, x1: 44, z0: 36, z1: 78 };
+61: 
+62: export const CORN = {
+63:   spacing: 2.6,
+64:   stalkH: 2.7,
+65:   knockR: 1.7,
+66:   minSpeed: 0.35,
+67:   fallTime: 0.22,
+68: };
+69: 
+70: // ===== Spiral ramp generator =====
+71: // A chain of short straight ramp defs whose ends meet exactly, forming a helix
+72: // the car can drive up. Returns defs shaped like the underground ramp defs:
+73: // { x, z, runX, runZ, len, width, height, baseY, boost }.
+74: export function spiralRampSegments({ cx, cz, startAngle = 0, r = 3, y0 = 0, y1 = 12, turns = 2.2, segsPerTurn = 18, width = 3 } = {}) {
+75:   const total = Math.max(1, Math.round(turns * segsPerTurn));
+76:   const segs = [];
+77:   let px = cx + r * Math.cos(startAngle);
+78:   let pz = cz + r * Math.sin(startAngle);
+79:   let py = y0;
+80:   for (let k = 1; k <= total; k++) {
+81:     const t = k / total;
+82:     const phi = startAngle + t * turns * Math.PI * 2;
+83:     const nx = cx + r * Math.cos(phi);
+84:     const nz = cz + r * Math.sin(phi);
+85:     const dx = nx - px, dz = nz - pz;
+86:     const len = Math.hypot(dx, dz) || 0.001;
+87:     const y = y0 + (y1 - y0) * t;
+88:     const runX = dx / len, runZ = dz / len;
+89:     segs.push({
+90:       x: (px + nx) / 2, z: (pz + nz) / 2,
+91:       runX, runZ, len, width,
+92:       height: y - py, baseY: py, boost: 0,
+93:     });
+94:     px = nx; pz = nz; py = y;
+95:   }
+96:   return segs;
+97: }
+98: 
+99: // ===== Barn colliders =====
+100: // Walls only. The hayloft is NOT a collider: it is a soft surface handled by the
+101: // cornfield's own Y branch (index.js `loftTopAt`), so a car on the ground floor
+102: // under it is never lifted onto it. Every wall carries `top = wallH`, so a car
+103: // up at loft height is still contained until it drives off the open west edge.
+104: export function barnColliders() {
+105:   const w = 0.5;   // wall half-thickness
+106:   return [
+107:     // East wall (solid, full height).
+108:     { x: BARN.x + BARN.halfW, z: BARN.z, halfW: 0.5, halfD: BARN.halfD, h: BARN.wallH, top: BARN.wallH },
+109:     // South wall.
+110:     { x: BARN.x, z: BARN.z - BARN.halfD, halfW: BARN.halfW, halfD: 0.5, h: BARN.wallH, top: BARN.wallH },
+111:     // North wall.
+112:     { x: BARN.x, z: BARN.z + BARN.halfD, halfW: BARN.halfW, halfD: 0.5, h: BARN.wallH, top: BARN.wallH },
+113:     // West wall, split around the doorway (z in [-doorHalf, doorHalf]).
+114:     { x: BARN.x - BARN.halfW, z: BARN.z - (BARN.halfD + BARN.doorHalf) / 2, halfW: w, halfD: (BARN.halfD - BARN.doorHalf) / 2, h: BARN.wallH, top: BARN.wallH },
+115:     { x: BARN.x - BARN.halfW, z: BARN.z + (BARN.halfD + BARN.doorHalf) / 2, halfW: w, halfD: (BARN.halfD - BARN.doorHalf) / 2, h: BARN.wallH, top: BARN.wallH },
+116:   ];
+117: }
+118: 
+119: export function siloColliders() {
+120:   const n = 20;
+121:   const out = [];
+122:   for (let i = 0; i < n; i++) {
+123:     const a = (i / n) * Math.PI * 2;
+124:     let d = a - SILO.gapAngle;
+125:     while (d > Math.PI) d -= Math.PI * 2;
+126:     while (d < -Math.PI) d += Math.PI * 2;
+127:     if (Math.abs(d) < 0.5) continue;           // the entrance gap
+128:     out.push({
+129:       x: SILO.x + SILO.r * Math.cos(a),
+130:       z: SILO.z + SILO.r * Math.sin(a),
+131:       halfW: 0.75, halfD: 0.75,
+132:       h: SILO.spiralTop, top: SILO.spiralTop,
+133:     });
+134:   }
+135:   return out;
+136: }
+137: 
+138: // ===== Corn grid =====
+139: export function cornGrid(rect = CORNFIELD_RECT, spacing = CORN.spacing) {
+140:   const pts = [];
+141:   const nx = Math.floor((rect.x1 - rect.x0) / spacing);
+142:   const nz = Math.floor((rect.z1 - rect.z0) / spacing);
+143:   const ox = (rect.x0 + rect.x1) / 2 - (nx * spacing) / 2;
+144:   const oz = (rect.z0 + rect.z1) / 2 - (nz * spacing) / 2;
+145:   for (let i = 0; i < nx; i++) {
+146:     for (let j = 0; j < nz; j++) {
+147:       const x = ox + i * spacing + Math.sin(i * 1.7 + j * 0.9) * 0.35;
+148:       const z = oz + j * spacing + Math.cos(i * 0.8 - j * 1.3) * 0.35;
+149:       pts.push({ x, z });
+150:     }
+151:   }
+152:   return pts;
+153: }
+154: 
+155: // Does a car at (carX, carZ) moving at `speed` bend this stalk over?
+156: export function shouldKnockStalk(carX, carZ, speed, stalk, radius = CORN.knockR) {
+157:   if (Math.abs(speed) < CORN.minSpeed) return false;
+158:   const dx = carX - stalk.x, dz = carZ - stalk.z;
+159:   return dx * dx + dz * dz < radius * radius;
+160: }
+161: 
+162: // ===== Pumpkin rolling =====
+163: // Mutates a plain {x,z,vx,vz,spin,radius}. Returns the pre-friction speed so
+164: // the caller knows whether it is still rolling. Pure enough to unit-test.
+165: export function stepPumpkin(p, dt, drag = 1.8) {
+166:   const sp = Math.hypot(p.vx, p.vz);
+167:   if (sp < 0.02) { p.vx = 0; p.vz = 0; return 0; }
+168:   p.x += p.vx * dt;
+169:   p.z += p.vz * dt;
+170:   p.spin += (sp * dt) / Math.max(0.2, p.radius || 1);
+171:   const f = Math.max(0, 1 - drag * dt);
+172:   p.vx *= f;
+173:   p.vz *= f;
+174:   return sp;
+175: }
+176: 
+177: // ===== Barrel rolling =====
+178: // Barrels lie on their sides like logs, so a barrel only rolls BROADSIDE: the
+179: // hit that knocks one into the field is the car measured perpendicular to its
+180: // long axis. Mutates a plain {x,z,vx,vz,roll,axis,radius}; `axis` is the yaw of
+181: // the long axis (world direction (cos axis, 0, -sin axis)) and the roll rate is
+182: // the velocity component along the perpendicular (sin axis, 0, cos axis), over
+183: // the radius â€” a no-slip wheel (v = Ï‰Â·r). Any along-axis part just skids.
+184: // Returns the pre-friction speed so the caller knows whether it is still moving.
+185: export function stepBarrel(b, dt, drag = 1.6) {
+186:   const sp = Math.hypot(b.vx, b.vz);
+187:   if (sp < 0.02) { b.vx = 0; b.vz = 0; return 0; }
+188:   b.x += b.vx * dt;
+189:   b.z += b.vz * dt;
+190:   const perp = b.vx * Math.sin(b.axis) + b.vz * Math.cos(b.axis);
+191:   b.roll += (perp / Math.max(0.2, b.radius || 0.5)) * dt;
+192:   const f = Math.max(0, 1 - drag * dt);
+193:   b.vx *= f;
+194:   b.vz *= f;
+195:   return sp;
+196: }
+197: 
+198: // ===== Apple orchard =====
+199: // A neat east-side block of apple trees. The squirrel runs here.
+200: export const ORCHARD = { x0: 48, x1: 106, z0: -70, z1: 2 };
+201: export const APPLE_TREE = { trunkH: 3.4, canopyR: 2.7, apples: 10, spacing: 13 };
+202: 
+203: // Tree positions on a staggered grid inside `rect`.
+204: export function orchardGrid(rect = ORCHARD, spacing = APPLE_TREE.spacing) {
+205:   const pts = [];
+206:   const nx = Math.max(1, Math.floor((rect.x1 - rect.x0) / spacing));
+207:   const nz = Math.max(1, Math.floor((rect.z1 - rect.z0) / spacing));
+208:   const ox = (rect.x0 + rect.x1) / 2 - ((nx - 1) * spacing) / 2;
+209:   const oz = (rect.z0 + rect.z1) / 2 - ((nz - 1) * spacing) / 2;
+210:   for (let i = 0; i < nx; i++) {
+211:     for (let j = 0; j < nz; j++) {
+212:       const stagger = (j % 2) * spacing * 0.5;
+213:       pts.push({ x: ox + i * spacing + stagger, z: oz + j * spacing });
+214:     }
+215:   }
+216:   return pts;
+217: }
+218: 
+219: // ===== Squirrel =====
+220: // Runs about the orchard; when the car comes near it bolts up a tree, plucks an
+

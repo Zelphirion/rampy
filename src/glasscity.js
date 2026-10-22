@@ -57,7 +57,7 @@ export function makeTower(scene, x, z, w, h, colorIdx) {
   inner.position.y = h / 2;
   g.add(inner);
   const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.6, 0.8, w + 0.6), capMat);
-  cap.position.y = h + 0.4;
+  cap.position.y = h + 0.45;   // a hair above the tower top: flush, the two faces z-fight
   g.add(cap);
   g.position.set(x, 0, z);
   scene.add(g);

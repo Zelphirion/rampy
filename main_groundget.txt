@@ -1,0 +1,17 @@
+﻿11235: function groundHeightForWorld(levelId, x, z) {
+11236:   if (levelId === 'beach') return groundHeight + beachGroundOffsetAt(x, z);
+11237:   if (levelId === 'ramp') return groundHeight + terrainHeightAt(x, z);
+11238:   // The underground's course floor is world y=0 â€” the same flat resting height
+11239:   // as the city's ground. The UNDERGROUND_Y = -30 plane belongs to the DECOR
+11240:   // cavern and is not where the course (or anything on it) sits, so parking on
+11241:   // that height drops the car straight through the floor.
+11242:   if (levelId === 'underground') return groundHeight;
+11243:   if (levelId === 'cornfield') return cornfieldWorld.groundY;
+11244:   return groundHeight;
+11245: }
+11246: 
+11247: // ===== The browser's own wiring =====
+11248: 
+11249: if (tabLevelsBtn) tabLevelsBtn.addEventListener('click', () => setPickerTab('levels'));
+11250: if (objPrevBtn) objPrevBtn.addEventListener('click', () => { objPage--; renderObjectBrowser(); });
+

@@ -460,6 +460,94 @@ export function releaseYaw(track, s) {
   return Math.atan2(f.tz, -f.tx);
 }
 
+// The arc length where the launch ramp begins: the foot of the last sustained
+// climb on the route. The ramp is the only stretch at the end of the run that
+// climbs, so scanning back from the lip for the run of samples whose tangent
+// points up finds where the car starts the ramp. The camera uses it to hand
+// the frame from the loops to the launch shot exactly as the climb starts.
+export function launchRampStart(track, minSlope = 0.25) {
+  const m = track.samples.length;
+  if (m < 2) return 0;
+  let i = m - 1;
+  // Skip the flat lip at the very end.
+  while (i > 0 && track.samples[i].ty <= minSlope) i--;
+  // Then walk back down the climb to its foot.
+  while (i > 0 && track.samples[i - 1].ty > minSlope) i--;
+  return track.samples[i].s;
+}
+
+// ---- The launch flight ----------------------------------------------------
+//
+// Leaving the lip of the launch ramp is the one thing the house's driving
+// model cannot describe. The car is a projectile: it has to KEEP its speed,
+// sail through the playroom doorway and come down in the living room. The
+// launch cinematic also takes the frame away from the drive block - which is
+// the only thing in the house that moves the car sideways - so without a
+// flight of its own the car simply dropped straight down where the ramp ended.
+//
+// So the flight is done here, in pure maths, and main.js applies it to the car.
+//
+// The lip is deliberately near-flat (see hotwheelsNodes), so almost all of the
+// launch speed is horizontal: the car leaves nearly level, sails on, and falls
+// away under gravity. A little air drag takes the edge off it, which is also
+// what keeps the flight short enough to land in the living room instead of
+// slamming into its far wall.
+//
+// The whole flight is ballistic: no steering, no throttle, nothing but gravity
+// and drag. That is what makes it a launch and not a drive.
+export const LAUNCH_DRAG = 10;     // units/s^2 of air drag on the flight
+
+// The velocity the car leaves the lip with: the tangent's ground direction for
+// the horizontal, the ramp's own slope for the upward kick. `speed` is the
+// speed it was doing on the rails.
+export function launchVelocity(track, s, speed) {
+  const f = sampleTrack(track, s);
+  const sp = Math.max(0, speed || 0);
+  const g = Math.hypot(f.tx, f.tz);
+  const dx = g > EPS ? f.tx / g : 0;
+  const dz = g > EPS ? f.tz / g : 1;
+  return {
+    x: dx * sp,
+    y: sp * Math.max(0, f.ty),
+    z: dz * sp,
+    yaw: releaseYaw(track, s),
+    speed: sp,
+  };
+}
+
+// A flight starting at (x, y, z) with the velocity launchVelocity gives for
+// the track's arc length `s`.
+export function createLaunchFlight(track, s, speed, x, y, z) {
+  const v = launchVelocity(track, s, speed);
+  return {
+    x, y, z,
+    vx: v.x, vy: v.y, vz: v.z,
+    yaw: v.yaw,
+    speed: v.speed,
+    t: 0,
+    pitch: -Math.atan2(v.y, Math.hypot(v.x, v.z)),
+  };
+}
+
+// One step of the flight: gravity on the vertical, air drag on the horizontal,
+// and the body pitched along the path so the car noses up off the ramp and
+// noses down as it falls.
+export function stepLaunchFlight(flight, dt, g) {
+  flight.vy -= g * dt;
+  const hs = Math.hypot(flight.vx, flight.vz);
+  if (hs > EPS) {
+    const dec = Math.min(hs, LAUNCH_DRAG * dt);
+    flight.vx -= (flight.vx / hs) * dec;
+    flight.vz -= (flight.vz / hs) * dec;
+  }
+  flight.x += flight.vx * dt;
+  flight.y += flight.vy * dt;
+  flight.z += flight.vz * dt;
+  flight.t += dt;
+  flight.pitch = -Math.atan2(flight.vy, Math.hypot(flight.vx, flight.vz));
+  return flight;
+}
+
 // Nearest point on the track to (x,y,z). A `hint` (a previous s) narrows the
 // search to a window around itself; without one it scans the whole track, which
 // is cheap for a few hundred samples.

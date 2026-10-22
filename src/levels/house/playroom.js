@@ -16,7 +16,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { makeLocomotive, buildFreightCars } from '../../train.js';
 import { makeShip } from '../../spaceport.js';
-import { hotwheelsNodes, buildTrack, poseOnTrack, TRACK_HALF_WIDTH } from './hotwheels.mjs';
+import { hotwheelsNodes, buildTrack, poseOnTrack, TRACK_HALF_WIDTH } from './hotwheels.mjs?v=1800000000020';
 import { makeLizardModel } from '../../lizard.js?v=1800000000000';
 import {
   JACK_BOX, JACK_FLOOR, createJack, jackTouch, jackStep, jackPose, springLength,

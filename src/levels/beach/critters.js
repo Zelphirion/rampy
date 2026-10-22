@@ -4,7 +4,7 @@ import {
   BEACH_TRENCH_Z, BEACH_TRENCH_Y, BEACH_SHELF_Z0, BEACH_SHELF_Z1,
   BEACH_ROCKS, BEACH_MERMAID_CASTLE, beachGroundOffsetAt, clamp01, cliffHash,
   PERSON_H, animalSize,
-} from './layout.js?v=1800000000000';
+} from './layout.js?v=1800000000003';
 
 // ===== The wildlife =====
 //
@@ -1051,6 +1051,11 @@ export function addBeachLife(parent, baseY = 0) {
   return {
     group,
     crabs,
+    // The mermaids' own groups, so the level can hide the whole school when the
+    // player is up in the air. They are children of `group`, so hiding the
+    // parent would hide the crabs and the fish as well - these are handed
+    // over individually for exactly that reason.
+    mermaids: mermaids.map((m) => m.group),
     // The live crab colliders, for the level to add to its own list so the car
     // is stopped by them. Mutated in place by updateCrabs.
     crabColliders: crabs.map((c) => c.collider),

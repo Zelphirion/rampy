@@ -491,6 +491,18 @@ test('the arrival rocket holds one steady speed the whole flyby', () => {
     'the old eased time -> path table is still present');
 });
 
+test('the arrival fade covers the insert and the shutter', () => {
+  // The fade clock must start from the END of the insert/shutter timeline, not
+  // from the SETTLE hold before it. Tying it to SETTLE blacks the shot out while
+  // the ship is still sliding in, so the insert and the lids are never seen.
+  const fn = src.slice(src.indexOf('function updateSpaceArrival('));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /const fadeAt = SPACE_ARRIVAL_END - SPACE_ARRIVAL_FADE_OUT;/,
+    'the arrival fade is not derived from the end of the insert/shutter clock');
+  assert.doesNotMatch(body, /fadeAt = SPACE_ARRIVAL_SETTLE/,
+    'the arrival fade is still tied to the old settle hold');
+});
+
 test('the cinematic tripod counts terrain as a blocker, and gives up after a second', () => {
   // Ground is not in activeColliders(): the ramp hills, the city's portal hill
   // and the beach banks are meshes. A sight test that only swept colliders would
@@ -517,6 +529,78 @@ test('the cinematic tripod counts terrain as a blocker, and gives up after a sec
   // A brief duck-behind is fine; more than a second of not seeing the car hops.
   const repick = Number(src.match(/CINE_REPICK_AFTER = ([\d.]+)/)[1]);
   assert.ok(repick >= 1.0, `hidden tolerance is ${repick}s, under the asked-for second`);
+});
+
+test('the Camera tab picks a view by walking the same C-key cycle', () => {
+  // The gear screen gained a Camera tab: one button per view, and clicking one
+  // lands the live camera on that view. The whole point of the design is that it
+  // does NOT own camera state — it drives the very cycle the C key walks, so the
+  // chase-framing stash/restore stays in ONE place (toggleTopDownCamera). These
+  // checks pin the wiring together so a refactor cannot split that.
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+
+  // The button and its panel, shaped like the other gear-screen browsers.
+  assert.match(html, /id="tab-camera"\s+class="picker-tab"/,
+    'index.html has no Camera tab button');
+  assert.match(html, /id="camera-panel"\s+class="browser-panel"/,
+    'the Camera tab has no panel');
+  assert.match(html, /body\.tab-camera #camera-panel\s*\{[^}]*display:\s*flex/,
+    'the Camera panel is never shown by its body class');
+  for (const id of ['cam-view-chase', 'cam-view-plan', 'cam-view-cine']) {
+    assert.ok(html.includes(`id="${id}"`), `the Camera panel has no ${id} button`);
+  }
+
+  // setPickerTab knows the tab: the button list, the panel body class, and the
+  // shared browser-mode list that hides the showroom furniture.
+  assert.match(src, /\['tab-camera', 'camera'\]/,
+    'setPickerTab does not light the Camera tab button');
+  assert.match(src, /classList\.toggle\('tab-camera', tab === 'camera'\)/,
+    'setPickerTab does not toggle the Camera panel');
+  assert.match(src, /tab === 'camera' \|\| tab === 'graphics'/,
+    'the Camera tab is not in the browser-mode list that hides the stage furniture');
+  // And it is reachable from the pad's LB/RB tab walk.
+  assert.match(src, /const tabs = \[[^\]]*'camera'/,
+    'the controller tab walk does not include the Camera tab');
+
+  // The jump reuses the cycle rather than flipping topDown/cineCam itself.
+  const setFn = src.slice(src.indexOf('function setCameraView('));
+  const setBody = setFn.slice(0, setFn.indexOf('\n}'));
+  assert.match(setBody, /toggleTopDownCamera\(\)/,
+    'setCameraView does not reuse the C-key cycle');
+  assert.match(setBody, /currentCameraView\(\) !== name/,
+    'setCameraView does not stop once it reaches the target view');
+  const curFn = src.slice(src.indexOf('function currentCameraView('));
+  const curBody = curFn.slice(0, curFn.indexOf('\n}'));
+  assert.match(curBody, /topDown\.active[\s\S]*?return 'plan'/,
+    'currentCameraView does not report the plan view');
+  assert.match(curBody, /cineCam\.active[\s\S]*?return 'cine'/,
+    'currentCameraView does not report the cinematic view');
+  assert.match(curBody, /return 'chase'/, 'currentCameraView does not fall back to chase');
+
+  // Every panel button jumps to its view and repaints the choice.
+  assert.match(src, /addEventListener\('click', \(\) => \{ setCameraView\(name\); refreshCameraTabUI\(\); \}\)/,
+    'the Camera panel buttons do not jump the view');
+  // The camera tab must repaint on open, or it would show a stale highlight if
+  // the player had cycled with C before opening the gear.
+  assert.match(src, /else if \(tab === 'camera'\)[\s\S]{0,400}refreshCameraTabUI\(\)/,
+    'opening the Camera tab does not paint the live view');
+
+  // The Camera tab renders the real world behind it (so the choice is SEEN, no
+  // description needed) exactly like Graphics — at every place that call is made.
+  const guards = src.split('\n').filter((l) => l.includes("pickerTab !== 'graphics'"));
+  assert.ok(guards.length >= 3, 'cannot find the world-behind-panel guards in main.js');
+  for (const g of guards) {
+    assert.ok(g.includes("pickerTab !== 'camera'"),
+      `a world-behind-panel guard still excludes the Camera tab: ${g.trim()}`);
+  }
+
+  // Leaving the modal has to drop the body class, or the panel would linger.
+  const exits = src.split('\n').filter((l) => l.includes("classList.remove(") && l.includes("'tab-graphics'"));
+  assert.ok(exits.length >= 2, 'cannot find the settings teardown class lists');
+  for (const e of exits) {
+    assert.ok(e.includes("'tab-camera'"),
+      `a settings teardown drops tab-graphics but not tab-camera: ${e.trim()}`);
+  }
 });
 
 

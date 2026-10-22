@@ -125,10 +125,21 @@ export const HOUSE_START = { x: -50, z: 72, yaw: Math.PI };
 // hasp and a padlock on it. The shell wall itself is continuous behind it, so
 // the door is decoration over solid masonry: there is no trigger, no gap and no
 // collider gap anywhere.
+//
+// A normal single-door leaf: 12 wide and 22 tall, so it reads as a door rather
+// than as a square opening - the same leaf as the BACK door below. (It used to
+// be 20 wide, as wide as it was tall, which is why it read as a barn opening
+// rather than as a door. The brown-roofed house in the city wears a scaled copy
+// of THIS door, so narrowing it here narrows the one on the street too.)
+//
+// It still keeps its stand-off from the roller door: z1 = 45 leaves it 13 clear
+// of the way out at z 58+, and that 13 is the gap the city house copies between
+// its bay and its own front door. The door is 12 wide, so its west edge is at
+// z 33 - well clear of the west window at z 0..16.
 export const FRONT_DOOR = {
   wallAxis: 'z',       // it lives in a wall that runs along Z (a constant-x wall)
   at: HOUSE.minX - HOUSE.wall / 2,
-  z0: 25, z1: 45,      // 20 wide, clear of the west window at z 0..16 and the roller door at 58+
+  z0: 33, z1: 45,      // 12 wide, clear of the west window at z 0..16 and 13 short of the roller door at 58+
   h: 22,               // head height
   inward: 1,           // the room side faces +X
 };

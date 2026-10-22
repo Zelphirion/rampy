@@ -72,7 +72,7 @@ const world = await addHouse({ add() {} }, {});
 const FURN = footprints(world);
 
 // ---- Hot Wheels floor lane (the track within a train-height of the boards) --
-import { hotwheelsNodes, buildTrack } from './hotwheels.mjs';
+import { hotwheelsNodes, buildTrack } from './hotwheels.mjs?v=1800000000020';
 const hw = buildTrack(hotwheelsNodes()).samples.filter((p) => p.y < 4);
 
 // ---- helpers ---------------------------------------------------------------

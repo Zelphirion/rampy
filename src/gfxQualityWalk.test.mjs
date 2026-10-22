@@ -22,6 +22,7 @@ import {
   GFX_AUTO_RISE,
   GFX_AUTO_SUSTAIN,
   GFX_SCALE_MIN,
+  GFX_WALK_SCALE_MIN,
 } from './modules/gfxQualityWalk.js';
 
 const BASE = { scale: 1, far: 500, fogTie: true, shadows: true, aa: true, max: false };
@@ -65,29 +66,39 @@ test('the ladder and the arming threshold match the promised shape', () => {
   assert.equal(GFX_AUTO_RISE, 40, 'the walk restores at 40fps');
 });
 
-test('the resolution floor is a fifth of native, not a tenth', () => {
-  // The blocky end was 0.1x; it is deliberately twice that now. Pin the number
-  // so a future tuning pass has to be a conscious choice.
-  assert.equal(GFX_SCALE_MIN, 0.2, 'the walk floor should be 0.2x');
-  // And no rung may reach BELOW the floor (the fold takes the min over rungs,
-  // so a stray low rung would drag the real bottom past GFX_SCALE_MIN).
+test('the walk floor is the Low-preset picture, not the slider extreme', () => {
+  // The slider may go all the way down to a fifth of native (GFX_SCALE_MIN),
+  // but the walk must stop at the Low preset's scale: a picture that was tuned
+  // to look acceptable, not the blocky extreme end.
+  assert.equal(GFX_SCALE_MIN, 0.2, 'the slider floor should still be 0.2x');
+  assert.equal(GFX_WALK_SCALE_MIN, 0.5, 'the walk floor should be the Low preset, 0.5x');
+  // The tie is real: GFX_WALK_SCALE_MIN must equal main.js's Low preset scale.
+  const main = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
+  const m = main.match(/low:\s*\{\s*scale:\s*([\d.]+)/);
+  assert.ok(m, 'main.js has no GFX_PRESETS.low with a scale — the presets changed shape');
+  assert.equal(GFX_WALK_SCALE_MIN, Number(m[1]),
+    `the walk floor (${GFX_WALK_SCALE_MIN}x) must equal the Low preset scale (${m[1]}x)`);
+  // And no rung may reach BELOW the walk floor (the fold takes the min over
+  // rungs, so a stray low rung would drag the real bottom past it).
   for (const rung of GFX_AUTO_LADDER) {
     if (rung.scale !== undefined) {
-      assert.ok(rung.scale >= GFX_SCALE_MIN,
-        `a rung is ${rung.scale}x, below the ${GFX_SCALE_MIN}x floor`);
+      assert.ok(rung.scale >= GFX_WALK_SCALE_MIN,
+        `a rung is ${rung.scale}x, below the ${GFX_WALK_SCALE_MIN}x walk floor`);
     }
   }
 });
 
-test('the resolution slider bottoms out at exactly the walk floor', () => {
-  // The Graphics tab's slider and the automatic walk must agree on how low the
-  // picture may go, or the slider would offer a resolution the walk then refuses
-  // to honour (or vice versa).
+test('the resolution slider bottoms out at the extreme end, below the walk', () => {
+  // The Graphics tab's slider is allowed to go lower than the walk ever will —
+  // a player may hand-crank the buffer down — but the two floors are distinct
+  // and both are pinned here.
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   const m = html.match(/id="gfx-scale"[^>]*\bmin="([\d.]+)"/);
   assert.ok(m, 'index.html has no #gfx-scale slider with a min — the Graphics tab changed shape');
   assert.equal(Number(m[1]), GFX_SCALE_MIN,
-    `the slider's min (${m[1]}x) must equal the lowest resolution the walk sets (${GFX_SCALE_MIN}x)`);
+    `the slider's min (${m[1]}x) must equal the extreme-end floor (${GFX_SCALE_MIN}x)`);
+  assert.ok(GFX_WALK_SCALE_MIN > GFX_SCALE_MIN,
+    'the walk must stop well above the slider extreme');
 });
 
 test('a deep sustained dip walks quality DOWN one rung per cooldown', () => {
@@ -98,8 +109,8 @@ test('a deep sustained dip walks quality DOWN one rung per cooldown', () => {
   const scales = cuts.map((s) => s.scale);
   for (let i = 1; i < scales.length; i++) assert.ok(scales[i] <= scales[i - 1],
     'scale must never climb while the walk is cutting');
-  assert.equal(cuts[cuts.length - 1].scale, GFX_SCALE_MIN,
-    'the bottom rung is the blocky end, not somewhere above it');
+  assert.equal(cuts[cuts.length - 1].scale, GFX_WALK_SCALE_MIN,
+    'the bottom rung is the walk floor, not somewhere above it');
   assert.equal(cuts[cuts.length - 1].aa, false, 'aa is off at the floor');
 });
 

@@ -1,0 +1,46 @@
+﻿1014: function buildHill(scene) {
+1015:   const run = HILL.zTop - HILL.zNear;
+1016:   const width = HILL.x1 - HILL.x0;
+1017:   const shape = new THREE.Shape();
+1018:   shape.moveTo(0, 0);
+1019:   shape.lineTo(run, 0);
+1020:   shape.lineTo(run, HILL.topY);
+1021:   shape.closePath();
+1022:   const geo = new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false });
+1023:   geo.translate(-run / 2, 0, -width / 2);
+1024:   const slope = new THREE.Mesh(geo, M.dirt);
+1025:   slope.rotation.y = Math.atan2(-1, 0);
+1026:   slope.position.set((HILL.x0 + HILL.x1) / 2, CORN_GROUND, (HILL.zNear + HILL.zTop) / 2);
+1027:   slope.castShadow = true; slope.receiveShadow = true;
+1028:   scene.add(slope);
+1029: 
+1030:   const pd = HILL.zFar - HILL.zTop;
+1031:   const plateau = new THREE.Mesh(new THREE.BoxGeometry(width, HILL.topY, pd), M.dirt);
+1032:   plateau.position.set((HILL.x0 + HILL.x1) / 2, HILL.topY / 2, (HILL.zTop + HILL.zFar) / 2);
+1033:   plateau.receiveShadow = true;
+1034:   scene.add(plateau);
+1035: 
+1036:   const cap = new THREE.Mesh(new THREE.PlaneGeometry(width - 0.4, pd - 0.2), M.grass);
+1037:   cap.rotation.x = -Math.PI / 2;
+1038:   cap.position.set((HILL.x0 + HILL.x1) / 2, HILL.topY + 0.03, (HILL.zTop + HILL.zFar) / 2);
+1039:   cap.receiveShadow = true;
+1040:   scene.add(cap);
+1041: 
+1042:   // The far fence, right at the lip â€” the truck breaks through it.
+1043:   const fence = new THREE.Group();
+1044:   const fw = HILL.x1 - HILL.x0;
+1045:   for (const ry of [0.5, 1.1]) {
+1046:     const rail = new THREE.Mesh(new THREE.BoxGeometry(fw, 0.12, 0.12), M.woodDark);
+1047:     rail.position.set((HILL.x0 + HILL.x1) / 2, HILL.topY + ry, HILL.zFar);
+1048:     scene.add(rail); fence.add(rail);
+1049:   }
+1050:   for (let i = 0; i <= 6; i++) {
+1051:     const t = i / 6;
+1052:     const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.8, 0.18), M.wood);
+1053:     post.position.set(HILL.x0 + fw * t, HILL.topY + 0.9, HILL.zFar);
+1054:     scene.add(post); fence.add(post);
+1055:   }
+1056:   return { fence };
+1057: }
+1058: 
+
