@@ -17,10 +17,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import './objects/nodeShims.mjs';
-import { RING_HALF_W, RING_TURN, createRingState, stepRing } from './spaceRing.js';
+import { RING_R, RING_CIRC, RING_HALF_W, RING_TURN, createRingState, stepRing } from './spaceRing.js';
 
 const sectors = await import('./levels/space/sectors.js');
 const space = await import('./levels/space/index.js');
+const THREE = await import('three');
 const mainSrc = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const portSrc = readFileSync(new URL('./spaceport.js', import.meta.url), 'utf8');
 const idxSrc = readFileSync(new URL('./levels/space/index.js', import.meta.url), 'utf8');
@@ -65,6 +66,33 @@ test('the window wall is opened once across the docking shoulder for both hangar
     'the +Z wall gap no longer reaches the side decon bay');
   assert.match(idxSrc, /gapB \+ Math\.PI \/ 2, Math\.PI \* 2 - gapLen/,
     'the +Z window wall is not cut with the merged shoulder gap');
+});
+
+test('nothing dresses the +w shoulder across the spur and departure lift', () => {
+  // The gap in the station wall is a real opening, not just a hole in the glass:
+  // sector dressing used to march hazard panels and wall wainscot straight
+  // across it, so striped "barriers" stood in the open where there were no
+  // colliders at all. Everything on the +w side of the gap must now be clear.
+  assert.equal(sectors.inShoulderGap(RING_CIRC - 6), true, 'the departure lift is not in the gap');
+  assert.equal(sectors.inShoulderGap(0), true, 'the spur mouth is not in the gap');
+  assert.equal(sectors.inShoulderGap(120), false, 'the far side of the ring was cleared too');
+
+  const world = sectors.buildSpaceSectors();
+  world.group.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  const sOf = (p) => {
+    let s = Math.atan2(p.y, p.x) * RING_R;
+    if (s < 0) s += RING_CIRC;
+    return s;
+  };
+  const offenders = [];
+  world.group.traverse((o) => {
+    if (o.name !== 'Hazard Panel') return;
+    o.getWorldPosition(v);
+    const s = sOf(v);
+    if (sectors.inShoulderGap(s) && v.z > 8) offenders.push([+s.toFixed(1), v.z]);
+  });
+  assert.deepEqual(offenders, [], 'hazard-wall panels still stand in the open shoulder');
 });
 
 test('the rescue crane stands at the bay so its hoist line meets the flung car', () => {
@@ -568,8 +596,8 @@ test('the eye-port is the centre pod bay (no big hull box)', () => {
     'the old box-dock/outward port dressing was not removed');
   assert.match(idxSrc, /orientFloor\(dockFrame, 0, 0, RING_R\)/,
     'the dock frame lives at the ring floor (theta 0, RING_R)');
-  assert.match(idxSrc, /dockFrame\.add\(hangarArm\.g\)/,
-    'the loading arm lives on the dock frame, not the eye-port');
+  assert.doesNotMatch(idxSrc, /dockFrame\.add\(hangarArm\.g\)/,
+    'the old loading arm still hangs over the dock approach');
   // The small eye-port and a larger-mouth variant are both plausible
   const small = space.buildSpacePodBay();
   const big = space.buildSpacePodBay({ mouthR: 7.5 });
@@ -581,7 +609,7 @@ test('the eye-port is the centre pod bay (no big hull box)', () => {
     'eye variants must differ by mouthR');
 });
 
-test('a big hydraulic arm stands in the hangar, sized to span it', () => {
+test('the loading arm survives only as an object-browser model, not in the station', () => {
   const arm = space.buildSpaceHangarArm({ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2.6 });
   assert.equal(typeof arm.reach, 'function', 'the hangar arm cannot reach');
   assert.equal(typeof arm.yawAngle, 'function', 'the hangar arm has no heading');
@@ -590,38 +618,132 @@ test('a big hydraulic arm stands in the hangar, sized to span it', () => {
   let meshes = 0;
   arm.g.traverse((n) => { if (n.isMesh) meshes++; });
   assert.ok(meshes >= 6, `the hangar arm is nearly empty (${meshes} meshes)`);
-  assert.match(idxSrc, /buildSpaceHangarArm\(\{ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2\.6 \}\)/,
-    'the level does not mount the big hangar loading arm');
+  // The station itself no longer mounts it: its folded limb reached out over the
+  // dock spur at head height, and nothing boards there any more.
+  assert.doesNotMatch(idxSrc, /const hangarArm = buildSpaceHangarArm/,
+    'the station still builds the dead loading arm');
+  assert.doesNotMatch(idxSrc, /^\s*hangarArm,$/m,
+    'the station still exposes the dead loading arm');
 });
 
-test('the space departure lifts the car into the rocket with the arm', () => {
-  assert.match(mainSrc, /buildSpaceHangarArm|hangarArm\.reach|arm\.reach\(_spaceHand, grip, fit\)/,
-    'the departure never drives an arm to load the car');
-  assert.match(mainSrc, /const SPACE_DEPART_LOAD = SPACE_DEPART_LOAD_GRAB/,
-    'the load phases are gone');
-  assert.match(mainSrc, /_spaceHand\.copy\(_spacePadH\)\.lerp\(_spaceRoofH, l\)/,
-    'the arm does not carry the car from the berth to the roof');
-  assert.match(mainSrc, /_spaceHand\.copy\(_spaceRoofH\)\.lerp\(_spaceSeatH, l\)/,
-    'the arm does not lower the car into the hold');
-  assert.match(mainSrc, /spaceWorld\.arrivalHinge\.rotation\.z = 1\.15/,
-    'the rocket roof is not opened to receive the car');
+test('the space departure skips the claw load: the car is already in the rocket', () => {
+  // The load beat was cut. Nothing in the departure may drive the arm through a
+  // grab/carry/insert cycle again, and the car must be seated in the hold the
+  // moment the shot opens.
+  assert.doesNotMatch(mainSrc, /SPACE_DEPART_LOAD_(GRAB|CARRY|INSERT|RETRACT)/,
+    'the old claw-load timeline is still present');
+  assert.doesNotMatch(mainSrc, /_spaceHand\.copy\(_spacePadH\)/,
+    'the departure still carries the car from the berth');
+  assert.doesNotMatch(mainSrc, /spaceDeparture\.atEye/,
+    'the old two-beat load/eye hand-off is still present');
+  assert.match(mainSrc, /function startSpaceDeparture\(\)[\s\S]{0,2600}spaceWorld\.arrivalSeat\.getWorldPosition\(_spaceSeatPos\)/,
+    'the rocket does not open with the car already seated in the hold');
+  assert.match(mainSrc, /function startSpaceDeparture\(\)[\s\S]{0,1200}spaceWorld\.arrivalHinge\.rotation\.z = 0/,
+    'the rocket roof must open the shot already shut (the car is inside)');
+  // The doors still draw wide and the loaded ship still flies out of the eye.
+  assert.match(mainSrc, /spaceWorld\.setDoors\(SPACE_DEPART_WIDE \* doorOpen \* \(1 - doorClose\)\)/,
+    'the departure no longer opens the iris');
+  assert.match(mainSrc, /const u = _spaceSmooth\(spaceClamp\(\(t - SPACE_DEPART_LAUNCH\) \/ SPACE_DEPART_FLY_DUR, 0, 1\)\)/,
+    'the rocket no longer climbs out of the eye');
 });
 
-test('the return leg lands the rocket and unloads the car in the city', () => {
-  assert.match(mainSrc, /function startCityLanding\(\)/,
-    'the departure no longer hands off to a city landing');
-  assert.match(mainSrc, /startCityLanding\(\);\s*\n\}/,
-    'finishSpaceDeparture does not call the landing');
-  assert.match(mainSrc, /const CITY_LAND_DESCEND =/,
-    'the landing timeline is gone');
-  assert.match(mainSrc, /_clHand\.copy\(_clSeatH\)\.lerp\(_clHigh, l\)/,
-    'the arm does not lift the car out of the hold');
-  assert.match(mainSrc, /_clHand\.copy\(_clHigh\)\.lerp\(_clStageH, l\)/,
-    'the arm does not set the car back on the apron');
-  assert.match(mainSrc, /if \(cityLanding\.active\) updateCityLanding\(delta\)/,
-    'the landing is never advanced from the loop');
-  assert.match(mainSrc, /!rocketRide\.active && !cityLanding\.active/,
-    'the landing does not stand the car physics down');
+test('the departure fades to black before handing back to the city', () => {
+  // The final fade must actually be reachable: fade starts before the scene end.
+  assert.match(mainSrc, /const SPACE_DEPART_FADE = SPACE_DEPART_LAUNCH \+ SPACE_DEPART_FLY_DUR \* 0\.55/,
+    'the departure fade still sits past its own end');
+  assert.match(mainSrc, /const SPACE_DEPART_END = SPACE_DEPART_FADE \+ SPACE_DEPART_FADE_DUR/,
+    'the scene does not wait for the fade to finish');
+  assert.match(mainSrc, /t >= SPACE_DEPART_FADE\) \{\s*fadeTo\(/,
+    'nothing drives the final fade to black');
+  // ...and we come home looking AWAY from the pad.
+  assert.match(mainSrc, /car\.rotation\.set\(0, Math\.atan2\(-\(pad\.z - car\.position\.z\), \(pad\.x - car\.position\.x\)\), 0\)/,
+    'the returned car still faces the launch pad');
+});
+
+test('the return leg cuts straight back to the car on the city apron', () => {
+  assert.doesNotMatch(mainSrc, /startCityLanding|updateCityLanding|CITY_LAND_DESCEND|cityLanding/,
+    'the old rocket-landing timeline is still present');
+  assert.match(mainSrc, /function finishSpaceDeparture\(\)[\s\S]{0,700}returnCityFromSpace\(\);[\s\S]{0,40}\}/,
+    'finishSpaceDeparture does not cut directly back to the city');
+  assert.match(mainSrc, /const b = spaceport\.bounds;[\s\S]{0,800}car\.position\.set\(b\.x \+ b\.halfX \+ 6, 0\.62, b\.z\)/,
+    'returnCityFromSpace does not place the car on the grass east of the compound');
+});
+
+test('the departure lift sits off the lane beside the decon airlock', () => {
+  assert.match(idxSrc, /roadLift\.g\.position\.set\(liftX, liftY, 17\)/,
+    'the departure lift is not in the shoulder beside the bay');
+  assert.match(idxSrc, /roadLift\.s = RING_CIRC - liftArc/,
+    'the departure lift is still on the road-centre loop position');
+  assert.match(idxSrc, /const liftArc = 6;/,
+    'the lift no longer sits just past the decon chamber');
+  assert.match(idxSrc, /roadLift\.w = 17/,
+    'the departure lift is not parked off the racing line');
+  assert.match(mainSrc, /nearLift[\s\S]{0,200}laneHi = Math\.max\(laneHi, departureLift\.w \+ departureLift\.halfW \+ 1\.0\)/,
+    'the lane never opens for the side departure lift');
+  assert.match(idxSrc, /const liftSpawnW = roadLift\.w - roadLift\.halfW - 2\.0;/,
+    'the spawn is not clear of the lift deck');
+  assert.match(idxSrc, /spawn: \{ s: roadLift\.s, w: liftSpawnW, heading: 0 \}/,
+    'the visit does not start beside the departure lift');
+  assert.match(mainSrc, /const liftAng = lift \? lift\.s \/ RING_R : 0;/,
+    'the minimap does not mark the departure lift at its real loop angle');
+});
+
+test('held steering input cannot survive a focus loss or a space-world handoff', () => {
+  // The bug: a touch stick or key released while the view was covered (or a
+  // window blur swallowing the keyup) stayed held, and the next car drove in
+  // circles. The input layer now clears held controls on every handoff.
+  assert.match(mainSrc, /function clearHeldDriveInput\(\)/,
+    'the held-input reset helper is gone');
+  assert.match(mainSrc, /window\.addEventListener\('blur', clearHeldDriveInput\)/,
+    'losing window focus does not drop held keys/sticks');
+  assert.match(mainSrc, /visibilitychange[\s\S]{0,120}clearHeldDriveInput/,
+    'hiding the tab does not drop held keys/sticks');
+  assert.match(mainSrc, /window\.addEventListener\('pointerup'[\s\S]{0,180}release\(\)/,
+    'a pointerup outside the stick target cannot release the stick');
+  assert.match(mainSrc, /function startSpaceDeparture\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,
+    'the space departure does not clear held input');
+  assert.match(mainSrc, /function returnCityFromSpace\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,
+    'the city handoff does not clear held input');
+  assert.match(mainSrc, /function spaceRoadLiftCollision\(\)[\s\S]{0,800}clearHeldDriveInput\(\)/,
+    'triggering the lift does not clear a held turn');
+  assert.match(mainSrc, /function startSpaceVent\([\s\S]{0,500}clearHeldDriveInput\(\)/,
+    'the airlock cut does not clear held input');
+});
+
+test('the exit lift is barrier-free, any touch starts the frozen-camera ride', () => {
+  // No blocking post rows, fenced ends or barrier zones remain around the exit.
+  assert.doesNotMatch(idxSrc, /blocking posts|fenced tangent|fenced ends/i,
+    'the lift still has barriers or fenced ends');
+  assert.doesNotMatch(sectSrc, /type: 'barrier'/, 'station barrier zones still exist');
+  assert.doesNotMatch(sectSrc, /const barrier = makeSecurityBarrier\(\)/,
+    'security barrier meshes are still placed in the station');
+  // The whole apron/deck is the trigger, and it latches a frozen live camera.
+  assert.match(idxSrc, /roadLift\.triggerHalfS = 4\.5/);
+  assert.match(idxSrc, /roadLift\.triggerHalfW = 5\.0/);
+  assert.match(mainSrc, /function spaceRoadLiftCollision\(\)[\s\S]{0,900}triggerHalfS/,
+    'the lift contact trigger is gone');
+  assert.match(mainSrc, /spaceDock\.cine = true;[\s\S]{0,160}camPos\.copy\(camera\.position\)/,
+    'the lift ride does not freeze the live camera');
+  assert.match(mainSrc, /spaceDock\.cine[\s\S]{0,120}camera\.position\.copy\(spaceDock\.camPos\)/,
+    'updateCamera does not hold the frozen lift camera');
+});
+
+test('the station has no boost pads, boost zones, or boost handlers left', () => {
+  assert.doesNotMatch(sectSrc, /makeBoostPad|type: 'boost'|M\.boost/,
+    'station boost pads or zones still exist');
+  assert.doesNotMatch(mainSrc, /case 'boost':/,
+    'main.js still applies a station boost zone');
+});
+
+test('the drivable ring is enclosed in a glass donut with passing glints', () => {
+  assert.match(idxSrc, /const BUBBLE_H = 8\.0/,
+    'the glass enclosure has no height');
+  assert.match(idxSrc, /spacebubbleroof/,
+    'the glass roof is missing');
+  assert.match(idxSrc, /spacebubblesidegap/,
+    'the glass side wall does not keep the shoulder gap');
+  assert.match(idxSrc, /bubbleGlints/,
+    'the glass enclosure has no travelling reflections');
 });
 
 // ===== The airlock serves BOTH players ======================================

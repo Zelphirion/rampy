@@ -12,14 +12,14 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { HOUSE, ROOMS, ROOM_LABELS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, BACK_DOOR, MAP_ITEMS, DRIVE, FIREPLACE, CAR_RADIUS } from './layout.js?v=1800000000001';
-import { addKnockable } from '../../physics.js?v=1800000000002';
-import { pad, bowl, wedge } from './surfaces.js';
+import { addKnockable } from '../../physics.js?v=1800000000004';
+import { pad, bowl, wedge } from './surfaces.js?v=1800000000047';
 import { makeGalley, HOUSE_KITCHEN } from '../../kitchen.js?v=1799900000000';
 import {
   makePlayTrain, makeRedHorse, makeLegoBox, makeHangingRocket,
   makeXylophone, makeBlockCastle, makeMagnetCity, makeHotWheels, makeJackInTheBox,
   makeTerrarium,
-} from './playroom.js?v=1800000000021';
+} from './playroom.js?v=1800000000023';
 import { playTrainPoints } from './playtrain.mjs';
 
 // Re-exported so main.js (and anyone poking at the level) has one import site.
@@ -77,6 +77,10 @@ const MAT = {
   counter:   new THREE.MeshStandardMaterial({ color: 0x40474f, roughness: 0.42 }),
   counterTop:new THREE.MeshStandardMaterial({ color: 0x2f343a, roughness: 0.3 }),
   porcelain: new THREE.MeshStandardMaterial({ color: 0xf2f5f7, roughness: 0.22 }),
+  // The boogie board leaning on the bath: a beach-toy orange with a cream wax
+  // stripe, so it reads as a toy at a glance instead of another porcelain slab.
+  board:     new THREE.MeshStandardMaterial({ color: 0xe2643f, roughness: 0.45 }),
+  boardStripe: new THREE.MeshStandardMaterial({ color: 0xf3e6c4, roughness: 0.5 }),
   // The tub's end skins are open half cylinders: one face is the outside of the
   // bath and the other the inside of the bowl, so both have to draw.
   porcelainSkin: new THREE.MeshStandardMaterial({ color: 0xf2f5f7, roughness: 0.22, side: THREE.DoubleSide }),
@@ -116,6 +120,12 @@ const MAT = {
   flameCore: new THREE.MeshStandardMaterial({ color: 0xfff2c0, emissive: 0xffd24a, emissiveIntensity: 3.2, roughness: 1, transparent: true, opacity: 0.8, depthWrite: false }),
   shade:     new THREE.MeshStandardMaterial({ color: 0xf6efdd, emissive: 0xffe6b0, emissiveIntensity: 0.5, roughness: 0.8 }),
   screen:    new THREE.MeshStandardMaterial({ color: 0x9fd4ff, emissive: 0x5aa8e0, emissiveIntensity: 1.1 }),
+
+  // The toy house by the front door. Warm brown shingle and a soft glow for
+  // the open bay, matching the city house's own palette without borrowing from
+  // it: the house level must not import cityBuildings.js.
+  toyRoof:   new THREE.MeshStandardMaterial({ color: 0x8f5a3a, roughness: 0.9 }),
+  toyGlow:   new THREE.MeshStandardMaterial({ color: 0xffe2b0, emissive: 0xffc477, emissiveIntensity: 1.3, roughness: 0.8 }),
 
   // Outside, seen through the windows.
   grass:     new THREE.MeshStandardMaterial({ color: 0x59a343, roughness: 1 }),
@@ -478,12 +488,10 @@ function tub(g, x, z, ry) {
     arc.castShadow = arc.receiveShadow = true;
     b.add(arc);
   }
-  // Floor and water, each a straight slab with a disc under each rounded end so
-  // the plan matches the walls all the way round.
+  // Floor and the rim. The bath is deliberately EMPTY — no water slab — so the
+  // car can drive down into it and treat the dish as a skate bowl.
   box(b, S, 0.5, 2 * (R - 0.1), 0, 0.3, 0, MAT.porcelain);
   for (const e of [-1, 1]) cyl(b, R - 0.1, R - 0.1, 0.5, e * S / 2, 0.3, 0, MAT.porcelain, 22);
-  box(b, S, 3.4, 2 * (R - 0.4), 0, 2.0, 0, MAT.tile, false);
-  for (const e of [-1, 1]) cyl(b, R - 0.4, R - 0.4, 3.4, e * S / 2, 2.0, 0, MAT.tile, 22, false);
   // The rim: a rail down each straight side and a rounded cap over each end,
   // both on the same line, so the two meet instead of stepping.
   for (const f of [-1, 1]) box(b, S + 0.4, 0.5, 0.9, 0, H, f * R, MAT.porcelain, false);
@@ -502,6 +510,60 @@ function tub(g, x, z, ry) {
   const spout = cyl(b, 0.26, 0.26, 1.6, -S / 2 - 2.5, H + 3.1, 0, MAT.chrome, 8);
   spout.rotation.z = -Math.PI / 2 - 0.5;
   g.add(b);
+  return b;
+}
+
+// The boogie board leaning on the west side of the bath. This is the VISIBLE
+// half of the bathroom ramp: the wedge surface in the bathroom block is authored
+// from the same run/rise/width, so the board you see is exactly the board you
+// drive up. Built as a `structure` group because it deliberately overlaps the
+// tub's footprint (it is propped against it), which the furniture audit would
+// otherwise read as two pieces of furniture intersecting.
+//
+// `run`/`rise` are the ramp's horizontal and vertical spans; the board's face is
+// the slope, so the car climbs the deck side and pops over the rim at the top.
+function boogieBoard(g, x, z, ry, run, rise, width, baseY) {
+  const b = new THREE.Group();
+  b.name = 'boogieBoard';
+  b.userData.structure = true;
+  b.position.set(x, baseY, z);
+  b.rotation.y = ry;
+  g.add(b);
+
+  const slope = Math.atan2(rise, run);
+  const tilt = new THREE.Group();
+  tilt.rotation.z = slope;             // local +X is up the board
+  tilt.position.y = rise / 2;          // the middle of the ramp
+  b.add(tilt);
+
+  // A capsule is the honest board outline: parallel sides with a rounded nose
+  // and tail. Laid along X and squashed in Y so it is a board, not a log.
+  const len = Math.hypot(run, rise) + 0.5;
+  const r = width / 2;
+  const deck = new THREE.Mesh(
+    new THREE.CapsuleGeometry(r, Math.max(0.2, len - width), 6, 22), MAT.board);
+  deck.rotation.z = Math.PI / 2;       // capsule axis -> X
+  deck.scale.x = 0.09;                 // thin through the board's normal
+  deck.castShadow = true;
+  deck.receiveShadow = true;
+  tilt.add(deck);
+
+  const half = r * 0.09;               // half the board's thickness
+  // Wax stripe down the deck: a cream band, the way a board is waxed.
+  const stripe = new THREE.Mesh(
+    new THREE.BoxGeometry(len - 1.6, 0.05, width * 0.26), MAT.boardStripe);
+  stripe.position.y = half + 0.02;
+  stripe.castShadow = true;
+  tilt.add(stripe);
+  // A leash plug near the nose — a chrome ring, so the nose reads as the top.
+  const plug = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.09, 6, 14), MAT.chrome);
+  plug.rotation.x = -Math.PI / 2;
+  plug.position.set(len / 2 - 1.1, half + 0.03, 0);
+  tilt.add(plug);
+  // A little skeg under the tail, tucked against the deck.
+  const skeg = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.45, 0.2), MAT.board);
+  skeg.position.set(-len / 2 + 0.9, -half - 0.12, 0);
+  tilt.add(skeg);
   return b;
 }
 
@@ -645,6 +707,111 @@ function orientalRug(g, x, z, w, d) {
     lozenge(r, b1 * 0.9, sx * (w / 2 - b1), 0.045, sz * (d / 2 - b1), edge(MAT.rugGold, 5));
   }
   return r;
+}
+
+// A scale model of the brown-roofed city house, built from the same front
+// elevation: the open bay with its warm ceiling, the green front door, the
+// window and the dormer. It is a toy on the living-room floor, not a second
+// house, so it is one `unit` group and every piece is decoration.
+function toyHouse(g, x, z, ry, S = 0.24) {
+  const t = unit(g, 'toyHouse', x, z);
+  t.rotation.y = ry;
+
+  const W = 28 * S, D = 12 * S, BODY = 3.4 * S;
+  const GX = 8.5 * S, GW2 = 6.4 * S, GH2 = 3.0 * S;
+  const gx0 = 5.3 * S, gx1 = 11.7 * S;
+  const K = 3.0 * 0.75 / 22;
+  const DOOR_W = 12 * K * S, DOOR_H = 22 * K * S;
+  const DOOR_X = (5.3 - 19 * K) * S;
+  const WIN_X = -8.6 * S;
+  const faceZ = D / 2;
+
+  // A low wooden plinth and a clipped lawn. The whole model is 7.5 x 3.6 on the
+  // floor, so it reads as a toy you could pick up rather than as furniture.
+  const baseH = 0.2, baseW = W + 0.8, baseD = D + 0.7;
+  box(t, baseW, baseH, baseD, 0, baseH / 2, 0, MAT.woodDark);
+  const y0 = baseH + 0.04;
+  box(t, baseW - 0.12, 0.04, baseD - 0.12, 0, baseH + 0.02, 0, MAT.grass);
+
+  // The shell is built around the open bay exactly like the city house: a west
+  // block, an east block, the rear block behind the bay, and a lintel over the
+  // mouth.
+  box(t, gx0 + W / 2, BODY, D, (gx0 - W / 2) / 2, y0 + BODY / 2, 0, MAT.plaster);
+  box(t, W / 2 - gx1, BODY, D, (gx1 + W / 2) / 2, y0 + BODY / 2, 0, MAT.plaster);
+  box(t, GW2, BODY, D / 2, GX, y0 + BODY / 2, -D / 4, MAT.plaster);
+  box(t, GW2, BODY - GH2, 0.12, GX, y0 + GH2 + (BODY - GH2) / 2, faceZ - 0.06, MAT.trim, false);
+
+  // The bay: concrete floor, a dark back wall, a workbench and a warm ceiling.
+  box(t, GW2 - 0.06, 0.03, D / 2 - 0.05, GX, y0 + 0.015, D / 4, MAT.concrete, false);
+  box(t, GW2 - 0.08, GH2 - 0.04, 0.03, GX, y0 + GH2 / 2, 0.02, MAT.woodDark, false);
+  box(t, GW2 * 0.55, 0.04, 0.16, GX - 0.08, y0 + 0.13, 0.22, MAT.wood, false);
+  box(t, GW2 - 0.08, 0.02, D / 2 - 0.1, GX, y0 + GH2 - 0.01, D / 4, MAT.toyGlow, false);
+  sph(t, 0.025, GX, y0 + GH2 - 0.035, D / 4, MAT.toyGlow, false);
+
+  // The green front door, its architrave, fanlight and step.
+  box(t, DOOR_W, DOOR_H, 0.03, DOOR_X, y0 + DOOR_H / 2, faceZ + 0.015, MAT.door, false);
+  for (let r = 0; r < 2; r++) {
+    for (let c = 0; c < 2; c++) {
+      box(t, DOOR_W * 0.3, DOOR_H * 0.26, 0.012,
+        DOOR_X + (c - 0.5) * DOOR_W * 0.4, y0 + DOOR_H * (0.25 + r * 0.38),
+        faceZ + 0.034, MAT.doorDark, false);
+    }
+  }
+  for (const s of [-1, 1]) {
+    box(t, 0.045, DOOR_H + 0.06, 0.025, DOOR_X + s * (DOOR_W / 2 + 0.025),
+      y0 + (DOOR_H + 0.06) / 2, faceZ + 0.012, MAT.trim, false);
+  }
+  box(t, DOOR_W + 0.1, 0.035, 0.025, DOOR_X, y0 + DOOR_H + 0.035, faceZ + 0.012, MAT.trim, false);
+  box(t, DOOR_W * 0.8, 0.045, 0.02, DOOR_X, y0 + DOOR_H + 0.072, faceZ + 0.026, MAT.glass, false);
+  for (let i = 0; i < 3; i++) {
+    box(t, 0.012, 0.045, 0.025, DOOR_X - DOOR_W * 0.3 + i * DOOR_W * 0.3,
+      y0 + DOOR_H + 0.072, faceZ + 0.035, MAT.trim, false);
+  }
+  box(t, DOOR_W + 0.12, 0.03, 0.12, DOOR_X, y0 + 0.015, faceZ + 0.07, MAT.concreteDark, false);
+  box(t, 0.04, 0.07, 0.03, DOOR_X + DOOR_W / 2 + 0.07, y0 + DOOR_H + 0.03, faceZ + 0.03, MAT.metalDark, false);
+  sph(t, 0.022, DOOR_X + DOOR_W / 2 + 0.07, y0 + DOOR_H + 0.005, faceZ + 0.035, MAT.bulb, false);
+
+  // The one window on the west end, with a white surround and mullions.
+  box(t, 1.7 * S + 0.06, 1.7 * S + 0.06, 0.02, WIN_X, y0 + 1.9 * S, faceZ + 0.006, MAT.trim, false);
+  box(t, 1.7 * S, 1.7 * S, 0.03, WIN_X, y0 + 1.9 * S, faceZ + 0.02, MAT.screen, false);
+  box(t, 0.015, 1.7 * S, 0.025, WIN_X, y0 + 1.9 * S, faceZ + 0.038, MAT.trim, false);
+  box(t, 1.7 * S, 0.015, 0.025, WIN_X, y0 + 1.9 * S, faceZ + 0.038, MAT.trim, false);
+  box(t, 1.7 * S + 0.12, 0.035, 0.07, WIN_X, y0 + 1.9 * S - 0.88 * S, faceZ + 0.02, MAT.trim, false);
+
+  // The warm-brown gable roof, ridge along local X and eaves over the front.
+  const bodyTop = y0 + BODY;
+  const rise = 2.3 * S, halfD = D / 2 + 0.08;
+  const angle = Math.atan2(rise, halfD), slope = Math.hypot(halfD, rise);
+  for (const s of [-1, 1]) {
+    const slab = box(t, W + 0.16, 0.045, slope, 0, bodyTop + rise / 2,
+      s * halfD / 2, MAT.toyRoof, false);
+    slab.rotation.x = s * angle;
+  }
+  box(t, W + 0.18, 0.04, 0.08, 0, bodyTop + rise + 0.02, 0, MAT.toyRoof, false);
+
+  // The dormer over the door, at the same place relative to the leaf.
+  const DORMER_W = (1.227 + 2.6 * K) * S, DORMER_H = 12 * K * S;
+  const dormerZ = faceZ - 1.5 * S;
+  box(t, DORMER_W, DORMER_H, 2.6 * S, DOOR_X, bodyTop + DORMER_H / 2, dormerZ, MAT.plaster, false);
+  box(t, DORMER_W * 0.6, DORMER_H * 0.7, 0.02, DOOR_X, bodyTop + DORMER_H / 2,
+    dormerZ + 1.3 * S, MAT.screen, false);
+  const dRise = 1.0 * S, dHalf = 0.34;
+  for (const s of [-1, 1]) {
+    const slab = box(t, DORMER_W + 0.08, 0.03, Math.hypot(dHalf, dRise),
+      DOOR_X, bodyTop + DORMER_H + dRise / 2, dormerZ + s * dHalf / 2, MAT.toyRoof, false);
+    slab.rotation.x = s * Math.atan2(dRise, dHalf);
+  }
+
+  // The brick chimney on the west flank.
+  const chH = 5.8 * S, chX = (-W / 2 + 0.8 * S);
+  box(t, 0.9 * S, chH, 0.9 * S, chX, y0 + chH / 2, -2.0 * S, MAT.woodDark, false);
+  box(t, 1.1 * S, 0.25 * S, 1.1 * S, chX, y0 + chH + 0.12 * S, -2.0 * S, MAT.concreteDark, false);
+
+  // A concrete drive across the plinth to the bay, and a path to the door.
+  box(t, GW2, 0.02, 0.3, GX, y0 + 0.01, faceZ + 0.15, MAT.concrete, false);
+  box(t, 2.4 * S, 0.02, 0.42, DOOR_X, y0 + 0.01, faceZ + 0.21, MAT.concreteDark, false);
+
+  return t;
 }
 
 function pottedPlant(g, x, z, s = 1) {
@@ -1741,13 +1908,16 @@ export async function addHouse(parent, opts = {}) {
       for (let i = 0; i < 5; i++) box(pi, 0.5, 0.4, 3, -5 + i * 2.4, 5.6, -8, MAT.trim, false);
       jiggle(pi, 5);
     }
-    const pp1 = pottedPlant(g, -80, 38, 1.3);
+    // A toy model of the brown-roofed house, on the open floor south of the
+    // fireplace. Its front faces east, the same way the house itself faces,
+    // and it is clear of the door, the tables and the cat's spots.
+    toyHouse(g, -83, -12, Math.PI / 2);
+    const pp1 = pottedPlant(g, -69, 40.5, 1.3);
     jiggle(pp1, 1.6);
     const pp2 = pottedPlant(g, -8, 0, 1.1);
     jiggle(pp2, 1.5);
     const pp3 = pottedPlant(g, 0, 40, 1.0);
     jiggle(pp3, 1.4);
-    tableLamp(g, lights, -84, 4, -10, 18);
   }
 
   await phase(0.76, 'the bedrooms');
@@ -1962,8 +2132,12 @@ export async function addHouse(parent, opts = {}) {
     } catch (e) {}
 
     // The magnet-tile parking structure. Every tile is a linked scatter piece.
+    // Kept in the south-east corner: the fixed Hot Wheels loop camera looks east
+    // from the west wall at z=-69, and the old spot (-33,-66) sat right in its
+    // line of sight. From here it is behind and off to one side of the loops,
+    // never across the loops themselves.
     try {
-      const mag = unit(g, 'play_magnettiles', -33, -66);
+      const mag = unit(g, 'play_magnettiles', -4, -80);
       const mc = makeMagnetCity();
       mag.add(mc.group);
       const ms = [];
@@ -1996,7 +2170,7 @@ export async function addHouse(parent, opts = {}) {
       const jb = makeJackInTheBox({ x: JX, z: JZ });
       const jackUnit = unit(g, 'play_jackinthebox', JX, JZ);
       jackUnit.add(jb.group);
-      addKnockable(jackUnit, 4.2, {
+      addKnockable(jackUnit, 2.6, {
         mode: 'wobble', wobbleAmp: 0.16, wobbleFreq: 15, wobbleDamping: 4.5,
       });
       jackInTheBox = jb;
@@ -2011,27 +2185,53 @@ export async function addHouse(parent, opts = {}) {
     const r = ROOMS.bathroom;
     // A proper drive-in bath: big enough to sit a car in (16 x 8), hard against
     // the east wall (room.x1 = 90) so the whole west half of the room stays a
-    // lane. The tub's vertical porcelain is a ring of colliders below; its
-    // driveable shape — the tiled deck, the dish and the surfboard ramp that
-    // carries you up to the rim — is the surface list at the bottom of this block.
+    // lane. The porcelain is a ring of deck-height colliders below; the
+    // driveable shape — the tiled deck, the dish and the boogie board that
+    // carries you up to the rim — is the surface list at the bottom of the block.
+    const TILE_Y = 0.5;
     const TUB = { x: 85.5, z: 28, R: 4, S: 8, H: 5.5 };
     tub(g, TUB.x, TUB.z, Math.PI / 2);
-    // A ring of colliders around the rim with a gap on the WEST face, aligned
-    // with the surfboard. House collision is 2D — a heightfield has no vertical
-    // (see house/surfaces.js) — so these ARE the tub's walls: the car can only
-    // get into the bath where the ramp meets the rim, which is the whole point.
-    const gap = 3.5;                                        // the ramp is 7 wide
-    const tubCollider = (cx, cz, hw, hd) =>
-      C.push({ x: cx, z: cz, halfW: hw, halfD: hd, h: TUB.H, noRoof: true });
-    tubCollider(TUB.x, TUB.z + TUB.R, TUB.R, 1);                    // north cap
-    tubCollider(TUB.x, TUB.z + TUB.R + 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
-    tubCollider(TUB.x, TUB.z - TUB.R, TUB.R, 1);                    // south cap
-    tubCollider(TUB.x, TUB.z - TUB.R - 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
-    // The surfboard's two rails, running west from the rim, so the only way onto
-    // it is up its foot. These also close the last of the west face either side
-    // of the ramp gap.
-    tubCollider(79.25, TUB.z - gap, 4.25, 0.3);
-    tubCollider(79.25, TUB.z + gap, 4.25, 0.3);
+
+    // The boogie board leaning on the west rim. The board's face and the wedge
+    // surface at the bottom of this block are authored from these SAME numbers,
+    // so the thing you see is the ramp you drive up (exactly like the park's
+    // slide ladder). Climb it from the deck and drop over the rim into the dish.
+    // The boogie board leaning on the OUTER face of the west wall: full height
+    // again (tip just under the rim), but its nose stops at the porcelain
+    // instead of hanging over the open bath. Its slope is the drive wedge below,
+    // so the board you see is the ramp you climb; the wedge carries on a little
+    // further so the surface meets the dish at the rim.
+    const RAMP_RUN = 5.3;
+    const RAMP_W = 4.4;
+    const RIM_Y = TUB.H - 0.3;
+    const BOARD_RUN = 4.9;
+    boogieBoard(g, 79.05, TUB.z, 0, BOARD_RUN, BOARD_RUN, RAMP_W, TILE_Y);
+
+    // Colliders around the bath. House collision is 2D — a heightfield has no
+    // vertical (see house/surfaces.js) — so these ARE the porcelain at deck
+    // level: a car outside cannot drive through the side of the bath.
+    //
+    // `top: 0.6` on the end caps releases them the instant the car is on the
+    // bath's own floor (0.6), while a car out on the 0.5 deck is still blocked.
+    // The car's collision circle is 2.2 across and the bath is only 3.6 from
+    // centre to wall, so with a solid wall the car could never drive up past the
+    // middle third of the dish. Once it is on the dish the bowl's own rim does
+    // the containing (surfaces.js containInBowl) and the car can use the whole
+    // bowl, right up to the lip where it launches.
+    const tubWall = (cx, cz, hw, hd, top = 0.6) => C.push({
+      x: cx, z: cz, halfW: hw, halfD: hd, h: TUB.H, top, noRoof: true,
+    });
+    tubWall(TUB.x, TUB.z + TUB.R, TUB.R, 1);                    // north cap
+    tubWall(TUB.x, TUB.z + TUB.R + 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
+    tubWall(82.3, TUB.z + 5.5, 1.0, 0.9);                       // ...west shoulder of the arc
+    tubWall(TUB.x, TUB.z - TUB.R, TUB.R, 1);                    // south cap
+    tubWall(TUB.x, TUB.z - TUB.R - 1.5, TUB.R - 1.5, 0.8);      // ...its rounded end
+    tubWall(82.3, TUB.z - 5.5, 1.0, 0.9);                       // ...west shoulder of the arc
+    // The west face either side of the board is closed by the end caps above;
+    // the strips between them and the board are only 0.8 wide, far too narrow
+    // for the car to slip through, so the board needs no side rails. That keeps
+    // the whole 4.4-wide board (and its approach) free to steer on — a pair of
+    // rails at the car's exact width left zero margin to drive up it.
     // The toilet is on the east wall but turned to FACE INTO the room, its
     // cistern against the wall (it used to sit side-on, facing along the wall).
     toilet(g, 85.8, -13, -Math.PI / 2);
@@ -2048,7 +2248,6 @@ export async function addHouse(parent, opts = {}) {
     // The tiled surround, raised a low kerb so it reads as a deck: three flat
     // boxes, plus the driveable surfaces that match them. Keyed off house
     // bounds so the deck only exists where the car can actually reach it.
-    const TILE_Y = 0.5;
     for (const [cx, cz, w, d] of [[70.5, 28, 21, 36], [85.5, 41, 9, 10], [85.5, 15, 9, 10]]) {
       box(g, w, TILE_Y, d, cx, TILE_Y / 2, cz, MAT.tile).userData.structure = true;
     }
@@ -2059,14 +2258,26 @@ export async function addHouse(parent, opts = {}) {
           pad(70.5, 28, 21, 36, TILE_Y),           // deck west of the tub
           pad(85.5, 41, 9, 10, TILE_Y),            // deck north of the tub
           pad(85.5, 15, 9, 10, TILE_Y),            // deck south of the tub
-          // The dish inside the tub: rim level with the porcelain, floor just
-          // above the bath's own base, steep enough to climb back out.
-          bowl(TUB.x, TUB.z, TUB.R - 0.4, TUB.S / 2 + TUB.R - 0.4, TUB.H - 0.3, TUB.H - 0.9, { steep: 1.0 }),
-          // The surfboard: a ramp leaning on the west rim, climbing from the
-          // deck to the rim. Its top just reaches the dish so there is no seam,
-          // but it does not run far over the dish — otherwise driving back out
-          // would pop the car up onto the board's top edge.
-          wedge(79.8, TUB.z, 0, 4.8, 7, (TUB.H - 0.3) - TILE_Y, TILE_Y)
+          // The dish inside the bath: rim level with the porcelain, floor just
+          // above the bath's own base. `launch` makes it a skate bowl — carry
+          // speed up the wall and the car pops out over the lip, then lands on
+          // the deck (see bowlLaunchAt/containInBowl in surfaces.js).
+          bowl(TUB.x, TUB.z, TUB.R - 0.4, TUB.S / 2 + TUB.R - 0.4, RIM_Y, TUB.H - 0.9, {
+            steep: 1.6,
+            launch: 0.5, launchMinSpeed: 4.0, launchFrom: 0.95,
+            launchMinY: 5.0, launchMax: 7.5,
+            // The board's footprint is an exit from the bowl (slow = drive down
+            // the board, fast = launch over the lip).
+            exit: {
+              x0: 77.0, x1: 82.6,
+              z0: TUB.z - RAMP_W / 2, z1: TUB.z + RAMP_W / 2,
+            },
+          }),
+          // The boogie board's face: the same 45° line the mesh above was built
+          // on. It runs from the deck up to the west rim (the board stops on the
+          // outside; the surface continues to the dish at rim height so there is
+          // no seam when the car rolls over the lip).
+          wedge(79.25, TUB.z, 0, RAMP_RUN, RAMP_W, RAMP_RUN, TILE_Y)
         );
       }
     } catch (e) {}
@@ -2228,10 +2439,55 @@ export async function addHouse(parent, opts = {}) {
   const fadeExempt = new Set();
   if (playTrain) playTrain.group.traverse((o) => { if (o.isMesh) fadeExempt.add(o); });
   if (hotwheels) hotwheels.group.traverse((o) => { if (o.isMesh) fadeExempt.add(o); });
+  // The bathroom is a solid, self-contained room. The camera is held inside its
+  // walls (main.js), so nothing in here ever needs to go see-through to show the
+  // car — and the bath the car is driving around in must never turn ghost around
+  // it. Exempt everything in the room's footprint: its walls, its door, the tub,
+  // the board and the rest of the fixtures.
+  //
+  // Positions are accumulated down the graph rather than read off world
+  // matrices: the house tests build this same function against a lightweight
+  // THREE stub with no updateMatrixWorld. A group whose pivot is in the room
+  // takes its whole subtree with it, so a rotated fixture (the tub is one) is
+  // covered without transforming every child.
+  {
+    const br = ROOMS.bathroom;
+    const inRoom = (x, z) => x > br.x0 - 1.2 && x < br.x1 + 1.2 &&
+      z > br.z0 - 1.2 && z < br.z1 + 1.2;
+    const exemptSubtree = (node) => {
+      if (node.isMesh) fadeExempt.add(node);
+      for (const c of node.children) exemptSubtree(c);
+    };
+    const walk = (node, ox, oz) => {
+      const x = ox + node.position.x;
+      const z = oz + node.position.z;
+      if (inRoom(x, z)) { exemptSubtree(node); return; }
+      for (const c of node.children) walk(c, x, z);
+    };
+    walk(g, 0, 0);
+  }
   g.traverse((o) => {
     if (o.isMesh && !fadeExempt.has(o)) o.userData.houseOccluder = true;
   });
   if (typeof window !== 'undefined') window.__HOUSE_SURFACES = window.__HOUSE_SURFACES || [];
+
+  // Where every reflecting pane sits, as world (x, z). The reflection is a
+  // CUBE map — six full re-draws of the house — so main.js re-bakes it only
+  // when the car is close enough to actually see a mirror, instead of every
+  // half second from anywhere in the building. Positions are accumulated down
+  // the graph for the same reason the occluder walk above does it (the house
+  // tests build this against a stub with no matrix updates), which is exact
+  // enough for a range check: rotations never move a pane more than a metre.
+  const mirrorSpots = [];
+  {
+    const walk = (node, ox, oz) => {
+      const x = ox + node.position.x;
+      const z = oz + node.position.z;
+      if (node.isMesh && node.material === MAT.mirror) mirrorSpots.push({ x, z });
+      for (const c of node.children) walk(c, x, z);
+    };
+    walk(g, 0, 0);
+  }
 
   return {
     group: g,
@@ -2270,6 +2526,9 @@ export async function addHouse(parent, opts = {}) {
     // The bathroom's push door; main.js needs the car's position each frame so
     // it knows which way the leaf is being pushed.
     bathroomDoor,
+    // World (x, z) of every mirror pane, so main.js can skip the cube-map
+    // reflection whenever the car is nowhere near one.
+    mirrorSpots,
     surfaces: (typeof window !== 'undefined' && window.__HOUSE_SURFACES) || [],
   };
 }

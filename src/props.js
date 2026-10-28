@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable, setKnockableWorldGroup } from './physics.js?v=1800000000002';
+import { addKnockable, setKnockableWorldGroup } from './physics.js?v=1800000000006';
 import {
   SHELL_X, SHELL_Z, SHELL_GRASS, SHELL_RIBS, SHELL_SPAN, SHELL_SQUASH,
   SHELL_RIBIAMP, SHELL_THICK, T_GRASS_HOLE, clamFanOutline, PARK_CLAM,
@@ -2002,11 +2002,12 @@ export function addProps(scene) {
 
   // The lamp-post rows. The town rows run along x = +/-17 and z = +/-17, but
   // they no longer relate to the two suburban houses: those moved out to the
-  // east outer-belt cul-de-sac (see cityBuildings.js LAYOUT), where they front
-  // a north-south street. That street gets its own short verge row below.
+  // north-west outer-belt residential loop (see cityBuildings.js LAYOUT), where
+  // they front a curving north-south street. That loop gets its own verge row
+  // below.
   const HOUSE_FRONTAGES = [
-    { name: 'houseStandard open bay', z0: 43.7, z1: 51.1 },      // brown roof, the way in
-    { name: 'houseGarage roller door', z0: 72.25, z1: 81.25 },    // grey roof, now shut
+    { name: 'houseStandard open bay', z0: 157.8, z1: 165.2 },      // brown roof, the way in
+    { name: 'houseGarage roller door', z0: 211.5, z1: 219.5 },     // grey roof, now shut
   ];
   const onAFrontage = (z) => HOUSE_FRONTAGES.some((f) => z > f.z0 && z < f.z1);
 
@@ -2019,12 +2020,12 @@ export function addProps(scene) {
     makeLampPost(scene, 17, z);
     makeLampPost(scene, -17, z);
   }
-  // The cul-de-sac row: a line of posts down the grass verge between the two
-  // houses' front faces (x ~108.5) and the street kerb (x 112). The row SKIPS
-  // each garage mouth, because a streetlight planted in the driving line of a
-  // garage reads as a mistake even though a lamp post is knockable rather than
-  // a collider, and it skips any post that would land on top of one of the
-  // door lamps below. The frontage bands are declared here rather than
+  // The residential row: a line of posts down the grass verge between the two
+  // houses' front faces (x = -124) and the curving street kerb (x = -122). The
+  // row SKIPS each garage mouth, because a streetlight planted in the driving
+  // line of a garage reads as a mistake even though a lamp post is knockable
+  // rather than a collider, and it skips any post that would land on top of one
+  // of the door lamps below. The frontage bands are declared here rather than
   // imported, because props.js knows nothing about buildings; they are copied
   // from the LAYOUT entries in cityBuildings.js, and suburbanGarages.test.mjs
   // re-derives them, so a house that moves cannot quietly leave the light
@@ -2032,18 +2033,12 @@ export function addProps(scene) {
   //
   // Two posts by the front doors, so a skipped frontage is still lit. Each z is
   // the door's own centreline in world space (the front doors sit off the
-  // garage mouths), and x = 110.5 is mid-verge, clear of both aprons.
-  //
-  // The brown house's door moved when the house was made bigger - it is 1.6
-  // wide now and stands 13 clear of the bay, scaled off the house interior's
-  // own front door - and it moved again when the door was made a normal leaf
-  // beside the garage instead of a barn opening over it, so its lamp moved
-  // with it, to 53.06.
-  const DOOR_LAMPS = [53.06, 67.25];
-  for (let z = 44; z <= 84; z += 6) {
-    if (!onAFrontage(z) && !DOOR_LAMPS.some((d) => Math.abs(z - d) < 1.5)) makeLampPost(scene, 110.5, z);
+  // garage mouths), and x = -123 is mid-verge, clear of both aprons.
+  const DOOR_LAMPS = [166.64, 200];
+  for (let z = 158; z <= 244; z += 6) {
+    if (!onAFrontage(z) && !DOOR_LAMPS.some((d) => Math.abs(z - d) < 1.5)) makeLampPost(scene, -123, z);
   }
-  for (const z of DOOR_LAMPS) makeLampPost(scene, 110.5, z);
+  for (const z of DOOR_LAMPS) makeLampPost(scene, -123, z);
 
   // Fire hydrants, all on grass verges. Every one is checked against the ROADS
   // table in cityRoads.js by the city audit, so none of them stands in tarmac.

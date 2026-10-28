@@ -5,5 +5,18 @@
       "C:/xampp/htdocs/rampy/**": "allow",
       "C:/Users/Bootcamp Windows 10/AppData/Local/Temp/opencode/**": "allow"
     }
+  },
+  "providers": {
+    "your-custom-provider": {
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://your-custom-endpoint.com/v1"
+      },
+      "models": {
+        "your-model-name": {
+          "modelID": "actual-upstream-model-id"
+        }
+      }
+    }
   }
 }

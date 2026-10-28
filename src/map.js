@@ -7,10 +7,11 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // runs whichever copy this unstamped URL happens to have cached. That is how the
 // brown bay kept refusing to send you into the house: the trigger was still the
 // grey garage's, from before the roles were swapped, and that door is now shut.
-import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000004';
+import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000164';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
-import { addCityOuter } from './cityOuter.js';
+import { addCityOuter, buildGehryMuseum } from './cityOuter.js?v=1800000000161';
 import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
+import { buildSoccerField } from './soccer.js?v=1800000000162';
 
 // ===== Shared map materials =====
 // The tarmac material now lives in cityRoads.js with the rest of the network.
@@ -462,11 +463,16 @@ export function buildMap(scene) {
   addRoads(scene);
   const { ramps } = addRamps(scene);
   addBuildings(scene, buildingColliders);
+  // The enlarged soccer pitch in the clear belt east of the railway loop. Its
+  // goal frames join the collider list; main.js drives the ball.
+  const soccer = buildSoccerField(scene, buildingColliders);
   // The outer belt: the boundary wall (whose colliders join the shared list so
   // it physically stops the car), the empty parking lots and the nature area.
   addCityOuter(scene, buildingColliders);
+  const museum = buildGehryMuseum(buildingColliders);
+  scene.add(museum);
   // A ribbon of tarmac from every front door to the nearest street, so all
   // fourteen buildings are genuinely drivable-up-to.
   const { driveways } = buildDriveways(scene, cityDoorTargets());
-  return { buildingColliders, ramps, driveways };
+  return { buildingColliders, ramps, driveways, soccer, museum };
 }

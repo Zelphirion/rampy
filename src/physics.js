@@ -112,13 +112,35 @@ export function addKnockable(group, radius, opts = {}) {
     tireStyle: 'rim',                 // chosen per knock: 'rim' | 'side'
     sideChance: opts.sideChance ?? 0,
     dropDelay: opts.dropDelay ?? 0,
+    // Chance that a dropped tire skids away on landing even when the fall was
+    // too short to do it on its own (the hard-landing test below). The soccer
+    // score pile is a single column, so its tires have to scatter outward or
+    // they all come to rest in one heap.
+    dropSkid: opts.dropSkid ?? 0,
     groundY: opts.groundY ?? 0,       // flat-rest centre height at the home spot
+    // Optional (x, z) -> ground height, for props on ground that is not flat:
+    // a tire knocked onto one of the outer belt's hills has to rest on the
+    // slope instead of sinking into it. When absent the constant `groundY`
+    // above is the floor, which is right for every prop on a level surface.
+    groundAt: opts.groundAt || null,
     vy: 0,                            // vertical speed while 'dropping'
     supporters: opts.supporters || null, // knockables this stacked tire rests on
     // Optional per-knockable predicate(pos: Vector3) -> bool: when true the
     // prop is considered off the playable world and should drop away to
     // invisibility. Useful for ramp-world items that can be pushed off cliffs.
     isOffEdge: opts.isOffEdge || null,
+    // How far a long prop STRETCHES AWAY from its pivot once it is down: a
+    // fallen ladder lies its whole length out from the base it tipped over. The
+    // shove test measures to that lying axis instead of the pivot, or the far
+    // half of the prop is a ghost you can drive straight through.
+    lyingReach: opts.lyingReach || 0,
+    // Optional (point, carRadius, k, worldPos) -> null | { dx, dz }: the prop's
+    // own hit shape, for props that are not a solid disc. The museum's ladders
+    // are open frames, so they answer for the leg that was actually touched and
+    // say nothing when the car has driven through the gap between their legs.
+    // `dx`/`dz` point from the car's sample point to the touched spot, which is
+    // the direction the prop is pushed.
+    hitTest: opts.hitTest || null,
     offscreen: false,
     removed: false,
     dropSpeed: opts.dropSpeed || 60,      // units per second downward when falling off
@@ -181,9 +203,12 @@ export function updateKnockables(delta) {
       k.vy -= 26 * delta;
       k.group.position.y += k.vy * delta;
       k.group.rotation.y += delta * 1.6;
-      if (k.group.position.y <= k.groundY) {
-        k.group.position.y = k.groundY;
-        if (k.vy < -9 && Math.random() < 0.55) {
+      const floor = k.groundAt
+        ? k.groundAt(k.group.position.x, k.group.position.z)
+        : k.groundY;
+      if (k.group.position.y <= floor) {
+        k.group.position.y = floor;
+        if ((k.vy < -9 && Math.random() < 0.55) || Math.random() < k.dropSkid) {
           const dir = k.pushDir.lengthSq() > 1e-4 ? k.pushDir : k.perp;
           k.shoveVx = dir.x * k.shovePower * 1.5;
           k.shoveVz = dir.z * k.shovePower * 1.5;
@@ -250,6 +275,12 @@ export function updateKnockables(delta) {
         k.offscreen = true;
         continue;
       }
+      // A tire rolling across ground that is not flat follows the surface: it
+      // rides up a hill instead of running into its side.
+      if (k.mode === 'tire' && k.groundAt) {
+        k.group.position.y = k.groundAt(k.group.position.x, k.group.position.z)
+          + (k.tireStyle === 'side' ? 0 : k.rimLift);
+      }
       if ((Math.hypot(k.rollVx, k.rollVz) < 0.08 ||
           (k.mode === 'tire' && k.rollT >= k.rollDuration)) && k.mode === 'tire') {
         k.state = 'rocking';
@@ -267,6 +298,10 @@ export function updateKnockables(delta) {
       if (k.mode === 'tire') {
         k.group.position.x += k.rollVx * delta;
         k.group.position.z += k.rollVz * delta;
+        if (k.groundAt) {
+          k.group.position.y = k.groundAt(k.group.position.x, k.group.position.z)
+            + (k.tireStyle === 'side' ? 0 : k.rimLift);
+        }
         const decay = Math.exp(-k.rollDecay * delta);
         k.rollVx *= decay;
         k.rollVz *= decay;
@@ -293,6 +328,8 @@ export function updateKnockables(delta) {
       k.group.position.x += k.shoveVx * delta;
       k.group.position.z += k.shoveVz * delta;
       k.group.rotation.y += k.shoveSpin * delta;
+      // Lying flat on ground that is not flat: it slides along the surface.
+      if (k.groundAt) k.group.position.y = k.groundAt(k.group.position.x, k.group.position.z);
       const shoveDecay = Math.pow(SHOVE_DECAY, delta * 60);
       k.shoveVx *= shoveDecay;
       k.shoveVz *= shoveDecay;
@@ -325,9 +362,13 @@ export function updateKnockables(delta) {
     } else if (k.mode === 'tire') {
       // Pop off the stack: slide away from the hit in a low arc. Rim-style
       // tires tip onto their tread mid-flight (the centre ends ring-radius
-      // higher, ready to roll); side-style tires stay flat and yaw-spin all
-      // the way down. Both land at the tire's own flat-ground height.
-      const landY = k.groundY + (k.tireStyle === 'side' ? 0 : k.rimLift);
+      // higher, ready to roll); side-style tires stay flat and yaw-spin all the
+      // way down. Both land at the tire's own flat-ground height — or, on
+      // ground that is not flat, on the surface where it comes down.
+      const landX = k.basePos.x + k.pushDir.x * k.slideDistance;
+      const landZ = k.basePos.z + k.pushDir.z * k.slideDistance;
+      const floor = k.groundAt ? k.groundAt(landX, landZ) : k.groundY;
+      const landY = floor + (k.tireStyle === 'side' ? 0 : k.rimLift);
       k.group.position.copy(k.basePos)
         .addScaledVector(k.pushDir, k.slideDistance * e);
       k.group.position.y = k.basePos.y + (landY - k.basePos.y) * e + Math.sin(k.t * Math.PI) * k.flyHeight;
@@ -509,7 +550,12 @@ function satOverlap(cx, cy, cz, axes, hA, jc, jh) {
 function startShove(k, d, speedFactor = 1) {
   k.shoveVx = d.x * k.shovePower * speedFactor;
   k.shoveVz = d.z * k.shovePower * speedFactor;
-  k.shoveSpin = (Math.random() < 0.5 ? 1 : -1) * k.shoveSpinPower;
+  // A long prop (a fallen ladder) keeps its hit axis in `pushDir`, so it slides
+  // without yawing: spinning the body would turn it out of its own hit line and
+  // the far half would stop registering hits again.
+  k.shoveSpin = k.lyingReach > 0.5
+    ? 0
+    : (Math.random() < 0.5 ? 1 : -1) * k.shoveSpinPower;
   k.state = 'sliding';
 }
 
@@ -646,15 +692,38 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0
     k.group.getWorldPosition(_wp);
     let dx = _wp.x - point.x;
     let dz = _wp.z - point.z;
-    if (worldSizeX) {
-      const half = worldSizeX / 2;
-      dx = ((dx + half) % worldSizeX + worldSizeX) % worldSizeX - half;
+    if (k.hitTest) {
+      // The prop owns its own hit shape: the museum's ladders are frames with a
+      // wide gap between their legs, so a disc round the pivot would knock them
+      // over from yards away. It answers with the offset from the car to the
+      // part that was actually touched, or null for a clean miss.
+      const hit = k.hitTest(point, radius, k, _wp);
+      if (!hit) continue;
+      dx = hit.dx;
+      dz = hit.dz;
+    } else {
+      if (worldSizeX) {
+        const half = worldSizeX / 2;
+        dx = ((dx + half) % worldSizeX + worldSizeX) % worldSizeX - half;
+      }
+      if (worldSizeZ) {
+        const half = worldSizeZ / 2;
+        dz = ((dz + half) % worldSizeZ + worldSizeZ) % worldSizeZ - half;
+      }
+      // A long prop that is DOWN lies stretched out along the direction it fell,
+      // so measure to that lying axis rather than to the pivot at its foot. The
+      // body runs from the pivot out along `pushDir`, so the closest point on it
+      // is `pushDir` times how far the car is up that axis — clamped to the prop's
+      // own length. (Getting this sign wrong makes the far half of the prop a
+      // ghost you drive straight through.)
+      if (lying && k.lyingReach > 0.5) {
+        const along = -(dx * k.pushDir.x + dz * k.pushDir.z);   // (car - pivot) · pushDir
+        const t = Math.max(0, Math.min(k.lyingReach, along));
+        dx += k.pushDir.x * t;
+        dz += k.pushDir.z * t;
+      }
+      if (Math.hypot(dx, dz) > radius + k.radius) continue;
     }
-    if (worldSizeZ) {
-      const half = worldSizeZ / 2;
-      dz = ((dz + half) % worldSizeZ + worldSizeZ) % worldSizeZ - half;
-    }
-    if (Math.hypot(dx, dz) > radius + k.radius) continue;
 
     let d = new THREE.Vector3(dx, 0, dz);
     if (d.lengthSq() < 1e-4) d.set(1, 0, 0);
@@ -707,6 +776,12 @@ export function snapKnockables(mode = null) {
       state: k.state,
       cd: +k.shoveCd.toFixed(2),
       inGroup: !!k._inWorldGroup,
+      // For long props: which way the body lies once it is down, and how far it
+      // reaches from its pivot. A hit test that measures to the pivot instead of
+      // the body can be checked against these.
+      dirX: +k.pushDir.x.toFixed(3),
+      dirZ: +k.pushDir.z.toFixed(3),
+      reach: k.lyingReach,
     }));
 }
 

@@ -24,30 +24,36 @@
 //   - `build` a zero-arg factory returning a fresh Object3D every call
 //   - `x`, `z` where the thing lives in the world, for "view in context"
 //
+// An object may also carry `view: { x, z, ry }`, which overrides where "view in
+// context" parks the car and which way it faces. Use it for things whose real
+// footprint is too big for the default spot 9 m south of (x, z) — the museum,
+// for instance, where that default put the car inside the walls.
+//
 // Categories are `{ id, name, blurb, objects }`. The ids are also what goes into
 // the URL as ?cat=, so they must stay stable.
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildCityBuilding, frontYard, kerbMailbox, newspaperRack } from '../cityBuildings.js';
 import { buildTree, buildLampPost, buildTrafficLight, buildFireHydrant, buildBench, buildParkingMeter, buildPhoneBooth, makeClamShell } from '../props.js?v=1800000000014';
+import { buildGehryMuseum } from '../cityOuter.js?v=1800000000117';
+import { buildMuseumWorld } from '../levels/museum/index.js?v=1800000000168';
 import { createFiretruck, createTacoTruck, createMonsterTruck, createSteamroller, createSchoolBus, createIndyCar } from '../cars.js?v=1799999999999';
-import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';
-import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1800000000003';
+import { createVortex, createWheelOfDeath, buildHammers, createTrebuchet, createRollingBoulder } from '../levels/rampworld/index.js';import { makePalm, makeRock, makeBeachShell, makeCampfire, BEACH_SHELL } from '../levels/beach/index.js?v=1800000000003';
 import { buildBoat, BOAT_SPOT } from '../levels/beach/boat.js?v=1791038847704';
 import { makeCrab, makeMermaid } from '../levels/beach/critters.js?v=1800000000003';
 import { buildCoralHead } from '../levels/beach/reefs.js?v=1800000000001';
 import { createGulls } from '../levels/beach/seagulls.js?v=1800000000001';
 import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
-import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore } from '../levels/space/index.js?v=1800000000015';
-import { BARN, SILO, WATER_TOWER, MILL, FARM_HOUSE } from '../levels/cornfield/layout.js?v=1800000000012';
+import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore, buildSpaceRoadLift, buildSpaceHangarArm } from '../levels/space/index.js?v=1800000000046';
+import { BARN, SILO, WATER_TOWER, MILL, FARM_HOUSE } from '../levels/cornfield/layout.js?v=1800000000046';
 import {
   makeBarnModel, makeSiloModel, makePumpkinModel, makeCornStalkModel, makePortalTree,
   makeAppleTreeModel, makeBarrelModel, makeFarmallTractor, makeFarmTruckModel,
   makeWaterTowerModel, makeMillModel, makeFarmhouseModel,
-} from '../levels/cornfield/index.js?v=1800000000019';
+} from '../levels/cornfield/index.js?v=1800000000045';
 import {
   makeCivicLoungeChair, makeInfoKiosk, makeVendingPod, makeCleanerDrone,
-  makeSecurityBarrier, makeEyeTerminal, makeBoostPad,
+  makeSecurityBarrier, makeEyeTerminal,
   makeSoilBed, makeBioDome, makeHangingVine, makeSprinklerVent,
   makePollinationPod, makeSunLampArm, makeSlickPatch,
   makeGratedBay, makePlasmaConduit, makeSteamGeyser, makeLiftPlatform,
@@ -55,14 +61,14 @@ import {
   makeConveyorBelt, makeGroundConveyor, makeCargoContainer, makeTrashCube, makeCompactor,
   makeTractorPad, makeVentGrate, makeRescueCrane, makeDeconAirlock, makeDeconBay, makeHazardPanel,
   makeLoaderBot,
-} from '../levels/space/sectors.js?v=1799900000000';
+} from '../levels/space/sectors.js?v=1800000000046';
 import {
   MAT, bed, sofa, table, chair, wardrobe, counterRun, tub, toilet, sinkUnit,
   fridge, rug, ceilingLight, tableLamp,
   buildFireplace, buildBookcase, buildSideboard, buildFrontDoor,
   buildCoatRack, buildWorkbench, buildTyreStack, buildWallMirror,
   HOUSE, ROOMS, FIREPLACE,
-} from '../levels/house/index.js?v=1800000000022';
+} from '../levels/house/index.js?v=1800000000053';
 import { makeGalley, makeStove, makeCounterRun, makeKnifeStrip, makeCoffeeMaker, makeBlender, makeToasterOven, makeMicrowave, makeUtensilJar, makeTeapot, makeOilBottle, makeCuttingBoard, makeSpiceRack, HOUSE_KITCHEN, STATION_KITCHEN } from '../kitchen.js?v=1799900000000';
 import {
   makePlayTrain,
@@ -75,7 +81,11 @@ import {
   makeHotWheels,
   makeJackInTheBox,
   makeTerrarium,
-} from '../levels/house/playroom.js?v=1800000000021';
+} from '../levels/house/playroom.js?v=1800000000023';
+import { SOCCER } from '../soccerPhysics.mjs?v=1800000000053';
+import {
+  makeSoccerBall, makeSoccerGoal, makeSoccerPitch, makeScoreTire,
+} from '../soccer.js?v=1800000000056';
 // ===== Primitives =====
 // Small wrappers so each object below is a list of shapes rather than a wall of
 // `new THREE.Mesh(new THREE.BoxGeometry(...), new THREE.MeshStandardMaterial({...}))`.
@@ -350,6 +360,7 @@ export const LEVELS = [
   { id: 'underground', label: 'Underground', blurb: 'The neon cavern under the world, and the Glass City.' },
   { id: 'ramp', label: 'Rampworld', blurb: 'The rolling hills, the velodrome, the wheel of death.' },
   { id: 'house', label: 'House', blurb: 'Every room of the house, one category at a time.' },
+  { id: 'museum', label: 'Museum', blurb: 'Inside the grand atrium: the runner, the desk, the coat check.' },
   { id: 'beach', label: 'Beach', blurb: 'The cove: the campfire, the palms, the reefs.' },
   { id: 'space', label: 'Space Station', blurb: 'The wheel: drive the inside of a rotating station.' },
   { id: 'cornfield', label: 'Farmland', blurb: 'The farm out west: flatten the corn, climb the silo, roll the pumpkins.' },
@@ -384,11 +395,12 @@ function cityCategories() {
         obj('House Garage', -22, -49, 'houseGarage'),
         obj('Front Lawn Set', -22, -67, () => {
           const g = group('Front Lawn Set');
-          // The brown-roofed house's own front garden: the lawn is 20 wide and
-          // 12 deep now, with the door and its window where they are on it.
-          // The door is the house's normal leaf beside the bay (1.55 wide at
-          // x -1.06), and the driveway's west edge keeps the beds off it.
-          frontYard(g, 20, 12, -1.061, 1.555, -8.6, 1.1);
+          // The brown-roofed house's own front garden: the lawn is 28 by 28
+          // now, matching the square house, with the door and its window where
+          // they are on it. The door is the house's normal leaf beside the bay
+          // (1.227 wide at x 3.357), and the driveway's west edge keeps the
+          // beds off it.
+          frontYard(g, 28, 28, 3.357, 1.227, -8.6, 5.0);
           return g;
         }),
       ],
@@ -413,6 +425,50 @@ function cityCategories() {
         }),
         obj('Phone Booth', -27, 20, () => buildPhoneBooth(-27, 20, 0)),
         obj('City Tree', 24, -74, () => buildTree(24, -74)),
+      ],
+    },
+    {
+      id: 'landmarks', name: 'Landmarks & Museum', blurb: 'The outer-belt landmarks.',
+      objects: [
+        // A `view` is where "view in context" parks the car, for anything whose
+        // footprint is too big for the standard "stand 9 m to the south" spot.
+        // The museum's massing runs from z 131 to z 186, so that spot was inside
+        // it; here the car stops on the east arm of the loop, beside the poster
+        // mast and facing the building, with the road under its wheels.
+        {
+          name: 'Art Museum', x: -46, z: 164,
+          view: { x: -16, z: 158, ry: 0 },
+          build: () => buildGehryMuseum(),
+        },
+      ],
+    },
+    {
+      id: 'pitch', name: 'The Soccer Pitch',
+      blurb: 'The big pitch on the outer belt: a goal at each end, a car-sized ball, ' +
+        'and the pile of tires that keeps the score.',
+      objects: [
+        // The whole pitch. Same builders the level uses, so this is the real
+        // grass, the real markings and the real goals.
+        obj('Soccer Pitch', SOCCER.cx, SOCCER.cz, () => makeSoccerPitch()),
+        // The ball's default stand-off puts the car on the centre spot; these
+        // views park it a dozen metres clear and facing the thing instead.
+        {
+          name: 'Soccer Ball', x: SOCCER.cx, z: SOCCER.cz,
+          view: { x: SOCCER.cx, z: SOCCER.cz - 12, ry: Math.PI / 2 },
+          build: () => makeSoccerBall(SOCCER.ballR),
+        },
+        {
+          name: 'Soccer Goal', x: SOCCER.cx, z: SOCCER.z0,
+          view: { x: SOCCER.cx, z: SOCCER.z0 - 9, ry: Math.PI / 2 },
+          build: () => makeSoccerGoal(),
+        },
+        // One scoring tire, where the south goal's pile lands: past the right
+        // post and just off the end line, which is where a goal drops them.
+        {
+          name: 'Score Tire', x: SOCCER.cx + SOCCER.goalHalf + 0.65, z: SOCCER.z0 - 0.9,
+          view: { x: SOCCER.cx + SOCCER.goalHalf + 0.65, z: SOCCER.z0 + 10, ry: -Math.PI / 2 },
+          build: () => makeScoreTire(),
+        },
       ],
     },
   ];
@@ -460,11 +516,15 @@ function houseCategories() {
           g.add(makeBlockCastle().group);
           return g;
         }),
-        obj('Magnet Parking', -28, -59, () => {
-          const g = group('Magnet Parking');
-          g.add(makeMagnetCity().group);
-          return g;
-        }),
+        {
+          name: 'Magnet Parking', x: -4, z: -80,
+          view: { x: -4, z: -70, ry: -Math.PI / 2 },
+          build: () => {
+            const g = group('Magnet Parking');
+            g.add(makeMagnetCity().group);
+            return g;
+          },
+        },
         obj('Hot Wheels Track', 0, -55, () => {
           const g = group('Hot Wheels Track');
           g.add(makeHotWheels().group);
@@ -1018,10 +1078,25 @@ function cornfieldCategories() {
     {
       id: 'farm', name: 'The Farm', blurb: 'The barn, the silo, and what grows around them.',
       objects: [
-        obj('Red Barn', BARN.x, BARN.z, () => makeBarnModel()),
-        obj('Grain Silo', SILO.x, SILO.z, () => makeSiloModel()),
+        // `view` parks the context jump outside the building; the default
+        // 9 m stand-off would put the car through the doors / into the yard
+        // clutter. The barn and silo share the clear barnyard apron.
+        {
+          name: 'Red Barn', x: BARN.x, z: BARN.z,
+          view: { x: 36.5, z: -31, ry: Math.PI / 2 },
+          build: () => makeBarnModel(),
+        },
+        {
+          name: 'Grain Silo', x: SILO.x, z: SILO.z,
+          view: { x: SILO.x + 12, z: SILO.z, ry: 0 },
+          build: () => makeSiloModel(),
+        },
         obj('Water Tower', WATER_TOWER.x, WATER_TOWER.z, () => makeWaterTowerModel()),
-        obj('Mill House', MILL.x, MILL.z, () => makeMillModel(), { s: 26, w: -12 }),
+        {
+          name: 'Mill House', x: MILL.x, z: MILL.z,
+          view: { x: MILL.x, z: MILL.z - MILL.halfD - 8, ry: Math.PI / 2 },
+          build: () => makeMillModel(),
+        },
         obj('Farmhouse', FARM_HOUSE.x, FARM_HOUSE.z, () => makeFarmhouseModel(), { s: 22, w: 10 }),
         obj('Giant Pumpkin', 8, 46, () => makePumpkinModel()),
         obj('Corn Stalk', -38, 0, () => makeCornStalkModel()),
@@ -1060,11 +1135,13 @@ function spaceCategories() {
         obj('Station Core', 0, 26, () => buildSpaceCore().g, { s: 30, w: 0 }),
         obj('Pod Bay', -22, 0, () => buildSpacePodBay(), { s: 4, w: 6 }),
         obj('Console Bank', 14, 0, () => buildSpaceConsoleBank(), { s: 20, w: 9 }),
+        obj('Departure Lift / Exit Elevator', 0, 0, () => { const l = buildSpaceRoadLift(); return l.g; }, { s: 2*Math.PI*44 - 6, w: 17 }),
+        obj('Dock Loading Arm (Old Dock)', 0, 0, () => buildSpaceHangarArm({ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2.6 }).g, { s: 0, w: 0 }),
         obj('Lander', 10, 22, () => buildArrivalShip().g, { s: 6, w: 3 }),
       ],
     },
     {
-      id: 'civic', name: 'Civic & Habitation', blurb: 'The clean white arc: lounges, kiosks and a monorail boost lane.',
+      id: 'civic', name: 'Civic & Habitation', blurb: 'The clean white arc: lounges, kiosks and a bright station promenade.',
       objects: [
         obj('Lounge Chair', -6, 2, () => makeCivicLoungeChair(), { s: 11, w: -10 }),
         obj('Info Kiosk', -3, 2, () => makeInfoKiosk(), { s: 17, w: 10 }),
@@ -1072,8 +1149,7 @@ function spaceCategories() {
         obj('Cleaner Drone', 3, 2, () => makeCleanerDrone(), { s: 36, w: 0 }),
         obj('Security Barrier', 6, 2, () => makeSecurityBarrier(), { s: 24, w: 0 }),
         obj('Eye Terminal', 9, 2, () => makeEyeTerminal(), { s: 48, w: 10 }),
-        obj('Boost Pad', 12, 2, () => makeBoostPad(), { s: 30, w: -6.5 }),
-        obj('Station Galley', 15, 2, () => makeGalley({ pal: STATION_KITCHEN, s: 0.8 }), { s: 30, w: 9.5 }),
+        obj('Station Galley', 12, 2, () => makeGalley({ pal: STATION_KITCHEN, s: 0.8 }), { s: 30, w: 9.5 }),
       ],
     },
     {
@@ -1126,9 +1202,37 @@ function spaceCategories() {
 // One place that knows which builder belongs to which level id, so the browser
 // never has to care that 'ramp' is called rampworld.js somewhere else.
 
+// One object, because the museum is one room: the browser shows the real
+// atrium rather than a miniature of its furniture.
+function museumCategories() {
+  return [
+    {
+      id: 'atrium',
+      name: 'The Grand Atrium',
+      blurb: 'The marble floor and crimson runner, the quarter-circle reception desk, the coat check and the exhibit portal.',
+      objects: [
+        {
+          name: 'Grand Atrium', x: 0, z: 0,
+          view: { x: 0, z: 118, ry: -Math.PI / 2 },
+          build: () => {
+            const g = group('Grand Atrium');
+            // The builder wants a scene to add itself to; a throwaway one keeps
+            // the preview group out of the real scene's graph. `preview` stops
+            // the paint ladders registering as live knockables.
+            const world = buildMuseumWorld({ add() {} }, { preview: true });
+            g.add(world.group);
+            return g;
+          },
+        },
+      ],
+    },
+  ];
+}
+
 const CATEGORY_BUILDERS = {
   city: cityCategories,
   house: houseCategories,
+  museum: museumCategories,
   underground: undergroundCategories,
   ramp: rampCategories,
   beach: beachCategories,

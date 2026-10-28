@@ -2,7 +2,7 @@
   <img src="rampy_logo.png" alt="Rampy logo" width="400">
 </p>
 
-# Crankshaft and Rampy's Wreck-less Ramble
+# Crankshaft and Rampy's Wreckless Ramble
 
 A 3D open-world driving toy (Three.js). Drive around a little city with traffic
 lights, ramps, a giant robot, a fire engine, a flame lizard, and a freight
@@ -38,6 +38,15 @@ To stop the server, press `Ctrl+C` in the PowerShell window.
 - The world is a torus: driving off any edge wraps you around to the opposite
   side.
 - No build step is required — the code runs directly in the browser.
+- **The house is the most draw-call-heavy scene** (thousands of small meshes),
+  so three costs there are deliberately avoided and are easy to break by
+  accident: the sun's shadow map is a cached bake rather than a per-frame pass
+  (`houseSun.shadow.autoUpdate = false`, re-armed by `houseShadowTick`), the
+  cube-map mirror reflection is only re-baked when the car is at a mirror, and
+  `capShadowCasters(houseWorld.group)` strips sub-unit props from the shadow
+  pass. Note `__game.perf().calls` only ever reports the colour pass — three.js
+  resets `renderer.info` *after* the shadow pass, so shadow draws are invisible
+  to it; to see those, compare `renderer.info` with `info.autoReset = false`.
 
 ## Developing / testing tips
 

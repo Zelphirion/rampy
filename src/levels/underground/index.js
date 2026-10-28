@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addGlassCity } from '../../glasscity.js?v=1799999999999';
+import { addGlassCity } from '../../glasscity.js?v=1800000000169';
 // The Holy Mountain: pure layout math (cone profile, spiral road wedges,
 // blocker rects) verified by holyMountain.test.mjs — this file turns it into
 // meshes and colliders.

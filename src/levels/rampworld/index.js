@@ -1,6 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from '../../physics.js?v=1800000000002';
+import { addKnockable } from '../../physics.js?v=1800000000004';
 import { tirePyramidSlots, tirePyramidSupports } from '../../modules/tireStack.js';
+import { makeTire, tireHalfHeight } from '../../modules/tireModel.js?v=1800000000060';
 
 // Ramp-world safe playable band: extend a little beyond the visible edge so
 // nudging something past these bounds counts as "off the world" and it
@@ -761,34 +762,18 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
 
   // ===== Tire pyramid =====
   // A junkyard pile of big old tires straight ahead of the ramp-world spawn:
-  // eight flat-stacked rows shrinking 8-1 (36 tires, ~8 tall). Tires are
-  // proper cylinders with an open hole through the middle — the car-wheel
-  // look scaled up, not rounded inner tubes. Every tire is its own knockable:
-  // plow into the stack and struck tires pop off (most roll away on their
-  // rims, some tumble flat onto their side and skid away spinning), and
-  // knocking out both tires under one makes it drop with gravity — sometimes
-  // skidding away on impact too (physics.js 'tire' mode).
+  // eight flat-stacked rows shrinking 8-1 (36 tires, ~8 tall). Every tire is the
+  // shared tire model (modules/tireModel.js) — the same one the soccer pitch's
+  // score piles use — at this yard's scale, alternating fresh black and
+  // sun-bleached. Every tire is its own knockable: plow into the stack and
+  // struck tires pop off (most roll away on their rims, some tumble flat onto
+  // their side and skid away spinning), and knocking out both tires under one
+  // makes it drop with gravity — sometimes skidding away on impact too
+  // (physics.js 'tire' mode).
   const PYRAMID_POS = { x: 8, z: -18 };
   const tireGroundY = at(PYRAMID_POS.x, PYRAMID_POS.z);
-  const TIRE_OUTER_R = 0.6;   // tread radius, close to the car wheel size
-  const TIRE_HOLE_R = 0.3;    // open hole through the middle
-  const TIRE_HALF_W = 0.15;   // half the sidewall-to-sidewall width
-  const tireShape = new THREE.Shape();
-  tireShape.absarc(0, 0, TIRE_OUTER_R, 0, Math.PI * 2, false);
-  const tireHole = new THREE.Path();
-  tireHole.absarc(0, 0, TIRE_HOLE_R, 0, Math.PI * 2, true);
-  tireShape.holes.push(tireHole);
-  const tireGeo = new THREE.ExtrudeGeometry(tireShape, {
-    depth: TIRE_HALF_W * 2,
-    bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2,
-    curveSegments: 30,
-  });
-  tireGeo.rotateX(-Math.PI / 2);            // extrude axis → vertical: lies flat
-  tireGeo.translate(0, -TIRE_HALF_W, 0);    // centre the ring on its origin
-  const tireMats = [
-    new THREE.MeshStandardMaterial({ color: 0x232326, roughness: 0.95 }),
-    new THREE.MeshStandardMaterial({ color: 0x3d3934, roughness: 0.9 }),  // sun-bleached worn ones
-  ];
+  const TIRE_OUTER_R = 0.6;                        // tread radius, near the car wheel size
+  const TIRE_HALF_W = tireHalfHeight(TIRE_OUTER_R); // what it rests on, beads included
   const tireKs = [];
   for (const s of tirePyramidSlots({
     rows: 8,
@@ -800,9 +785,7 @@ export function buildRampWorldProps(scene, terrainHeightAt) {
     const pz = PYRAMID_POS.z;
     const g = new THREE.Group();
     const spin = new THREE.Group();       // spun around its axle while rolling
-    const tire = new THREE.Mesh(tireGeo, tireMats[s.row % 2]);
-    tire.castShadow = true;
-    spin.add(tire);
+    spin.add(makeTire(TIRE_OUTER_R, s.row % 2));
     g.add(spin);
     g.position.set(px, tireGroundY + s.y, pz);
     scene.add(g);

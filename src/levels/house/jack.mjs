@@ -109,17 +109,18 @@ export function jackPose(st) {
     };
   }
   if (p === 'bounce') {
-    // Bent over at the top, bouncing a couple of times while it paws at the
-    // air: the forward bend is the base pose, and both sway and bend throb on
-    // top of it with a slow decay.
+    // Bent over at the top, lolling the clown around the room on the spring.
+    // The two axes run at different rates and phases, so the head wanders in a
+    // loose circle rather than rocking on one line; the decay brings it back
+    // upright in time for the spring to draw it into the box.
     const t = st.t;
     const decay = Math.exp(-0.85 * t);
     return {
       lid: 1,
       out: 1 + 0.18 * Math.sin(st.t * 7.5) * decay,
       crank: JACK_WIND_TURNS * Math.PI * 2,
-      sway: 0.5 + 0.34 * Math.sin(st.t * 5.1) * decay,
-      bend: 0.8 + 0.34 * Math.sin(st.t * 6.4 + 0.7) * decay,
+      sway: 1.1 + 1.5 * Math.sin(st.t * 2.1) * decay,
+      bend: 1.0 + 1.5 * Math.sin(st.t * 1.55 + 0.9) * decay,
       jiggle: 0,
     };
   }

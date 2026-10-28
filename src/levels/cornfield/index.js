@@ -1,28 +1,32 @@
 ﻿import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
-  CORN_GROUND, CORN_SPAWN, CORN_RETURN, BARN, BARN_RAMP, SILO, WATER_TOWER,
+  CORN_GROUND, CORN_SPAWN, CORN_RETURN, BARN, BARN_RAMP, BARN_WINDOW, BRIDGE, SILO, WATER_TOWER,
   CORNFIELD_RECT, PUMPKIN_PATCH, CORN,
   ORCHARD, APPLE_TREE, SQUIRREL, squirrelThrowHits, TRACTOR,
   BARREL_STACKS, HILL, FARM_TRUCK, FARM_BOUNDS, BRICK_WALL, ROLLING,
   hillHeightAt,
   PASTURE, PASTURE_FENCE_H, BULL, pastureFenceColliders, pastureFenceBayDefs,
   RIVER, riverAt, riverFlowAt, riverSurfaceY, riverWallColliders,
-  MILL, millColliders, FARM_HOUSE, farmHouseColliders,
+  MILL, millColliders, FARM_HOUSE, farmHouseColliders, insideFarmBuilding,
   PORCH, farmPorchColliders, porchTopAt,
-  barnColliders, siloColliders, waterTowerColliders, cornGrid,
+  barnColliders, siloColliders, waterTowerColliders, bridgeColliders, cornGrid,
   shouldKnockStalk, stepPumpkin, stepBarrel, PUMPKIN_VINE_BREAK,
   orchardGrid, barrelPyramid, plateauTopAt, hillColliders, farmBoundsColliders,
-} from './layout.js?v=1800000000019';
+} from './layout.js?v=1800000000046';
+
 
 // ===== The Cornfield =====
 // A new world reached by driving through the arch in the giant tree in the
 // city's outer belt. Everything the player asked for lives here:
 //   * a corn field you flatten by driving through it (stalks bend flat and
 //     stay flat; cobs fly off) so you can carve visible trails;
-//   * a red barn with a drive-in ground floor, a wooden ramp up to a hayloft
-//     and hay that explodes into the air when you hare around up there;
-//   * a closed silo standing in a clearing of the corn (scenery only — no
-//     drive-in, no interior);
+//   * a red barn with a drive-in ground floor, a steep wooden ramp up to the
+//     east-end hayloft, a big drive-out window in the back wall, and hay that
+//     explodes into the air when you hare around up there;
+//   * a closed silo standing on the grass just north of the apple orchard
+//     (scenery only — no drive-in, no interior);
+//   * a New England covered bridge on the straight line out of the portal,
+//     crossing the river at the foot of the hill;
 //   * a pumpkin patch on the level top of the north plateau: snaky ground
 //     vines plus giant pumpkins that drag their runner vine, tear it off and
 //     roll away when you hit them.
@@ -36,9 +40,42 @@ const TWO_PI = Math.PI * 2;
 // so the water visibly runs off past the boundary fence at both ends.
 const GROUND_EX = 180;
 
+function makeGrassTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#5f8f43';
+  ctx.fillRect(0, 0, size, size);
+  const img = ctx.getImageData(0, 0, size, size);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = Math.random();
+    const lite = Math.random() < 0.08;
+    const dark = Math.random() < 0.12;
+    let r = 95 + (n - 0.5) * 40;
+    let g = 143 + (n - 0.5) * 50;
+    let b = 67 + (n - 0.5) * 32;
+    if (lite) { r += 30; g += 40; b += 20; }
+    if (dark) { r -= 40; g -= 50; b -= 28; }
+    d[i] = Math.max(0, Math.min(255, r));
+    d[i + 1] = Math.max(0, Math.min(255, g));
+    d[i + 2] = Math.max(0, Math.min(255, b));
+    d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(12, 12);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // ---- Palette ---------------------------------------------------------------
 const M = {
-  grass: new THREE.MeshStandardMaterial({ color: 0x5f8f43, roughness: 1 }),
+  grass: new THREE.MeshStandardMaterial({ map: makeGrassTexture(), roughness: 1 }),
   dirt: new THREE.MeshStandardMaterial({ color: 0x6a5136, roughness: 1 }),
   barn: new THREE.MeshStandardMaterial({ color: 0xa8321f, roughness: 0.85 }),
   barnTrim: new THREE.MeshStandardMaterial({ color: 0xe9e3d5, roughness: 0.8 }),
@@ -121,6 +158,7 @@ const M = {
     vertexColors: true, roughness: 0.95, side: THREE.DoubleSide,
   }),
 };
+
 
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
@@ -316,10 +354,11 @@ function buildGround(scene) {
   bed.receiveShadow = true;
   scene.add(bed);
 
-  // A dirt yard around the barn/silo so the farm reads as a farm.
-  const yard = new THREE.Mesh(new THREE.PlaneGeometry(70, 60), M.dirt);
+  // A dirt yard around the barn so the farm reads as a farm. Its north edge
+  // stops south of the river leg so the dirt never covers the water.
+  const yard = new THREE.Mesh(new THREE.PlaneGeometry(70, 75), M.dirt);
   yard.rotation.x = -Math.PI / 2;
-  yard.position.set(24, CORN_GROUND + 0.015, 8);
+  yard.position.set(24, CORN_GROUND + 0.015, -4.5);
   yard.receiveShadow = true;
   scene.add(yard);
 }
@@ -444,8 +483,8 @@ function buildCornStalkGeometry(seed) {
 }
 
 function buildCorn(scene) {
-  // The closed silo stands in a clearing of the corn, so no stalks grow
-  // through its wall.
+  // The silo now lives in the barnyard, but keep the clearing filter as a
+  // safety: no stalk may ever grow through its wall.
   const clearR = SILO.r + 1.8;
   const pts = cornGrid().filter(
     (p) => Math.hypot(p.x - SILO.x, p.z - SILO.z) > clearR
@@ -536,7 +575,7 @@ function buildBarn(scene) {
   const cx = BARN.x, cz = BARN.z;
   const hw = BARN.halfW, hd = BARN.halfD, h = BARN.wallH;
 
-  // Walls as thin boxes (the doorway is the gap in the west wall).
+  // Walls as thin boxes (the drive-in doorway is the gap in the south wall).
   const wall = (w, d, x, y, z, mat) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, y ? y * 2 : h, d), mat);
     m.position.set(x, y || h / 2, z);
@@ -545,8 +584,44 @@ function buildBarn(scene) {
     return m;
   };
   wall(1.0, hd * 2, cx + hw, 0, cz, M.barn);                       // east
-  wall(hw * 2, 1.0, cx, 0, cz + hd, M.barn);                       // north
   wall(1.0, hd * 2, cx - hw, 0, cz, M.barn);                       // west
+  // A wall box with an explicit height and centre (the `wall` helper doubles
+  // `y` into a height, which is perfect for the full-height runs but not for
+  // the wall pieces that frame the loft window).
+  const wallBox = (w, hgt, x, yc, z, mat = M.barn) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, 1.0), mat);
+    m.position.set(x, yc, z);
+    m.castShadow = true; m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  };
+  // North wall, split around the big drive-out window at loft height. The
+  // opening runs from the loft floor up to a head band below the wall top, so
+  // the car can cross the hay and launch out the back of the barn.
+  const nz = cz + hd;
+  const win = BARN_WINDOW;
+  const winCx = (win.x0 + win.x1) / 2;
+  const winW = win.x1 - win.x0;
+  wall(win.x0 - (cx - hw), 1.0, ((cx - hw) + win.x0) / 2, 0, nz, M.barn);
+  wall((cx + hw) - win.x1, 1.0, (win.x1 + (cx + hw)) / 2, 0, nz, M.barn);
+  wallBox(winW, win.y0, winCx, win.y0 / 2, nz, M.barn);
+  wallBox(winW, h - win.y1, winCx, (win.y1 + h) / 2, nz, M.barn);
+  // White frame round the opening, inside and out. Nothing crosses the mouth:
+  // the window is a drive-out, so even the tallest ride has clear air.
+  for (const zf of [nz + 0.56, nz - 0.56]) {
+    for (const sx of [-1, 1]) {
+      const jamb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, win.y1 - win.y0 + 0.7, 0.16), M.barnTrim);
+      jamb.position.set(winCx + sx * (winW / 2 + 0.15), (win.y0 + win.y1) / 2, zf);
+      scene.add(jamb);
+    }
+    const head = new THREE.Mesh(new THREE.BoxGeometry(winW + 0.6, 0.32, 0.2), M.barnTrim);
+    head.position.set(winCx, win.y1 + 0.16, zf);
+    scene.add(head);
+    const sill = new THREE.Mesh(new THREE.BoxGeometry(winW + 0.6, 0.2, 0.38), M.barnTrim);
+    sill.position.set(winCx, win.y0 - 0.1, zf);
+    scene.add(sill);
+  }
   // South wall, split around the drive-in doorway (the hayloft ramp enters here).
   const doorL = BARN.doorX - BARN.doorHalf;
   const doorR = BARN.doorX + BARN.doorHalf;
@@ -637,10 +712,10 @@ function buildBarn(scene) {
   }
   const braceLenS = Math.hypot(hw * 0.9, h * 0.86);
   const braceAngS = Math.atan2(hw * 0.9, h * 0.86);
-  // North wall: a symmetric pair, matched to the long (east/west) sides.
-  for (const dx of [-hw * 0.48, hw * 0.48]) {
-    xBrace(braceLenS, cx + dx, h * 0.48, cz + hd + 0.55, 0, braceAngS); // north
-  }
+  // North wall: one brace on the solid west half only. The east half now
+  // carries the big drive-out window, and a full X there would have crossed the
+  // opening.
+  xBrace(braceLenS, cx - hw * 0.48, h * 0.48, cz + hd + 0.55, 0, braceAngS); // north
   // South wall: a single brace WEST of the drive-in doorway. The old pair sat
   // at -0.48hw AND -0.08hw — both west of centre, so the two X's overlapped in
   // a jumble, the second one clipped the door jamb, and the east end of the
@@ -699,11 +774,12 @@ function buildBarn(scene) {
   vane.position.set(cx - hw * 0.4, ridgeY + 3.05, cz - 0.3);
   scene.add(vane);
 
-  // Hayloft floor (also the soft collider, built in barnColliders()). It covers
-  // the BACK (north) half of the barn only — the second floor at the rear, over
-  // the north chamber — not the whole footprint. Old wooden boards with small
-  // gaps between them, then a loose cover of hay strewn over the boards.
-  const loftW = (BARN.x + hw) - BARN.loftWest;          // full width (x)
+  // Hayloft floor (also the soft collider, built in barnColliders()). It fills
+  // the whole of the back (north) half of the barn, wall to wall, so it starts
+  // at the top of the ramp and covers the entire width under the north wall and
+  // its big drive-out window. Old wooden boards with small gaps between them,
+  // then a loose cover of hay strewn over the boards.
+  const loftW = (BARN.x + hw) - BARN.loftWest;          // full barn width (x)
   const loftCx = BARN.loftWest + loftW / 2;
   const loftZ0 = cz + BARN.loftSouth;                    // south edge (barn centre)
   const loftD = (cz + hd) - loftZ0;                      // depth (z), back half
@@ -780,18 +856,22 @@ function buildBarn(scene) {
     scene.add(rampGroup);
   }
 
-  // Hay bales up on the back-half loft (decor; the hay burst is spawned by update()).
+  // Hay bales up on the east-half loft. They are not scenery: `buildCornfieldWorld`
+  // turns each one into a loose prop with its own little physics (see stepBales),
+  // so a car haring around the loft boots them along, off the deck or clean out
+  // the big north window.
   const bales = [];
   const baleSpots = [
-    [10, BARN.loftY + 0.35, 6], [24, BARN.loftY + 0.35, 6],
-    [14, BARN.loftY + 0.35, 15], [38, BARN.loftY + 0.35, 14],
-    [30, BARN.loftY + 0.95, 10],
+    [29, BARN.loftY + 0.35, 6], [42, BARN.loftY + 0.35, 6],
+    [30, BARN.loftY + 0.35, 15], [43, BARN.loftY + 0.35, 15],
+    [35, BARN.loftY + 0.95, 10],
   ];
   for (const [bx, by, bz] of baleSpots) {
     const bale = new THREE.Mesh(new THREE.BoxGeometry(3.0, 1.3, 1.6), M.hay);
     bale.position.set(bx, by, bz);
     bale.rotation.y = (bx + bz) * 0.3;
     bale.castShadow = true;
+    bale.userData.home = { x: bx, y: by, z: bz, ry: bale.rotation.y };
     scene.add(bale);
     bales.push(bale);
   }
@@ -851,9 +931,11 @@ function buildBarn(scene) {
   // West interior wall (plain red boards the length of the barn).
   toolRack(cx - hw + 0.66, 4.3, cz - hd * 0.45, Math.PI / 2, ['fork', 'rake', 'shovel']);
   toolRack(cx - hw + 0.66, 4.3, cz + hd * 0.4, Math.PI / 2, ['rake', 'fork']);
-  // Above the loft floor, on the north wall — reachable from the hay deck.
+  // Above the loft floor: one rack on the solid west half of the north wall
+  // (the east half is the drive-out window) and one on the east wall over the
+  // hay deck.
   toolRack(cx - hw * 0.62, 10.1, cz + hd - 0.66, 0, ['shovel', 'rake', 'fork']);
-  toolRack(cx + hw * 0.62, 10.1, cz + hd - 0.66, 0, ['fork', 'shovel']);
+  toolRack(cx + hw - 0.66, 10.1, cz + hd * 0.5, -Math.PI / 2, ['fork', 'shovel']);
   // South wall, west of the drive-in opening (the east end is the door panel).
   toolRack(cx - hw * 0.5, 4.4, cz - hd + 0.66, 0, ['rake', 'shovel']);
 
@@ -894,6 +976,114 @@ function buildSilo(scene) {
   const finial = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), M.metal);
   finial.position.set(SILO.x, SILO.h + 3.5, SILO.z);
   scene.add(finial);
+
+  return {};
+}
+
+// ===== Covered bridge =====
+// A New England-style single-span covered bridge: stone abutments, a plank
+// deck, low red boarded sides, open timber trusses, white portal frames and a
+// shingled gable roof. It crosses the river leg on the line out of the portal,
+// so driving straight through the corn carries you over it and up the hill.
+function buildBridge(scene) {
+  const { x: cx, z: cz, halfW, halfLen, eaveY, ridgeY } = BRIDGE;
+  const deckW = halfW * 2 + 0.3;      // 7.5, a little proud of the side walls
+  const len = halfLen * 2;            // 11
+  const sideX = halfW - 0.15;         // side-wall centre
+  const add = (w, hgt, d, x, y, z, mat, rx = 0, ry = 0, rz = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, hgt, d), mat);
+    m.position.set(x, y, z);
+    m.rotation.set(rx, ry, rz);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+    return m;
+  };
+
+  // Deck, flush with the banks at y=0.
+  add(deckW, 0.26, len + 0.8, cx, -0.13, cz, M.plank);
+  for (let i = 1; i < 15; i++) {
+    add(deckW - 0.2, 0.02, 0.07, cx, 0.008, cz - len / 2 + (i / 15) * len, M.plankDark);
+  }
+  for (const s of [-1, 1]) add(0.42, 0.5, len, cx + s * (halfW - 0.55), -0.5, cz, M.woodDark);
+
+  // Stone abutments at each bank, under the deck.
+  for (const s of [-1, 1]) {
+    add(9.2, 2.9, 2.2, cx, -1.47, cz + s * halfLen, M.stone);
+    add(9.6, 0.24, 2.4, cx, -0.14, cz + s * halfLen, M.stone);
+  }
+
+  // Low boarded sides, white top rail, and vertical board seams.
+  for (const s of [-1, 1]) {
+    const x = cx + s * sideX;
+    add(0.22, 1.32, len, x, 0.66, cz, M.barn);
+    add(0.26, 0.14, len + 0.1, x, 1.39, cz, M.barnTrim);
+    for (let i = 1; i < 10; i++) {
+      add(0.05, 1.2, 0.08, x + s * 0.1, 0.68, cz - len / 2 + (i / 10) * len, M.woodDark);
+    }
+  }
+
+  // Open timber trusses above the boarding: posts, top plate and crossed braces.
+  const postZ = [-4.9, -3.3, -1.65, 0, 1.65, 3.3, 4.9];
+  for (const s of [-1, 1]) {
+    const x = cx + s * sideX;
+    for (const z of postZ) {
+      add(0.24, eaveY - 1.39, 0.24, x, 1.39 + (eaveY - 1.39) / 2, cz + z, M.woodDark);
+    }
+    add(0.26, 0.24, len + 0.1, x, eaveY, cz, M.woodDark);
+    for (let i = 0; i < postZ.length - 1; i++) {
+      const za = cz + postZ[i], zb = cz + postZ[i + 1];
+      const dy = eaveY - 1.5, dz = zb - za;
+      const braceLen = Math.hypot(dy, dz);
+      add(0.12, braceLen, 0.12, x, 1.5 + dy / 2, (za + zb) / 2, M.barn,
+        Math.atan2(dz, dy), 0, 0);
+      add(0.12, braceLen, 0.12, x, 1.5 + dy / 2, (za + zb) / 2, M.barn,
+        Math.atan2(-dz, dy), 0, 0);
+    }
+  }
+
+  // Shingled gable roof, ridge along z, with white ridge and eave trim.
+  const overW = halfW + 0.9;
+  const rise = ridgeY - eaveY;
+  const slopeLen = Math.hypot(overW, rise);
+  for (const s of [-1, 1]) {
+    add(slopeLen, 0.3, len + 1.6, cx + s * overW / 2, (eaveY + ridgeY) / 2, cz,
+      M.roof, 0, 0, -s * Math.atan2(rise, overW));
+  }
+  add(0.34, 0.26, len + 1.7, cx, ridgeY + 0.13, cz, M.barnTrim);
+  for (const s of [-1, 1]) {
+    add(0.24, 0.3, len + 1.6, cx + s * overW, eaveY - 0.1, cz, M.barnTrim);
+  }
+  // Solid gable above each portal.
+  for (const s of [-1, 1]) {
+    const tri = new THREE.Shape();
+    tri.moveTo(-overW, 0); tri.lineTo(overW, 0); tri.lineTo(0, rise);
+    tri.closePath();
+    const g = new THREE.ExtrudeGeometry(tri, { depth: 0.24, bevelEnabled: false });
+    const m = new THREE.Mesh(g, M.barn);
+    m.position.set(cx, eaveY, cz + s * (halfLen + 0.72) - (s > 0 ? 0.24 : 0));
+    m.castShadow = true;
+    scene.add(m);
+  }
+
+  // White portal frames with a hanging lantern at each end.
+  for (const s of [-1, 1]) {
+    const z = cz + s * halfLen;
+    for (const px of [-1, 1]) {
+      add(0.34, eaveY, 0.34, cx + px * (halfW - 0.2), eaveY / 2, z, M.barnTrim);
+    }
+    add(deckW + 0.4, 0.38, 0.4, cx, eaveY - 0.2, z, M.barnTrim);
+    const lz = cz + s * (halfLen - 0.1);
+    add(0.28, 0.42, 0.28, cx, eaveY - 0.62, lz, M.iron);
+    const glow = new THREE.Mesh(
+      new THREE.BoxGeometry(0.22, 0.24, 0.22),
+      new THREE.MeshStandardMaterial({
+        color: 0xffd9a0, emissive: 0xffa94a, emissiveIntensity: 1.0, roughness: 0.5,
+      }),
+    );
+    glow.position.set(cx, eaveY - 0.62, lz);
+    scene.add(glow);
+  }
 
   return {};
 }
@@ -1513,12 +1703,17 @@ function buildHill(scene) {
   const segX = 16, segZ = 44;
   const grid = (x0, x1, segsX, lift) => {
     const verts = [];
+    const uvs = [];
     const idx = [];
     for (let iz = 0; iz <= segZ; iz++) {
       const z = HILL.zNear + (HILL.zBack - HILL.zNear) * (iz / segZ);
       for (let ix = 0; ix <= segsX; ix++) {
         const x = x0 + (x1 - x0) * (ix / segsX);
         verts.push(x, hillHeightAt(x, z) + lift, z);
+        uvs.push(
+          (x - HILL.x0) / (HILL.x1 - HILL.x0),
+          (z - HILL.zNear) / (HILL.zBack - HILL.zNear)
+        );
       }
     }
     const row = segsX + 1;
@@ -1530,6 +1725,7 @@ function buildHill(scene) {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geo.setIndex(idx);
     geo.computeVertexNormals();
     return geo;
@@ -1854,11 +2050,20 @@ function makeBull() {
   const legs = [];
   for (const lx of [-0.85, 0.85]) {
     for (const lz of [-0.42, 0.42]) {
+      // Pivot at the shoulder: the leg hangs from a hip group, so rotating the
+      // group swings the hoof fore-and-aft (about local Z) instead of scything
+      // side-to-side across the body.
+      const hip = new THREE.Group();
+      hip.position.set(lx, 0.95, lz);
       const leg = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.95, 0.3), M.bull);
-      leg.position.set(lx, 0.48, lz);
+      leg.position.y = -0.475;
       leg.castShadow = true;
-      g.add(leg);
-      legs.push(leg);
+      hip.add(leg);
+      g.add(hip);
+      // Diagonal trot pairs: front-right with rear-left, front-left with
+      // rear-right.
+      hip.userData.gaitPhase = ((lx > 0) === (lz > 0)) ? 0 : Math.PI;
+      legs.push(hip);
     }
   }
   const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.04, 1.0, 5), M.bull);
@@ -2382,8 +2587,9 @@ function buildMillInterior(scene, mill) {
   }
 
   // ---- elevator legs: tall boxes carrying a bucket belt ----
-  // Meal is lifted from the stone floor up to the bolters on the gantry.
-  const eleX = cx + 1.0, eleZ = cz - 2.0;
+  // Meal is lifted from the stone floor up to the bolters on the gantry. They
+  // stand at the back of the floor, clear of the straight entry/exit lane.
+  const eleX = cx + 1.0, eleZ = cz + 8.0;
   const legH = 9.4;
   for (const sz of [-0.55, 0.55]) {
     box(scene, 0.7, 0.7, legH, eleX, legH / 2 + 0.4, eleZ + sz, M.woodDark);
@@ -2769,8 +2975,11 @@ function buildFarmhouse(scene) {
         along === 'x' ? new THREE.BoxGeometry(len, step * 0.72, 0.12)
                       : new THREE.BoxGeometry(0.12, step * 0.72, len),
         shade);
-      if (along === 'x') m.position.set(cx, y, fixed);
-      else m.position.set(fixed, y, cz);
+      // `fixed` is an OFFSET from the house centre along the other axis, never a
+      // world coordinate — the courses must ride on the walls, not on the
+      // world origin (which left white boards floating at z = ±5.3).
+      if (along === 'x') m.position.set(cx, y, cz + fixed);
+      else m.position.set(cx + fixed, y, cz);
       m.receiveShadow = true;
       scene.add(m);
     }
@@ -3583,6 +3792,166 @@ export function makeFarmTruckModel() {
   return g;
 }
 
+// ===== Hay bales: loose props with their own little physics ==================
+// The five bales on the hayloft are not decor any more. Each one carries a small
+// state block and is booted by any car that reaches it: it takes an impulse in
+// the car's direction, rises, tumbles, then falls. Because the loft is a real
+// surface, a bale that is shoved past the west or south edge drops off the deck
+// to the barn floor, and one shoved at the big north window sails out of the
+// barn entirely. Nothing here uses the global knockable system: that one ignores
+// height, so a loft bale would be flattened by a car driving underneath it.
+const BALE = { halfW: 1.5, halfH: 0.65, halfD: 0.8, gravity: 24 };
+
+function makeBaleProps(meshes) {
+  return meshes.map((mesh) => {
+    const home = mesh.userData.home || {
+      x: mesh.position.x, y: mesh.position.y, z: mesh.position.z, ry: mesh.rotation.y,
+    };
+    return {
+      mesh,
+      home,
+      x: home.x, y: home.y, z: home.z,
+      vx: 0, vy: 0, vz: 0,
+      yaw: home.ry,
+      tiltX: 0, tiltZ: 0, tiltVX: 0, tiltVZ: 0,
+      spinY: 0,
+      hitCd: 0,
+      resting: true,
+    };
+  });
+}
+
+function resetBales(bales) {
+  for (const b of bales) {
+    b.x = b.home.x; b.y = b.home.y; b.z = b.home.z;
+    b.vx = 0; b.vy = 0; b.vz = 0;
+    b.yaw = b.home.ry;
+    b.tiltX = 0; b.tiltZ = 0; b.tiltVX = 0; b.tiltVZ = 0; b.spinY = 0;
+    b.hitCd = 0; b.resting = true;
+    b.mesh.position.set(b.x, b.y, b.z);
+    b.mesh.rotation.set(0, b.yaw, 0);
+  }
+}
+
+// One frame of bale physics. `bales` = makeBaleProps(...); `actors` = the cars on
+// the farm; `hay` = the debris pool used for the tuft burst on impact.
+function stepBales(bales, actors, delta, hay) {
+  const westInner = BARN.x - BARN.halfW + BALE.halfW;
+  const eastInner = BARN.x + BARN.halfW - BALE.halfW;
+  const southInner = BARN.z - BARN.halfD + BALE.halfD;
+  const northInner = BARN.z + BARN.halfD - BALE.halfD;
+  const win = BARN_WINDOW;
+  const loftWestEdge = BARN.loftWest;
+  const loftNorthEdge = BARN.z + BARN.loftSouth;
+  const loftEastEdge = BARN.x + BARN.halfW;
+  const loftFarEdge = BARN.z + BARN.halfD;
+
+  for (const b of bales) {
+    if (b.hitCd > 0) b.hitCd = Math.max(0, b.hitCd - delta);
+
+    // ---- a car booting it ----
+    for (const actor of actors) {
+      if (Math.abs(actor.speed) <= 1.0 || b.hitCd > 0) continue;
+      // Height gate: a car on the barn floor must not punt a bale sitting six
+      // metres above its roof, and vice versa.
+      if (Math.abs((actor.y ?? 0) + 0.8 - b.y) > 2.4) continue;
+      const dx = b.x - actor.x, dz = b.z - actor.z;
+      const h = actor.heading || 0;
+      const fx = -Math.cos(h), fz = Math.sin(h);      // the car's forward
+      const rx = Math.sin(h), rz = Math.cos(h);       // its side axis
+      const along = dx * fx + dz * fz;
+      const side = dx * rx + dz * rz;
+      const halfLen = actor.halfLen ?? 2.1;
+      const halfWid = actor.halfWid ?? 1.1;
+      if (Math.abs(along) > halfLen + BALE.halfW + 0.4) continue;
+      if (Math.abs(side) > halfWid + BALE.halfD + 0.5) continue;
+
+      const sp = Math.abs(actor.speed);
+      // Radial from the car, biased down the nose, so a bale clipped by a corner
+      // still flies where the car was going.
+      let nx = dx, nz = dz;
+      const dl = Math.hypot(nx, nz);
+      if (dl < 0.6) { nx = fx; nz = fz; }
+      else { nx = (nx / dl) * 0.5 + fx * 0.5; nz = (nz / dl) * 0.5 + fz * 0.5; }
+      const nl = Math.hypot(nx, nz) || 1;
+      nx /= nl; nz /= nl;
+
+      const power = 3.4 + sp * 0.62;
+      b.vx = nx * power;
+      b.vz = nz * power;
+      b.vy = Math.max(b.vy, 1.9 + sp * 0.3);
+      b.spinY = (Math.random() - 0.5) * 5;
+      b.tiltVX = (Math.random() - 0.5) * 6 + nz * power * 0.3;
+      b.tiltVZ = (Math.random() - 0.5) * 6 - nx * power * 0.3;
+      b.hitCd = 0.3;
+      b.resting = false;
+      if (hay) {
+        const n = Math.min(8, 3 + Math.floor(sp * 0.4));
+        for (let i = 0; i < n; i++) {
+          hay.spawn(
+            b.x + (Math.random() - 0.5) * 2.4, b.y + (Math.random() - 0.5) * 0.8,
+            b.z + (Math.random() - 0.5) * 1.4,
+            nx * (2 + Math.random() * 3) + (Math.random() - 0.5) * 2,
+            2 + Math.random() * 2.5,
+            nz * (2 + Math.random() * 3) + (Math.random() - 0.5) * 2,
+            1.2 + Math.random() * 0.8, 0.7 + Math.random() * 0.5,
+          );
+        }
+      }
+      break;
+    }
+
+    if (!b.resting) {
+      b.vy -= BALE.gravity * delta;
+      b.x += b.vx * delta;
+      b.y += b.vy * delta;
+      b.z += b.vz * delta;
+      b.yaw += b.spinY * delta;
+      b.tiltX += b.tiltVX * delta;
+      b.tiltZ += b.tiltVZ * delta;
+
+      // ---- the barn shell keeps most of them in ----
+      if (b.y < BARN.wallH) {
+        // The north wall's big drive-out window is a genuine opening.
+        const inWindow = b.x > win.x0 && b.x < win.x1 && b.y > win.y0 - 0.7;
+        const inDoor = Math.abs(b.x - BARN.doorX) < BARN.doorHalf;
+        if (b.x < westInner) { b.x = westInner; b.vx = Math.abs(b.vx) * 0.35; }
+        if (b.x > eastInner) { b.x = eastInner; b.vx = -Math.abs(b.vx) * 0.35; }
+        if (b.z > northInner && !inWindow) { b.z = northInner; b.vz = -Math.abs(b.vz) * 0.35; }
+        if (b.z < southInner && !inDoor) { b.z = southInner; b.vz = Math.abs(b.vz) * 0.35; }
+      }
+
+      // ---- landing: the loft deck while it is over it, else the barn floor ----
+      const overLoft = b.x > loftWestEdge - 0.25 && b.x < loftEastEdge + 0.25 &&
+        b.z > loftNorthEdge - 0.25 && b.z < loftFarEdge + 0.25;
+      const floorY = (overLoft && b.y > BARN.loftY - 0.4) ? BARN.loftY : CORN_GROUND;
+      if (b.y - BALE.halfH <= floorY) {
+        b.y = floorY + BALE.halfH;
+        if (b.vy < -3) {
+          b.vy = -b.vy * 0.2;
+          b.vx *= 0.72; b.vz *= 0.72;
+        } else {
+          b.vy = 0;
+          const f = Math.max(0, 1 - 4.5 * delta);
+          b.vx *= f; b.vz *= f; b.spinY *= f;
+          b.tiltVX *= f; b.tiltVZ *= f;
+          if (Math.hypot(b.vx, b.vz) < 0.25) {
+            b.vx = 0; b.vz = 0; b.spinY = 0; b.tiltVX = 0; b.tiltVZ = 0;
+            b.resting = true;
+            // Settle on a face rather than at some impossible angle.
+            const q = Math.PI / 2;
+            b.tiltX = Math.round(b.tiltX / q) * q;
+            b.tiltZ = Math.round(b.tiltZ / q) * q;
+          }
+        }
+      }
+    }
+
+    b.mesh.position.set(b.x, b.y, b.z);
+    b.mesh.rotation.set(b.tiltX, b.yaw, b.tiltZ, 'YXZ');
+  }
+}
+
 // ===== Builder =====
 export function buildCornfieldWorld(scene) {
   scene.background = new THREE.Color(0x9fd0ff);
@@ -3604,6 +3973,7 @@ export function buildCornfieldWorld(scene) {
   buildGround(scene);
   const corn = buildCorn(scene);
   const barn = buildBarn(scene);
+  const bales = makeBaleProps(barn.bales);
   const silo = buildSilo(scene);
   buildWaterTower(scene);
   const pumpkins = buildPumpkins(scene);
@@ -3615,6 +3985,7 @@ export function buildCornfieldWorld(scene) {
   const hill = buildHill(scene);
   buildBerms(scene);
   const river = buildRiver(scene);
+  buildBridge(scene);
   const mill = buildMill(scene);
   const farmhouse = buildFarmhouse(scene);
   buildUnderbrush(scene);
@@ -3689,6 +4060,7 @@ export function buildCornfieldWorld(scene) {
   const pastureCols = pastureFenceColliders();
   const colliders = [
     ...barnColliders(), ...siloColliders(), ...waterTowerColliders(),
+    ...bridgeColliders(),
     ...hillWalls, ...farmBoundsColliders(),
     ...riverWallColliders(), ...millColliders(), ...farmHouseColliders(),
     ...farmPorchColliders(), ...pastureCols,
@@ -3734,6 +4106,7 @@ export function buildCornfieldWorld(scene) {
       { kind: 'rect', x: (CORNFIELD_RECT.x0 + CORNFIELD_RECT.x1) / 2, z: (CORNFIELD_RECT.z0 + CORNFIELD_RECT.z1) / 2, r: 26, color: '#c8d46a', label: 'Corn' },
       { kind: 'rect', x: BARN.x, z: BARN.z, r: 26, color: '#c0503a', label: 'Barn' },
       { kind: 'circle', x: SILO.x, z: SILO.z, r: 6, color: '#b9c0c4', label: 'Silo' },
+      { kind: 'rect', x: BRIDGE.x, z: BRIDGE.z, r: 7, color: '#8a5a2b', label: 'Covered Bridge' },
       { kind: 'circle', x: WATER_TOWER.x, z: WATER_TOWER.z, r: 5, color: '#9ab6cc', label: 'Water Tower' },
       { kind: 'rect', x: (PUMPKIN_PATCH.x0 + PUMPKIN_PATCH.x1) / 2, z: (PUMPKIN_PATCH.z0 + PUMPKIN_PATCH.z1) / 2, r: 18, color: '#e08a2a', label: 'Pumpkins' },
       { kind: 'rect', x: (ORCHARD.x0 + ORCHARD.x1) / 2, z: (ORCHARD.z0 + ORCHARD.z1) / 2, r: 20, color: '#5f9e4a', label: 'Orchard' },
@@ -3814,9 +4187,12 @@ export function buildCornfieldWorld(scene) {
       for (const actor of actors) {
         const hx = -Math.cos(actor.heading), hz = Math.sin(actor.heading);
         if (Math.abs(actor.speed) <= CORN.minSpeed) continue;
+        const fp = (actor.halfLen > 0 || actor.halfWid > 0)
+          ? { halfLen: actor.halfLen ?? 2.1, halfWid: actor.halfWid ?? 1.1 }
+          : null;
         for (let i = 0; i < corn.count; i++) {
           if (corn.knocked[i]) continue;
-          if (shouldKnockStalk(actor.x, actor.z, actor.speed, corn.pts[i])) {
+          if (shouldKnockStalk(actor.x, actor.z, actor.speed, corn.pts[i], CORN.knockR, fp, actor.heading)) {
             corn.knock(i, hx, hz, (p) => {
               // Burst of cobs off the top, thrown along the car's heading.
               const speed = Math.abs(actor.speed);
@@ -3963,6 +4339,9 @@ export function buildCornfieldWorld(scene) {
         }
       }
 
+      // ---- Hay bales on the loft: knockable, tumbling props ----
+      stepBales(bales, actors, delta, hay);
+
       // ---- Hay (only while a car is on the back-half loft) ----
       for (const actor of actors) {
         const onLoft = actor.y > BARN.loftY - 1.2 &&
@@ -3988,9 +4367,10 @@ export function buildCornfieldWorld(scene) {
       const orchardDx = Math.max(ORCHARD.x0 - car.x, 0, car.x - ORCHARD.x1);
       const orchardDz = Math.max(ORCHARD.z0 - car.z, 0, car.z - ORCHARD.z1);
       const orchardDist = Math.hypot(orchardDx, orchardDz);
+      const carSheltered = insideFarmBuilding(car.x, car.z);
       sq.spin += delta;
       if (sq.state === 'idle') {
-        if (orchardDist < SQUIRREL.throwRange && orchard.length) {
+        if (!carSheltered && orchardDist < SQUIRREL.throwRange && orchard.length) {
           sq.tree = orchard[(Math.random() * orchard.length) | 0];
           sq.state = 'run';
         } else if (!sq.node) {
@@ -4039,9 +4419,10 @@ export function buildCornfieldWorld(scene) {
         if (t >= 1) { sq.x = perch.x; sq.z = perch.z; sq.state = 'throw'; sq.timer = 0; }
       }
       if (sq.state === 'throw') {
-        // If the car drives well clear of the orchard, give up the shot and
-        // come back down — it only harasses you near the trees.
-        if (orchardDist > SQUIRREL.throwRange * 1.6) {
+        // If the car drives well clear of the orchard — or ducks inside a
+        // building — give up the shot and come back down. It only harasses you
+        // out among the trees and the open grass.
+        if (carSheltered || orchardDist > SQUIRREL.throwRange * 1.6) {
           sq.state = 'descend'; sq.timer = 0;
         } else {
           sq.timer += delta;
@@ -4090,6 +4471,8 @@ export function buildCornfieldWorld(scene) {
         if (a.y < CORN_GROUND + 0.05 || a.life <= 0) { a.alive = false; a.mesh.visible = false; continue; }
         for (const actor of actors) {
           const ddx = a.x - actor.x, ddz = a.z - actor.z;
+          // Shelter: an apple cannot reach a car parked inside a farm building.
+          if (insideFarmBuilding(actor.x, actor.z)) continue;
           if (a.hit && Math.hypot(ddx, ddz) < SQUIRREL.appleHitRadius && Math.abs(a.y - (actor.y + 0.7)) < 1.7) {
             a.alive = false; a.mesh.visible = false;
             if (typeof actor.onAppleHit === 'function') {
@@ -4483,7 +4866,8 @@ export function buildCornfieldWorld(scene) {
       const amp = (bull.state === 'angry' || bull.state === 'recover' || bull.state === 'spent') ? 0.5
         : calmWalking ? 0.25 : 0;   // standing still while he eats
       for (let i = 0; i < bull.legs.length; i++) {
-        bull.legs[i].rotation.x = Math.sin(bull.animT * gait + (i % 2) * Math.PI + (i > 1 ? 0.6 : 0)) * amp;
+        const leg = bull.legs[i];
+        leg.rotation.z = Math.sin(bull.animT * gait + leg.userData.gaitPhase) * amp;
       }
 
       // ---- Fence wreckage: fly, land, settle, and get batted around again ----
@@ -4499,6 +4883,7 @@ export function buildCornfieldWorld(scene) {
     },
     reset() {
       corn.reset();
+      resetBales(bales);
       for (const p of pumpkins) {
         p.x = p.home.x; p.z = p.home.z; p.vx = 0; p.vz = 0; p.spin = 0;
         p.stemAttached = true; p.stem.visible = true;

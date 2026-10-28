@@ -20,6 +20,14 @@ class V3 {
   distanceTo(v) { return Math.hypot(this.x - v.x, this.y - v.y, this.z - v.z); }
   setScalar(s) { this.x = this.y = this.z = s; return this; }
   multiplyScalar(s) { this.x *= s; this.y *= s; this.z *= s; return this; }
+  // The knockable fall animation slides a prop along its push direction.
+  addScaledVector(v, s) { this.x += v.x * s; this.y += v.y * s; this.z += v.z * s; return this; }
+  lerpVectors(a, b, t) {
+    this.x = a.x + (b.x - a.x) * t;
+    this.y = a.y + (b.y - a.y) * t;
+    this.z = a.z + (b.z - a.z) * t;
+    return this;
+  }
   dot(v) { return this.x * v.x + this.y * v.y + this.z * v.z; }
   length() { return Math.hypot(this.x, this.y, this.z); }
   applyMatrix3() { return this; }
@@ -77,6 +85,12 @@ class Obj3 {
     this.receiveShadow = false;
   }
   lookAt() { return this; }
+  // The knockable physics measures hits from a prop's world spot. The stub has
+  // no parent transforms to walk, so the local position is the world one.
+  getWorldPosition(target) {
+    if (target && typeof target.copy === 'function') return target.copy(this.position);
+    return this.position.clone();
+  }
   add(...c) { for (const x of c) if (x) this.children.push(x); return this; }
   remove(c) { const i = this.children.indexOf(c); if (i > -1) this.children.splice(i, 1); return this; }
   traverse(fn) { fn(this); for (const c of this.children) c.traverse(fn); }

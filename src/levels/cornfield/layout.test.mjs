@@ -7,19 +7,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CORN_GROUND, CORN_SPAWN, CORN_RETURN,
-  BARN, BARN_RAMP, SILO, CORNFIELD_RECT, PUMPKIN_PATCH, CORN,
+  BARN, BARN_RAMP, BARN_WINDOW, BRIDGE, SILO, CORNFIELD_RECT, PUMPKIN_PATCH, CORN,
   ORCHARD, APPLE_TREE, SQUIRREL, TRACTOR, BARREL_STACKS,
   HILL, FARM_TRUCK, FARM_BOUNDS, BRICK_WALL, WATER_TOWER, ROLLING,
   spiralRampSegments, barnColliders, siloColliders, cornGrid,
+  bridgeAt, bridgeColliders,
   shouldKnockStalk, stepPumpkin, stepBarrel, PUMPKIN_VINE_BREAK,
   orchardGrid, squirrelThrowHits, barrelPyramid,
   hillProfileY, hillShoulderY, HILL_PROFILE_STEPS, HILL_SHOULDER_END_Y,
   hillRamp, hillHeightAt, plateauTopAt,
-  hillColliders, farmBoundsColliders, FARM_WALL_TOP,
+  hillColliders, farmBoundsColliders, FARM_WALL_TOP, clampInsideFarm, FARM_WALL_INSET,
   PASTURE, PASTURE_FENCE_H, BULL, pastureAt,
   pastureFenceColliders, pastureFenceBayDefs,
   RIVER, riverAt, riverFlowAt, riverSurfaceY, riverWallColliders,
-  MILL, millColliders, FARM_HOUSE, farmHouseColliders,
+  MILL, millColliders, FARM_HOUSE, farmHouseColliders, insideFarmBuilding,
 } from './layout.js';
 
 // ---- Spawn / return ---------------------------------------------------------
@@ -68,13 +69,30 @@ test('the spiral climbs evenly from y0 to y1', () => {
 
 // ---- Colliders --------------------------------------------------------------
 
-test('barn walls carry top = wallH so a loft-height car is contained', () => {
+test('barn walls carry top = wallH, with a low sill under the drive-out window', () => {
   const cols = barnColliders();
-  assert.equal(cols.length, 5);
+  assert.equal(cols.length, 7);
+  const sill = cols.filter((c) => c.windowSill);
+  assert.equal(sill.length, 1, 'exactly one window sill');
+  assert.equal(sill[0].noRoof, true, 'the sill is a barrier, not a rooftop');
+  assert.ok(sill[0].top < BARN.loftY, 'a loft-height car passes over the sill');
   for (const c of cols) {
+    if (c.windowSill) continue;
     assert.equal(c.top, BARN.wallH);
     assert.equal(c.h, BARN.wallH);
   }
+});
+
+test('the big north window is in the loft and wide enough to drive out', () => {
+  const sill = barnColliders().find((c) => c.windowSill);
+  assert.ok(BARN_WINDOW.x0 >= BARN.loftWest, 'window starts over the loft');
+  assert.ok(BARN_WINDOW.x1 <= BARN.x + BARN.halfW, 'window ends before the east wall');
+  assert.ok(BARN_WINDOW.x1 - BARN_WINDOW.x0 >= 6, 'wide enough for a car and then some');
+  assert.equal(BARN_WINDOW.y0, BARN.loftY, 'the opening starts at the hay floor');
+  assert.ok(BARN_WINDOW.y1 <= BARN.wallH, 'the head band stays under the wall top');
+  // The sill collider spans exactly the opening and sits under it.
+  assert.equal(sill.x, (BARN_WINDOW.x0 + BARN_WINDOW.x1) / 2);
+  assert.equal(sill.halfW, (BARN_WINDOW.x1 - BARN_WINDOW.x0) / 2);
 });
 
 test('the barn south wall is split around a drivable doorway', () => {
@@ -97,6 +115,12 @@ test('the barn south wall is split around a drivable doorway', () => {
   assert.equal(BARN_RAMP.runZ, 1, 'the ramp climbs north into the loft');
   assert.ok(BARN_RAMP.z + BARN_RAMP.len >= BARN.z + BARN.loftSouth,
     'the ramp top reaches the loft edge');
+  // Steep like the park slide's chute (5 rise over 8 run), not a long shallow
+  // bank: 7.5 over 12 is the same ~32 degrees.
+  const slideGrade = 5 / 8;
+  const rampGrade = BARN_RAMP.height / BARN_RAMP.len;
+  assert.ok(Math.abs(rampGrade - slideGrade) < 0.02,
+    `ramp grade ${rampGrade.toFixed(3)} should match the slide ${slideGrade.toFixed(3)}`);
 });
 
 test('the silo is closed: a full ring of colliders at full wall height', () => {
@@ -108,10 +132,27 @@ test('the silo is closed: a full ring of colliders at full wall height', () => {
     assert.equal(c.top, SILO.h, 'ringed at the full wall height — nothing drives in');
     assert.equal(c.h, SILO.h);
   }
-  // The silo stands INSIDE the corn rect; index.js clears a stalk-free
-  // clearing around it, so the corn must reach out past the silo on every side.
-  assert.ok(SILO.x - SILO.r > CORNFIELD_RECT.x0 && SILO.x + SILO.r < CORNFIELD_RECT.x1);
-  assert.ok(SILO.z - SILO.r > CORNFIELD_RECT.z0 && SILO.z + SILO.r < CORNFIELD_RECT.z1);
+  // It now stands on the open grass just north of the apple orchard: clear of
+  // the corn, the barn, the farmhouse, the orchard trees and the tractor loop.
+  assert.ok(SILO.x - SILO.r > CORNFIELD_RECT.x1, 'east of the corn');
+  assert.ok(SILO.x - SILO.r > BARN.x + BARN.halfW + 4, 'east of the barn');
+  assert.ok(SILO.x - SILO.r > FARM_HOUSE.x + FARM_HOUSE.halfW + 3, 'east of the farmhouse');
+  assert.ok(SILO.z - SILO.r > ORCHARD.z1, 'north of the orchard');
+  assert.ok(SILO.z - SILO.r < ORCHARD.z1 + 12, 'close to the orchard');
+  assert.equal(hillHeightAt(SILO.x, SILO.z), 0, 'on flat grass');
+  for (const tree of orchardGrid()) {
+    assert.ok(Math.hypot(tree.x - SILO.x, tree.z - SILO.z) > SILO.r + 3, 'clear of the apple trees');
+  }
+  const distToSeg = (px, pz, ax, az, bx, bz) => {
+    const dx = bx - ax, dz = bz - az;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / (dx * dx + dz * dz)));
+    return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+  };
+  for (let i = 0; i < TRACTOR.path.length; i++) {
+    const a = TRACTOR.path[i], b = TRACTOR.path[(i + 1) % TRACTOR.path.length];
+    assert.ok(distToSeg(SILO.x, SILO.z, a[0], a[1], b[0], b[1]) > SILO.r + 3,
+      'clear of the tractor loop');
+  }
 });
 
 // ---- Corn grid --------------------------------------------------------------
@@ -137,6 +178,15 @@ test('no corn grows on or into the plateau', () => {
   }
 });
 
+test('no corn grows over the river leg', () => {
+  assert.ok(CORNFIELD_RECT.z1 < RIVER.legZ0, 'the field stops south of the river leg');
+  for (const p of cornGrid()) {
+    assert.ok(p.z < RIVER.legZ0, `stalk at z ${p.z} stands in the river`);
+    assert.equal(riverAt(p.x, p.z), null, 'stalk ground is dry farm ground');
+    assert.equal(riverSurfaceY(p.x, p.z), null, 'no stalk is on the water surface');
+  }
+});
+
 // ---- Knock rules ------------------------------------------------------------
 
 test('a stalk is knocked only from within knockR while the car is moving', () => {
@@ -153,6 +203,27 @@ test('knocking is radial in xz, not axis-aligned', () => {
   const diag = Math.hypot(d, d);
   assert.ok(diag < CORN.knockR, 'diagonal point is inside the circle');
   assert.equal(shouldKnockStalk(d, d, 5, stalk), true);
+});
+
+test('a wide ride knocks the whole body footprint, corners included', () => {
+  // Car heading north (+Z, yaw = PI/2): nose along +Z, flanks along X.
+  const H = Math.PI / 2;
+  const narrow = { halfLen: 2.2, halfWid: 1.1 };
+  const wide = { halfLen: 3.0, halfWid: 2.4 };      // a monster truck
+  // A stalk 2.0 out to the side: inside the wide ride's corner, well outside
+  // the narrow one's flank and outside the old fixed circle.
+  const corner = { x: 2.0, z: 2.4 };
+  assert.equal(shouldKnockStalk(0, 0, 5, corner, CORN.knockR, narrow, H), false,
+    'a narrow car misses it');
+  assert.equal(shouldKnockStalk(0, 0, 5, corner, CORN.knockR, wide, H), true,
+    'the wide car covers the corner');
+  // The rectangle is oriented: a stalk the same distance ahead/behind but off
+  // the nose is tested against the length, not a bare circle.
+  assert.equal(shouldKnockStalk(0, 0, 5, { x: 0, z: 3.2 }, CORN.knockR, wide, H), true);
+  assert.equal(shouldKnockStalk(0, 0, 5, { x: 0, z: 3.9 }, CORN.knockR, wide, H), false,
+    'just past the nose is clear');
+  assert.equal(shouldKnockStalk(0, 0, 0.1, corner, CORN.knockR, wide, H), false,
+    'still needs to be moving');
 });
 
 // ---- Pumpkin rolling --------------------------------------------------------
@@ -387,6 +458,43 @@ test('farm bounds fence three sides and wall the south in brick', () => {
   assert.ok(FARM_WALL_TOP > BRICK_WALL.h, 'including the tall brick wall');
 });
 
+test('nothing gets out of the farm, whichever way and however hard it is thrown', () => {
+  // The colliders above are the walls; this is the guarantee behind them, which
+  // main.js applies to the car every frame. A knock slide ignores colliders
+  // entirely, and both the squirrel's apple and the bull's horn throw the car
+  // far enough to skip a wall in one frame — so turning up outside the fence
+  // was routine.
+  const { x0, x1, z0, z1 } = FARM_BOUNDS;
+  const inside = (p) => p.x >= x0 + FARM_WALL_INSET - 1e-9 && p.x <= x1 - FARM_WALL_INSET + 1e-9 &&
+    p.z >= z0 + FARM_WALL_INSET - 1e-9 && p.z <= z1 - FARM_WALL_INSET + 1e-9;
+
+  // A point already inside is left exactly where it is.
+  const here = { x: 20, z: 20 };
+  assert.deepEqual(clampInsideFarm(here.x, here.z), { x: 20, z: 20, hitX: 0, hitZ: 0 });
+
+  // Every escape route, including the ones the bull's launch produces (a car
+  // thrown way past the fence, far further than any wall is thick).
+  const cases = [
+    { x: x1 + 400, z: 0, hitX: 1, hitZ: 0 },
+    { x: x0 - 400, z: 0, hitX: -1, hitZ: 0 },
+    { x: 0, z: z1 + 400, hitX: 0, hitZ: 1 },
+    { x: 0, z: z0 - 400, hitX: 0, hitZ: -1 },
+    { x: x1 + 90, z: z0 - 90, hitX: 1, hitZ: -1 },
+  ];
+  for (const c of cases) {
+    const p = clampInsideFarm(c.x, c.z);
+    assert.ok(inside(p), `(${c.x}, ${c.z}) was not put back inside the farm`);
+    assert.equal(p.hitX, c.hitX, `x past the fence at (${c.x}, ${c.z}) not reported`);
+    assert.equal(p.hitZ, c.hitZ, `z past the fence at (${c.x}, ${c.z}) not reported`);
+  }
+
+  // The inset keeps the car off the wall's own half-thickness, so the clamp and
+  // the collider agree about where the drivable last centimetre is.
+  assert.ok(FARM_WALL_INSET >= 0.5, 'the clamp must clear the boundary collider');
+  assert.ok(FARM_WALL_INSET < 2, 'but not hold the car a visible distance off the fence');
+  assert.equal(clampInsideFarm(x1, z1).x, x1 - FARM_WALL_INSET);
+});
+
 // ---- Bull pasture -----------------------------------------------------------
 
 test('the pasture is a fenced paddock on the plateau, clear of the corn', () => {
@@ -503,6 +611,62 @@ test('the river has no walls: every bank slopes smoothly to the bed', () => {
     prev = y;
   }
 });
+// ---- Covered bridge ---------------------------------------------------------
+
+test('the covered bridge spans the river leg and keeps the current off its deck', () => {
+  assert.equal(BRIDGE.x, CORN_SPAWN.x, 'the bridge is straight out of the portal');
+  assert.ok(BRIDGE.x > CORNFIELD_RECT.x0 && BRIDGE.x < CORNFIELD_RECT.x1,
+    'the bridge stands at the end of the corn lane');
+  assert.ok(BRIDGE.z - BRIDGE.halfLen > CORNFIELD_RECT.z1, 'just north of the corn');
+  assert.ok(BRIDGE.z - BRIDGE.halfLen < RIVER.legZ0, 'south portal on the south bank');
+  assert.ok(BRIDGE.z + BRIDGE.halfLen > RIVER.legZ1, 'north portal on the north bank');
+  assert.ok(BRIDGE.z - BRIDGE.halfLen > BARN.z + BARN.halfD, 'north of the barn');
+  const tractorWestX = Math.min(...TRACTOR.path.map((p) => p[0]));
+  assert.ok(BRIDGE.x + BRIDGE.halfW < tractorWestX - 3, 'clear of the tractor lane');
+  assert.ok(BRIDGE.eaveY < BRIDGE.ridgeY, 'a real gable');
+  assert.ok(bridgeAt(BRIDGE.x, BRIDGE.z), 'bridgeAt covers the deck');
+  assert.equal(riverAt(BRIDGE.x, BRIDGE.z), null, 'no current on the bridge');
+  assert.equal(riverFlowAt(BRIDGE.x, BRIDGE.z, 0), null, 'no push on the bridge');
+  // The river still runs either side of it.
+  assert.equal(riverAt(BRIDGE.x + BRIDGE.halfW + 3, BRIDGE.z), RIVER, 'open water east of the span');
+  assert.ok(riverFlowAt(BRIDGE.x + BRIDGE.halfW + 3, BRIDGE.z, 0), 'flow resumes beside it');
+  const cols = bridgeColliders();
+  assert.equal(cols.length, 2, 'one side wall each');
+  for (const c of cols) {
+    assert.equal(c.noRoof, true, 'no invisible rooftop');
+    assert.ok(c.top > BRIDGE.eaveY, 'the sides rise above the eave line');
+    assert.ok(c.x + c.halfW < BRIDGE.x || c.x - c.halfW > BRIDGE.x, 'the deck mouth stays open');
+    assert.equal(c.bottom, BRIDGE.deckClear, 'the sides are solid only from deck level up');
+  }
+});
+
+test('a submerged car drives UNDER the covered bridge, a car on the deck does not', () => {
+  // On the deck (at/above deck level) the bridge footprint is dry: no river,
+  // so the car keeps riding the flush deck.
+  assert.equal(riverAt(BRIDGE.x, BRIDGE.z, 0), null, 'deck level is not river');
+  assert.equal(riverAt(BRIDGE.x, BRIDGE.z, BRIDGE.deckClear + 0.01), null, 'still deck');
+  // Down in the water the footprint is river again, at the bed, which is what
+  // the car rides under the span.
+  assert.equal(riverAt(BRIDGE.x, BRIDGE.z, RIVER.bedY), RIVER, 'under the deck is river');
+  assert.equal(riverSurfaceY(BRIDGE.x, BRIDGE.z), RIVER.bedY, 'and the bed is deep enough');
+  // The bed clears the underside of the deck and the truss colliders start
+  // above a submerged car, so it can pass right through.
+  assert.ok(RIVER.bedY + 1.6 < BRIDGE.deckClear, 'a car on the bed fits under the deck');
+  for (const c of bridgeColliders()) {
+    assert.ok(c.bottom > RIVER.bedY + 1.6, 'a submerged car is below the truss collider');
+  }
+});
+
+test('the squirrel has no shot into a farm building', () => {
+  assert.equal(insideFarmBuilding(BARN.x, BARN.z), true, 'the barn interior shelters');
+  assert.equal(insideFarmBuilding(MILL.x, MILL.z), true, 'so does the mill');
+  assert.equal(insideFarmBuilding(FARM_HOUSE.x, FARM_HOUSE.z), true, 'and the farmhouse');
+  assert.equal(insideFarmBuilding(BARN.x + BARN.halfW + 4, BARN.z), false, 'open barnyard is exposed');
+  assert.equal(insideFarmBuilding(CORN_SPAWN.x, CORN_SPAWN.z), false, 'open grass is exposed');
+  // Next to the barn but outside its walls is NOT sheltered.
+  assert.equal(insideFarmBuilding(BARN.x, BARN.z - BARN.halfD - 1), false, 'just outside the wall');
+});
+
 // ---- Mill house -------------------------------------------------------------
 
 test('the mill stands on the leg\u2019s south bank at the west end, wheel in the current', () => {
@@ -550,6 +714,26 @@ test('mill walls leave the doorway open on the south face and stay solid elsewhe
       `machinery at z ${c.z} pokes through the wall`);
   }
   assert.equal(cols.length, 17, '5 walls + wheel + thresher + 10 pieces of machinery');
+});
+
+test('the mill doorway is wide and the straight entry lane is clear', () => {
+  assert.ok(MILL.doorHalf >= 5, 'a doorway at least 10 m wide');
+  const cols = millColliders();
+  const elevator = cols.find((c) => c.top === 9.8);
+  assert.ok(elevator, 'the elevator legs are solid');
+  assert.ok(elevator.z - elevator.halfD > MILL.z + 4,
+    'the elevator sits at the back, clear of the door approach');
+  // A car-width lane east of centre, from the doorway to the back of the floor,
+  // must stay free of the fixed machinery (the elevator is the exception at the
+  // very back, where it only marks the end of the lane).
+  const laneX0 = MILL.x + 0.5, laneX1 = MILL.x + 4.0;
+  for (const c of cols) {
+    if (c.top >= MILL.wallH || c === elevator) continue;
+    const overlapX = c.x + c.halfW > laneX0 && c.x - c.halfW < laneX1;
+    const overlapZ = c.z + c.halfD > MILL.z - MILL.halfD && c.z - c.halfD < MILL.z + MILL.halfD;
+    assert.ok(!(overlapX && overlapZ),
+      `machinery at (${c.x}, ${c.z}) blocks the mill's straight entry lane`);
+  }
 });
 
 // ---- Farmhouse --------------------------------------------------------------
@@ -607,10 +791,12 @@ test('the rolling ridges knit the mound into the landform, outside the fence', (
 
 test('level constants stay mutually consistent', () => {
   assert.equal(BARN_RAMP.height, BARN.loftY, 'the ramp must reach the loft');
-  // The loft spans the full width, flush with the west wall edge (loftWest may
-  // sit exactly ON the wall line, hence >=).
-  assert.ok(BARN.loftWest >= BARN.x - BARN.halfW && BARN.loftWest < BARN.x + BARN.halfW);
-  assert.ok(SILO.h > BARN.wallH, 'the closed silo is the tall landmark in the clearing');
+  // The loft covers the whole width of the back half of the barn.
+  const loftW = (BARN.x + BARN.halfW) - BARN.loftWest;
+  assert.equal(loftW, BARN.halfW * 2, 'the loft spans the barn\u2019s full width');
+  assert.equal(BARN.loftWest, BARN.x - BARN.halfW, 'it starts at the west wall');
+  assert.equal(BARN.loftSouth, 0, 'and it is the back half of the floor');
+  assert.ok(SILO.h > BARN.wallH, 'the closed silo is the tall landmark in the barnyard');
   // The pumpkin patch rides the plateau's level crown, clear of the corn.
   assert.ok(PUMPKIN_PATCH.x0 > CORNFIELD_RECT.x1, 'the pumpkin patch grows east of the corn');
   assert.ok(PUMPKIN_PATCH.z0 >= HILL.zTop && PUMPKIN_PATCH.z1 <= HILL.zFar,

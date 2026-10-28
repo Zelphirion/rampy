@@ -20,7 +20,7 @@ import { hotwheelsNodes, buildTrack, poseOnTrack, TRACK_HALF_WIDTH } from './hot
 import { makeLizardModel } from '../../lizard.js?v=1800000000000';
 import {
   JACK_BOX, JACK_FLOOR, createJack, jackTouch, jackStep, jackPose, springLength,
-} from './jack.mjs';
+} from './jack.mjs?v=1800000000023';
 
 // ---- Materials & primitives ------------------------------------------------
 function mat(color, o = {}) {
@@ -980,8 +980,13 @@ export function makeHotWheels() {
 // `touch()` can tell on its own whether a car is against it.
 export function makeJackInTheBox(opts = {}) {
   const wx = opts.x ?? 0, wz = opts.z ?? 0;
-  const touchR = opts.touchR ?? 3.4;
-  const scale = opts.scale ?? 0.6;      // shrink to about car size (4.4 across)
+  const touchR = opts.touchR ?? 2.6;
+  // The BOX is tiny now, but the spring and clown keep their old world size:
+  // the pop assembly is scaled back up inside the shrunken group, so the clown
+  // still comes out huge relative to its little box.
+  const scale = opts.scale ?? 0.3;
+  const clownWorld = opts.clownScale ?? 0.6;
+  const popScale = clownWorld / scale;
   const group = new THREE.Group();
 
   const W = JACK_BOX.w, D = JACK_BOX.d, H = JACK_BOX.h;
@@ -1021,6 +1026,9 @@ export function makeJackInTheBox(opts = {}) {
   // ---- the spring and the clown (the `pop` assembly) ----------------------
   const pop = new THREE.Group();
   group.add(pop);
+  // Undo the box shrink for the spring/clown only: the gag is a tiny box with
+  // an oversized clown, not a tiny box with a tiny clown.
+  pop.scale.setScalar(popScale);
 
   const RINGS = 14;
   const rings = [];
@@ -1050,6 +1058,10 @@ export function makeJackInTheBox(opts = {}) {
     const L = springLength(p.out);
     const side = p.sway;     // how far the head has been pushed off +x
     const fwd = p.bend;      // how far the head has been pushed off +z
+    // The clown compresses with the spring: small enough to sit inside the tiny
+    // box when tucked, full size as soon as it is out. The pop assembly itself
+    // stays large (see popScale above).
+    clown.scale.setScalar(0.45 + 0.55 * Math.max(0, Math.min(1, p.out)));
     lidPivot.rotation.x = -p.lid * LID_OPEN;
     crankPivot.rotation.x = -p.crank;
     // Curve the spring: ring i sits a fraction f up the spring and is pushed

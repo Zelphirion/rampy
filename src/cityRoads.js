@@ -60,24 +60,24 @@ export const ROADS = [
   // that strip. ring-west is 18 wide (not 20) because the park's west edge is
   // hard-pinned at x = -148; ring-south does not move at all because the
   // spaceport yard occupies the ground it would cut through.
-  { id: 'ring-north', kind: 'arterial', x0: -166, x1: 166, z0: 178, z1: 198 },
-  { id: 'ring-south', kind: 'arterial', x0: -166, x1: 166, z0: -150, z1: -130 },
-  { id: 'ring-west', kind: 'arterial', x0: -166, x1: -148, z0: -150, z1: 198 },
-  { id: 'ring-east', kind: 'arterial', x0: 148, x1: 166, z0: -150, z1: 198 },
+  // Split to go around the museum instead of through it. The west stub sits
+  // clear of the building's north flank.
+  { id: 'ring-north-w', kind: 'arterial', x0: -100, x1: -79, z0: 186, z1: 206 },
+  { id: 'ring-north-e', kind: 'arterial', x0: -18, x1: 166, z0: 178, z1: 198 },
+  // Detours around the museum to keep flow continuous (replaced by curves)
 
   // ---- Outer-belt access spurs -----------------------------------------
   // A spur up the west belt to the spaceport yard's north gate (the yard was
-  // moved out here out of the town), and a short dead-end street in the east
-  // belt where the suburban houses now sit in a cul-de-sac. The south end meets
-  // the yard slab's north edge: the slab is 24x32 (z -126..-94), so the spur
-  // stops at z = -94 and never runs across the concrete.
+  // moved out here out of the town). The south end meets the yard slab's north
+  // edge: the slab is 24x32 (z -126..-94), so the spur stops at z = -94 and
+  // never runs across the concrete. The residential loop in the north-west belt
+  // is built from ROAD_CURVES below, not from a dead-end rectangle.
   { id: 'spaceport-spur', kind: 'street', x0: -128, x1: -112, z0: -94, z1: 12 },
-  // The cul-de-sac is a north-south street the two houses front from the west
-  // (their fronts point east at x ~109). It dead-ends at both z ends and is
-  // joined to the east ring by a short link, so the pair reads as a tucked-away
-  // stub off the ring rather than a through-route.
-  { id: 'culdesac', kind: 'street', x0: 112, x1: 126, z0: 42, z1: 84 },
-  { id: 'culdesac-link', kind: 'street', x0: 126, x1: 148, z0: 54, z1: 68 },
+  // Approaches to the museum - connect to curves
+  // The residential neighbourhood north-west of town is served by curving
+  // streets rather than a grid; see ROAD_CURVES below. Both entries peel off
+  // the severed ring-road ends and meet at a big turning circle against the
+  // north wall.
   // A short stub north off the top of the spaceport-spur to the park's south
   // edge (the park moved out of the town square into the belt with the city-grown
   // 4x, then onto the old nature-area lake site; see props.js addPark).
@@ -124,6 +124,77 @@ export const ROADS = [
   // cutting through either.
   { id: 'residential', kind: 'street', x0: -90, x1: -31, z0: -48, z1: -34 },
 ];
+
+// ---- Residential loop ------------------------------------------------------
+// The two suburban houses sit deep in the north-west belt, clear of both the
+// west boundary wall and the north wall, with a wide grass verge in front of
+// them instead of their old boundary-hugging lots. Two curving streets peel off
+// the severed ends of the ring road, run north past the front doors, and meet
+// at a large turning circle against the north wall.
+export const CULDESAC = { x: -115, z: 232, r: 13 };
+export const ROAD_CURVES = [
+  // West entrance: off the north end of ring-west, curling east into the loop.
+  { id: 'home-entry-west', kind: 'street', width: 14, points: [
+    [-157, 150], [-151, 154], [-144, 158], [-136, 162], [-128, 164], [-120, 164],
+  ] },
+  // The front street. It runs almost straight north-south past both driveways,
+  // with enough wander that it reads as a neighbourhood lane, not a grid road.
+  { id: 'home-street', kind: 'street', width: 14, points: [
+    [-120, 164], [-118, 176], [-116, 190], [-116, 204],
+    [-115, 218], [-114, 228],
+  ] },
+  // East entrance: off the severed west end of ring-north, curving in to meet
+  // the front street at the top of the turning circle.
+  { id: 'home-entry-east', kind: 'street', width: 14, points: [
+    [-100, 192], [-104, 202], [-110, 214], [-114, 226],
+  ] },
+  // Museum: the building now faces EAST, straight onto the arterial, so its
+  // grand stair needs no approach of its own - the arterial's west kerb is the
+  // foot of the forecourt. These two curves are the back way instead: a street
+  // along the museum's south side that carries on up its west flank and joins
+  // the residential lane, so the plot can still be driven all the way round.
+  { id: 'museum-loop-west', kind: 'arterial', width: 18, points: [
+    [-76, 118], [-92, 120], [-104, 122], [-113, 130], [-116, 142], [-117, 156]
+  ] },
+  { id: 'museum-loop-south', kind: 'arterial', width: 18, points: [
+    [-16, 122], [-30, 114], [-46, 111], [-62, 113], [-76, 118]
+  ] },
+];
+
+// Sample each control polygon as a Catmull-Rom spline so both the render mesh
+// and the drive-surface queries share one smooth centreline.
+function catmullRom(points, steps = 8) {
+  if (points.length < 2) return points.slice();
+  const pts = [points[0], ...points, points[points.length - 1]];
+  const out = [];
+  for (let i = 1; i < pts.length - 2; i++) {
+    const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2];
+    for (let s = 0; s < steps; s++) {
+      const t = s / steps, t2 = t * t, t3 = t2 * t;
+      const f = (a, b, c, d) => 0.5 * ((2 * b) + (-a + c) * t +
+        (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push([f(p0[0], p1[0], p2[0], p3[0]), f(p0[1], p1[1], p2[1], p3[1])]);
+    }
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+for (const c of ROAD_CURVES) c.sampled = catmullRom(c.points);
+
+function closestOnCurve(x, z, c) {
+  let best = Infinity, bx = x, bz = z;
+  for (let i = 0; i < c.sampled.length - 1; i++) {
+    const [ax, az] = c.sampled[i], [dx, dz] = c.sampled[i + 1];
+    const vx = dx - ax, vz = dz - az;
+    const len2 = vx * vx + vz * vz;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * vx + (z - az) * vz) / len2)) : 0;
+    const px = ax + vx * t, pz = az + vz * t;
+    const d = Math.hypot(x - px, z - pz);
+    if (d < best) { best = d; bx = px; bz = pz; }
+  }
+  return { dist: best, x: bx, z: bz };
+}
+
 
 // How close a building (or prop) may come to a road before the audit calls it
 // an overlap. Roads are 14 wide and most buildings set a few units back, so
@@ -226,6 +297,10 @@ const laneMat = layeredMaterial({ color: 0xf4f6f8 }, LAYER.lane);
 // Driveways are cement, not tarmac: the same 0x9b9c96 as the garage floors they
 // come off, so a drive reads as part of the house rather than as a stub of road.
 const driveMat = layeredMaterial({ color: 0x9b9c96 }, LAYER.driveway);
+const vergeMat = new THREE.MeshStandardMaterial({ color: 0x4f7738, roughness: 1 });
+const curbMat = new THREE.MeshStandardMaterial({ color: 0xb9b9b0, roughness: 1 });
+const barkMat = new THREE.MeshStandardMaterial({ color: 0x5b4128, roughness: 1 });
+const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f6b30, roughness: 1 });
 
 export function roadRect(id) {
   const r = ROADS.find((q) => q.id === id);
@@ -236,8 +311,10 @@ export function roadRect(id) {
 // Is a world point on tarmac? Used by the layout audit to prove every door has
 // a road under it, and to keep props off the carriageway.
 export function onRoad(x, z, pad = 0) {
-  return ROADS.some((r) =>
-    x >= r.x0 - pad && x <= r.x1 + pad && z >= r.z0 - pad && z <= r.z1 + pad);
+  if (ROADS.some((r) =>
+    x >= r.x0 - pad && x <= r.x1 + pad && z >= r.z0 - pad && z <= r.z1 + pad)) return true;
+  if (Math.hypot(x - CULDESAC.x, z - CULDESAC.z) <= CULDESAC.r + pad) return true;
+  return ROAD_CURVES.some((c) => closestOnCurve(x, z, c).dist <= c.width / 2 + pad);
 }
 
 // Nearest point on the network to a world point, as a straight drive line. The
@@ -250,7 +327,157 @@ export function nearestRoadDistance(x, z) {
     const d = Math.hypot(x - cx, z - cz);
     if (d < best) { best = d; hit = { x: cx, z: cz, road: r }; }
   }
+  for (const c of ROAD_CURVES) {
+    const q = closestOnCurve(x, z, c);
+    const d = Math.max(0, q.dist - c.width / 2);
+    if (d < best) { best = d; hit = { x: q.x, z: q.z, road: c }; }
+  }
+  const cd = Math.hypot(x - CULDESAC.x, z - CULDESAC.z);
+  const dc = Math.max(0, cd - CULDESAC.r);
+  if (dc < best) {
+    const k = cd > 0 ? CULDESAC.r / cd : 0;
+    hit = { x: CULDESAC.x + (x - CULDESAC.x) * k, z: CULDESAC.z + (z - CULDESAC.z) * k, road: CULDESAC };
+    best = dc;
+  }
   return { dist: best, x: hit.x, z: hit.z, road: hit.road };
+}
+
+// A street tree in the residential verges: trunk plus a pair of stacked cones,
+// deliberately cheap because there are a dozen of them along the loop.
+function roadTree(parent, x, z, s = 1) {
+  const g = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22 * s, 0.3 * s, 2.1 * s, 6), barkMat);
+  trunk.position.y = 1.05 * s;
+  trunk.castShadow = true;
+  g.add(trunk);
+  for (let i = 0; i < 2; i++) {
+    const cone = new THREE.Mesh(new THREE.ConeGeometry((1.7 - i * 0.35) * s, (2.5 - i * 0.3) * s, 8), leafMat);
+    cone.position.y = (2.5 + i * 1.15) * s;
+    cone.castShadow = true;
+    g.add(cone);
+  }
+  g.position.set(x, 0, z);
+  parent.add(g);
+  return g;
+}
+
+function slabRot(parent, w, len, cx, cz, y, mat, rot, t = ROAD_T) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, t, len), mat);
+  m.position.set(cx, y, cz);
+  m.rotation.y = rot;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+function buildResidentialLoop(group) {
+  for (const c of ROAD_CURVES) {
+    const half = c.width / 2;
+    let arc = 0;
+    for (let i = 0; i < c.sampled.length - 1; i++) {
+      const [ax, az] = c.sampled[i], [bx, bz] = c.sampled[i + 1];
+      const dx = bx - ax, dz = bz - az;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.01) continue;
+      const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+      const rot = -Math.atan2(dz, dx);
+      // Overlap each segment slightly so the strip has no hairline cracks at
+      // the joins. Same dark tarmac as every other street.
+      slabRot(group, len + 0.9, c.width, mx, mz, ROAD_Y, roadMat, rot);
+      // Concrete kerbs on both sides, sitting just proud of the tarmac.
+      const nx = -dz / len, nz = dx / len;
+      for (const side of [-1, 1]) {
+        slabRot(group, len + 0.9, 0.55, mx + nx * (half + 0.2) * side,
+          mz + nz * (half + 0.2) * side, ROAD_Y + 0.03, curbMat, rot, 0.24);
+      }
+      // Dashed centre line, every ~6 units of arc.
+      arc += len;
+      if (arc >= 6) {
+        arc = 0;
+        slabRot(group, 2.4, 0.22, mx, mz, ROAD_Y + 0.1, laneMat, rot, 0.02);
+      }
+    }
+  }
+
+  // The turning circle: one big asphalt disc with a planted island in the
+  // middle, so it reads as a proper cul-de-sac rather than a dead end.
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(CULDESAC.r, CULDESAC.r, ROAD_T, 64), roadMat);
+  disc.position.set(CULDESAC.x, ROAD_Y, CULDESAC.z);
+  disc.receiveShadow = true;
+  group.add(disc);
+  const kerb = new THREE.Mesh(
+    new THREE.CylinderGeometry(4.15, 4.15, 0.28, 48), curbMat);
+  kerb.position.set(CULDESAC.x, ROAD_Y + 0.1, CULDESAC.z);
+  kerb.receiveShadow = true;
+  group.add(kerb);
+  const island = new THREE.Mesh(
+    new THREE.CylinderGeometry(3.6, 3.6, 0.32, 48), vergeMat);
+  island.position.set(CULDESAC.x, ROAD_Y + 0.2, CULDESAC.z);
+  island.receiveShadow = true;
+  group.add(island);
+  roadTree(group, CULDESAC.x, CULDESAC.z, 1.5);
+
+  // The tree median on the western approach, before the first driveway. It is
+  // only on the entrance bend, so it never blocks a turn into a garage mouth.
+  const west = ROAD_CURVES[0];
+  const n = west.sampled.length - 1;
+  const m0 = Math.floor(n * 0.10), m1 = Math.max(m0 + 2, Math.floor(n * 0.42));
+  for (let i = m0; i < m1; i++) {
+    const [ax, az] = west.sampled[i], [bx, bz] = west.sampled[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const len = Math.hypot(dx, dz);
+    if (len < 0.01) continue;
+    const mx = (ax + bx) / 2, mz = (az + bz) / 2;
+    const rot = -Math.atan2(dz, dx);
+    slabRot(group, len + 0.6, 3.3, mx, mz, ROAD_Y + 0.12, vergeMat, rot, 0.26);
+    const nx = -dz / len, nz = dx / len;
+    for (const side of [-1, 1]) {
+      slabRot(group, len + 0.6, 0.4, mx + nx * 1.75 * side,
+        mz + nz * 1.75 * side, ROAD_Y + 0.12, curbMat, rot, 0.3);
+    }
+    if (i % 4 === 0) roadTree(group, mx, mz, 0.85);
+  }
+
+  // Verge planting: a loose row down the east side of the front street and a
+  // cluster round the turning circle. None of it is on tarmac.
+  for (const [x, z, s] of [
+    [-103, 166, 1.0], [-102, 184, 1.15], [-102, 202, 0.95], [-104, 220, 1.1],
+    [-138, 147, 1.0], [-146, 146, 0.9],
+    [-100, 238, 1.1], [-100, 224, 0.95], [-130, 239, 1.0], [-128, 224, 0.85],
+  ]) roadTree(group, x, z, s);
+}
+
+// Builds the whole network. Returns the group so callers can hang extras off
+// it, plus the list of road rects for the audit.
+export function buildCityRoads(scene) {
+  const group = new THREE.Group();
+  group.name = 'cityRoads';
+  scene.add(group);
+
+  for (const r of ROADS) {
+    const w = r.x1 - r.x0, d = r.z1 - r.z0;
+    const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
+    slab(group, w, d, cx, cz, ROAD_Y, roadMat);
+
+    // Arterials get a solid white edge line down both kerbs; local streets get
+    // nothing, which is what makes the two tiers read differently.
+    if (r.kind === 'arterial') {
+      const along = w > d ? 'x' : 'z';
+      if (along === 'x') {
+        slab(group, w, 0.24, cx, r.z0 + 1.1, ROAD_Y + 0.1, edgeMat, 0.02);
+        slab(group, w, 0.24, cx, r.z1 - 1.1, ROAD_Y + 0.1, edgeMat, 0.02);
+      } else {
+        slab(group, 0.24, d, r.x0 + 1.1, cz, ROAD_Y + 0.1, edgeMat, 0.02);
+        slab(group, 0.24, d, r.x1 - 1.1, cz, ROAD_Y + 0.1, edgeMat, 0.02);
+      }
+    }
+    centreLine(group, r);
+  }
+
+  buildResidentialLoop(group);
+
+  return { group, roads: ROADS };
 }
 
 // ============================================================================
@@ -285,36 +512,6 @@ function centreLine(group, r) {
     if (along === 'x') slab(group, dash, 0.22, cx + t0, cross, ROAD_Y + 0.1, laneMat, 0.02);
     else slab(group, 0.22, dash, cross, cz + t0, ROAD_Y + 0.1, laneMat, 0.02);
   }
-}
-
-// Builds the whole network. Returns the group so callers can hang extras off
-// it, plus the list of road rects for the audit.
-export function buildCityRoads(scene) {
-  const group = new THREE.Group();
-  group.name = 'cityRoads';
-  scene.add(group);
-
-  for (const r of ROADS) {
-    const w = r.x1 - r.x0, d = r.z1 - r.z0;
-    const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
-    slab(group, w, d, cx, cz, ROAD_Y, roadMat);
-
-    // Arterials get a solid white edge line down both kerbs; local streets get
-    // nothing, which is what makes the two tiers read differently.
-    if (r.kind === 'arterial') {
-      const along = w > d ? 'x' : 'z';
-      if (along === 'x') {
-        slab(group, w, 0.24, cx, r.z0 + 1.1, ROAD_Y + 0.1, edgeMat, 0.02);
-        slab(group, w, 0.24, cx, r.z1 - 1.1, ROAD_Y + 0.1, edgeMat, 0.02);
-      } else {
-        slab(group, 0.24, d, r.x0 + 1.1, cz, ROAD_Y + 0.1, edgeMat, 0.02);
-        slab(group, 0.24, d, r.x1 - 1.1, cz, ROAD_Y + 0.1, edgeMat, 0.02);
-      }
-    }
-    centreLine(group, r);
-  }
-
-  return { group, roads: ROADS };
 }
 
 // Two driveways may not sit closer to each other than this, measured across the

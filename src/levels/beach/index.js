@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { makeClamShell } from '../../props.js?v=1800000000014';
-import { addKnockable } from '../../physics.js?v=1800000000002';
+import { addKnockable } from '../../physics.js?v=1800000000004';
 import { shellRadius } from '../../clam.js';
 import { addBeachCliffs } from './cliffs.js?v=1800000000001';
 import { addBeachLife, makeCrab } from './critters.js?v=1800000000003';

@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { RING_R, RING_W, RING_HALF_W, RING_LANE, RING_CIRC } from '../../spaceRing.js';
+import { RING_R, RING_W, RING_HALF_W, RING_CIRC } from '../../spaceRing.js';
 import { makeGalley, STATION_KITCHEN } from '../../kitchen.js?v=1799900000000';
 
 // ===== The four rim sectors =====
@@ -35,6 +35,20 @@ import { makeGalley, STATION_KITCHEN } from '../../kitchen.js?v=1799900000000';
 const TWO_PI = Math.PI * 2;
 const B = THREE.BackSide;
 
+// The +w shoulder is a REAL opening in the station's wall: the dock spur, the
+// decon bay and the departure lift all sit out there (the gap is cut into the
+// window and glass canopy in levels/space/index.js as SHOULDER_GAP). Sector
+// dressing on that side has to skip the whole arc, or striped wall panels,
+// wainscot and wall terminals end up standing across the spur mouth and the
+// lift runway — "barriers" that have no colliders at all, so you drive straight
+// through what looks like a wall. Kept in the same ring coordinates as
+// everything else here (s = arc length, wraps at RING_CIRC).
+const SHOULDER_S_LO = RING_CIRC - 0.42 * RING_R;   // gap start, just before s wraps
+const SHOULDER_S_HI = 0.22 * RING_R;               // gap end, just after s = 0
+export function inShoulderGap(s) {
+  return s > SHOULDER_S_LO || s < SHOULDER_S_HI;
+}
+
 const mat = (color, o = {}) => new THREE.MeshStandardMaterial({
   color,
   roughness: o.roughness ?? 0.75,
@@ -60,7 +74,6 @@ const M = {
   civAccent: mat(0xf25a2a, { roughness: 0.5, emissive: 0x5a1c08, emissiveIntensity: 0.7 }),
   civLed: mat(0x9fd8ff, { emissive: 0x7fc4ff, emissiveIntensity: 2.0 }),
   eyeLens: mat(0xff2a2a, { emissive: 0xff2020, emissiveIntensity: 2.4 }),
-  boost: mat(0x22509a, { emissive: 0x3f9dff, emissiveIntensity: 2.4, side: B, roughness: 0.35 }),
 
   // 2. Hydroponics
   hydFloor: mat(0x33402c, { roughness: 1, side: B }),
@@ -331,25 +344,6 @@ export function makeEyeTerminal() {
   // Three little status studs on the housing.
   for (const sx of [-0.16, 0, 0.16]) head.add(box(0.05, 0.05, 0.02, M.civLed, sx, 0.36, -0.14));
   g.userData.head = head;
-  return g;
-}
-
-export function makeBoostPad() {
-  const g = grp('Boost Pad');
-  const base = box(3.4, 0.12, 3.4, M.boost, 0, 0.06, 0);
-  base.material = M.boost.clone();
-  g.add(base);
-  // Chevrons pointing "forward" (local +X).
-  for (let i = 0; i < 3; i++) {
-    const c = box(1.4, 0.06, 0.5, M.civLed, -0.9 + i * 0.9, 0.14, 0);
-    c.rotation.z = -0.5;
-    g.add(c);
-    const c2 = box(1.4, 0.06, 0.5, M.civLed, -0.9 + i * 0.9, 0.14, 0);
-    c2.rotation.z = 0.5;
-    g.add(c2);
-  }
-  for (const sx of [-1.5, 1.5]) for (const sz of [-1.5, 1.5]) g.add(box(0.16, 0.16, 0.16, M.steelDark, sx, 0.08, sz));
-  g.userData.base = base;
   return g;
 }
 
@@ -1364,6 +1358,7 @@ export function buildSpaceSectors() {
     for (let s = a0 * RING_R + 3; s < a1 * RING_R - 3; s += 6.5) {
       for (const side of [-1, 1]) {
         if (side > 0 && s > GAL_S0 && s < GAL_S1) continue;
+        if (side > 0 && inShoulderGap(s)) continue;   // the dock shoulder is open
         const p = new THREE.Group();
         place(p, s, side * (RING_HALF_W - 0.55));
         p.add(box(6.0, 1.5, 0.7, M.civWall, 0, 0.75, 0));
@@ -1386,20 +1381,10 @@ export function buildSpaceSectors() {
       group.add(cell);
     }
 
-    // Monorail / passenger boost lanes down the middle, tiled from pads.
-    for (const cz of [-6.5, 6.5]) {
-      for (let s = (a0 + 0.16) * RING_R; s < (a1 - 0.14) * RING_R; s += 3.6) {
-        const cell = new THREE.Group();
-        place(cell, s, cz);
-        cell.add(makeBoostPad());
-        group.add(cell);
-      }
-      zones.push({ type: 'boost', s0: (a0 + 0.16) * RING_R, s1: (a1 - 0.14) * RING_R, w0: cz - 2, w1: cz + 2, add: 16 });
-    }
-
     // Tracking eye terminals on the +Z wall.
     for (let s = a0 * RING_R + 9; s < a1 * RING_R - 6; s += 13) {
       if (s > GAL_S0 && s < GAL_S1) continue;
+      if (inShoulderGap(s)) continue;   // the dock shoulder has no wall to mount on
       eye(s, RING_HALF_W - 1.1);
     }
 
@@ -1408,6 +1393,7 @@ export function buildSpaceSectors() {
     for (let s = a0 * RING_R + 6; s < a1 * RING_R - 6; s += 5.5) {
       let side = Math.random() < 0.5 ? -1 : 1;
       if (side > 0 && s > GAL_S0 && s < GAL_S1) side = -1;   // keep the galley's wall clear
+      if (side > 0 && inShoulderGap(s)) side = -1;           // and the dock shoulder too
       const w = side * (RING_HALF_W - 2.6 - Math.random() * 2.2);
       const kind = Math.random() < 0.4 ? 0 : (Math.random() < 0.5 ? 1 : 2);
       knockable(s, w, {
@@ -1439,24 +1425,8 @@ export function buildSpaceSectors() {
       });
     }
 
-    // Retractable glass security barriers sealing the VIP corridor.
-    for (const s of [a0 * RING_R + 22, a1 * RING_R - 22]) {
-      const cell = new THREE.Group();
-      place(cell, s, 0);
-      group.add(cell);
-      const barrier = makeSecurityBarrier();
-      cell.add(barrier);
-      const slab = barrier.userData.slab;
-      const zone = { type: 'barrier', s, w0: -RING_LANE, w1: RING_LANE, state: 0 };
-      zones.push(zone);
-      const bias = s * 0.017;
-      dynamics.push((dt, t) => {
-        const cycle = (t * 0.16 + bias) % 1;
-        const down = Math.max(0, Math.min(1, (cycle - 0.1) / 0.12)) * (1 - Math.max(0, Math.min(1, (cycle - 0.62) / 0.12)));
-        slab.position.y = 2.0 + (1 - down) * 3.4;
-        zone.state = down;
-      });
-    }
+    // (The old retractable glass security barriers are gone. The VIP corridor
+    // is open: there are no barrier objects or barrier zones on the station.)
   }
 
   // ========================================================================
@@ -1733,8 +1703,13 @@ export function buildSpaceSectors() {
     const bayS = a1 * RING_R - 14;
     const bayW = RING_HALF_W + 3.0;
     const bayClear = (s, w) => w > 2 && Math.abs(wrapS(s - bayS)) < 6;
+    // Everything on the +w side of the dock shoulder goes: the bay approach, the
+    // spur mouth and the whole departure-lift runway. (The hazard wall used to
+    // march straight across the open shoulder gap, putting striped barrier
+    // panels across the lift you could drive through.)
+    const keepClear = (s, w) => bayClear(s, w) || (w > 8 && inShoulderGap(s));
 
-    hazardWall(a0, a1, RING_HALF_W - 0.5, bayClear);
+    hazardWall(a0, a1, RING_HALF_W - 0.5, keepClear);
     hazardWall(a0, a1, -(RING_HALF_W - 0.5));
 
     // Conveyor belt roadways baked into the floor, tiled from belt segments.
@@ -1762,7 +1737,7 @@ export function buildSpaceSectors() {
     for (let s = a0 * RING_R + 4; s < a1 * RING_R - 4; s += 7) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const w = side * (RING_HALF_W - 2.6);
-      if (bayClear(s, w)) continue;
+      if (keepClear(s, w)) continue;
       const cell = new THREE.Group();
       place(cell, s, w);
       group.add(cell);

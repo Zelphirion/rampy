@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { RING_R, RING_W, RING_HALF_W } from '../../spaceRing.js';
+import { RING_R, RING_W, RING_HALF_W, RING_CIRC } from '../../spaceRing.js';
 import { makeShip } from '../../spaceport.js';
-import { buildSpaceSectors } from './sectors.js?v=1799900000000';
+import { buildSpaceSectors } from './sectors.js?v=1800000000046';
 
 // ===== The Wheel: a rotating wheel space station =====
 //
@@ -1122,15 +1122,13 @@ export function buildSpaceBerthElevator() {
   return { g, deck, plate, masts, beacons, base, gate };
 }
 
-// ---- The road-centre departure lift ----------------------------------------
-// The unmistakable way home, sat plumb in the MIDDLE of the lane at the dock so
-// a driver cruising the loop cannot miss it. It is deliberately built so you
-// cannot blunder onto it head-on: two low rows of POSTS wall off the faces that
-// point along the racing direction (local +/-X), while the two axial SIDES
-// (local +/-Z) are left wide open. So you never mount it while just driving the
-// road — you pull off the line to one side and drive into its flank, which
-// triggers the whole fly-home cinematic. A rising deck (with up-chevrons and
-// corner beacons) sits in a sunk well, so it clearly reads as an elevator.
+// ---- The side departure lift ----------------------------------------------
+// The unmistakable way home, parked in the shoulder beside the decon bay rather
+// than in the middle of the lane. The whole apron and deck are FLAT and open on
+// all four sides: touching any part of them starts the fly-home cinematic, and
+// nothing stands up on the pad to look like it would block you. A rising deck
+// (with up-chevrons and flush corner lights) sits in a sunk well, so it still
+// clearly reads as an elevator.
 // Local frame is the dockFrame: +X tangent, +Y inward/up-the-rim, +Z axial.
 export function buildSpaceRoadLift() {
   const g = new THREE.Group();
@@ -1178,43 +1176,23 @@ export function buildSpaceRoadLift() {
     }
   }
 
-  // Corner masts + blinking beacon lamps ride the deck.
+  // ---- Flat corner markers, NOT standing posts ----------------------------
+  // This pad used to carry four 2.6 m corner masts with beacon lamps. They had
+  // no colliders, so you drove straight through them on the way in — they read
+  // as barriers that were not there. The whole apron is now completely flat and
+  // open from every side; the deck still says "lift" with its raised plate,
+  // hazard chevrons, the big cyan up-arrow and these flush glowing corner tiles.
   const masts = [];
   const beacons = [];
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
-      const mx = sx * (RW - 0.28), mz = sz * (RD - 0.28);
-      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 2.6, 8), M.steel);
-      mast.position.set(mx, DECK_H + 1.3, mz);
-      mast.castShadow = true;
-      deck.add(mast);
-      masts.push(mast);
-      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), M.glowWarm);
-      lamp.position.set(mx, DECK_H + 2.7, mz);
-      deck.add(lamp);
-      beacons.push(lamp);
+      const tile = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.04, 1.0), M.glowCyan);
+      tile.position.set(sx * (RW - 0.65), DECK_H + 0.02, sz * (RD - 0.65));
+      deck.add(tile);
     }
   }
 
-  // ---- The blocking posts -------------------------------------------------
-  // Two stout rows of posts walling off the tangent (+/-X) faces — the faces a
-  // car meets when it is simply driving the lane — so you cannot drive onto the
-  // lift head-on. The axial (+/-Z) flanks are left open for the side entry.
-  const posts = [];
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 0, 1]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.28, 1.5, 10), M.steelDark);
-      post.position.set(sx * (RW + 0.5), 0.75, sz * (RD - 0.7));
-      post.castShadow = true;
-      g.add(post);
-      posts.push(post);
-      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.16, 10), M.glowWarm);
-      band.position.set(sx * (RW + 0.5), 1.35, sz * (RD - 0.7));
-      g.add(band);
-    }
-  }
-
-  return { g, deck, plate, masts, beacons, posts };
+  return { g, deck, plate, masts, beacons };
 }
 
 
@@ -1351,6 +1329,71 @@ export function buildSpaceWorld(scene) {
     return obj;
   }
 
+  // ---- The glass donut over the drivable ring ----------------------------
+  // The corridor is enclosed by a transparent canopy: a cylindrical glass roof
+  // at reduced radius plus radial glass end walls at w = +/-RING_HALF_W. The
+  // +w wall keeps the same shoulder gap as the window strip below, so the dock
+  // spur, the decon bay and the side departure lift all stay reachable. A few
+  // soft additive glints drift in and out on the roof so the enclosure reads as
+  // glass instead of an invisible boundary.
+  const BUBBLE_H = 8.0;
+  const bubbleR = RING_R - BUBBLE_H;
+  const bubbleMat = new THREE.MeshPhysicalMaterial({
+    color: 0x9fd8ff, roughness: 0.08, metalness: 0.0,
+    clearcoat: 1.0, clearcoatRoughness: 0.08,
+    transparent: true, opacity: 0.16, depthWrite: false,
+    emissive: 0x14384f, emissiveIntensity: 0.5, side: THREE.DoubleSide,
+  });
+  const bubble = new THREE.Group();
+  bubble.renderOrder = 2;
+  group.add(bubble);
+
+  const bubbleRoof = new THREE.Mesh(
+    cache('spacebubbleroof', () => new THREE.CylinderGeometry(bubbleR, bubbleR, RING_W, 160, 1, true)),
+    bubbleMat);
+  bubbleRoof.rotation.x = Math.PI / 2;
+  bubble.add(bubbleRoof);
+
+  const bubbleSide = new THREE.Mesh(
+    cache('spacebubbleside', () => new THREE.RingGeometry(bubbleR, RING_R, 160, 1)),
+    bubbleMat);
+  bubbleSide.position.z = -RING_HALF_W;
+  bubble.add(bubbleSide);
+
+  const bubbleGapLen = SHOULDER_GAP_B - SHOULDER_GAP_A;
+  const bubbleSideGap = new THREE.Mesh(
+    cache('spacebubblesidegap', () => new THREE.RingGeometry(
+      bubbleR, RING_R, 160, 1, SHOULDER_GAP_B, TWO_PI - bubbleGapLen)),
+    bubbleMat);
+  bubbleSideGap.position.z = RING_HALF_W;
+  bubble.add(bubbleSideGap);
+
+  for (const z of [-RING_HALF_W, RING_HALF_W]) {
+    const rim = new THREE.Mesh(
+      cache('spacebubblerim', () => new THREE.TorusGeometry(bubbleR, 0.16, 6, 160)),
+      M.steel);
+    rim.position.z = z;
+    bubble.add(rim);
+  }
+
+  const bubbleGlints = [];
+  const glintGeo = new THREE.PlaneGeometry(1.5, 6.0);
+  for (let i = 0; i < 6; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xcfefff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const glint = new THREE.Mesh(glintGeo, mat);
+    glint.rotation.x = -Math.PI / 2;
+    glint.renderOrder = 3;
+    const holder = new THREE.Group();
+    holder.add(glint);
+    orientFloor(holder, (i / 6) * TWO_PI + 0.4, (i % 3 - 1) * 6.0, bubbleR + 0.04);
+    bubble.add(holder);
+    bubbleGlints.push({ mesh: glint, mat, phase: i * 1.7, base: 0.1 + (i % 2) * 0.05 });
+  }
+  bubble.userData.glints = bubbleGlints;
+
   // ---- The rim's four themed sectors -------------------------------------
   // Each quarter of the loop is dressed as a different function of station life
   // (civic, hydroponics, reactor, waste/docking); see sectors.js. The module also
@@ -1359,11 +1402,13 @@ export function buildSpaceWorld(scene) {
   const sectors = buildSpaceSectors();
   group.add(sectors.group);
 
-  // A couple of console banks flank the arrival spawn so it still reads as a
-  // crewed corridor right where the car rolls out, before the sectors begin.
+  // A couple of console banks flank the civic end of the corridor, so the dock
+  // approach still reads as a crewed stretch before the sectors begin. They sit
+  // on the FAR (-w) wall only: the +w side is the open docking shoulder, and
+  // banks bolted there stood in the middle of the spur/lift opening.
   const consoles = [];
   for (const theta of [0.22, -0.22]) {
-    for (const side of [-1, 1]) {
+    for (const side of [-1]) {
       const bank = buildSpaceConsoleBank(consoles.length);
       if (side < 0) bank.scale.z = -1;
       orientFloor(bank, theta, side * (RING_HALF_W - 0.95), RING_R - 0.7);
@@ -1392,18 +1437,18 @@ export function buildSpaceWorld(scene) {
   group.add(bay);
 
   // ---- The dock frame at the ring floor, theta = 0 -----------------------
-  // What remains of the old hangar: just its placement frame at the head of the
-  // dock spur, holding the loading arm and giving the departure's berth and its
-  // load camera their coordinates (main.js reads it as spaceWorld.dockFrame).
+  // The placement frame for the shoulder lift: the lift and its apron hang off
+  // it, so the platform follows the curve of the rim floor.
   const dockFrame = new THREE.Group();
   orientFloor(dockFrame, 0, 0, RING_R);
   group.add(dockFrame);
 
-  // The big hydraulic loading arm that lifts the car off the berth and tucks it
-  // into the parked rocket's hold (driven by the departure cine in main.js).
-  // Stowed folded against the floor until then.
-  const hangarArm = buildSpaceHangarArm({ baseX: 5, baseZ: 8, a: 9, b: 9, baseH: 2.6 });
-  dockFrame.add(hangarArm.g);
+  // The old hangar loading arm that used to lift the car into the rocket is GONE
+  // from the station: the departure cut now opens with the car already aboard
+  // (see startSpaceDeparture in main.js). Its folded limb used to reach out over
+  // the spur lane at head height, so removing it also opens the whole dock
+  // approach up. The model still exists for the object explorer
+  // (buildSpaceHangarArm + the "(Old Dock)" catalogue entry).
 
   // ---- The dock spur: the off-ramp from the main road to the berth --------
   // A second strip of curved floor continues the corridor through the +Z wall
@@ -1448,19 +1493,39 @@ export function buildSpaceWorld(scene) {
   berth.position.set(RING_R - 0.08, 0, DOCK_SPUR_Z1 - 1.0);
   spurGroup.add(berth);
 
-  // ---- The road-centre departure lift ------------------------------------
-  // Sat plumb in the middle of the lane at the dock: the unmistakable way home.
-  // Its fenced tangent ends stop a car that is simply driving the loop, while
-  // the open axial flanks let you pull off the line and drive in sideways to
-  // board. main.js drives the deck up and reads `s`/`halfS`/`halfW` for the
-  // post collision and the boarding trigger.
+  // ---- The side departure lift, next to the decon airlock ----------------
+  // The way home is parked off the racing line, in the shoulder beside the
+  // decon bay. It has no fences or barrier posts: the whole apron/deck is open,
+  // and touching any part of it starts the fly-home cinematic. main.js drives
+  // the deck up and reads `s`/`w` plus the trigger half-extents. The lift sits
+  // just past the chamber (s = bayS + 8), inside the same window-wall gap.
   const roadLift = buildSpaceRoadLift();
-  roadLift.g.position.set(0, 0, 0);      // dockFrame origin = s 0, w 0
+  // 6 units of arc before the dock frame: convert the arc into the frame's
+  // flat tangent coordinates so the platform still sits ON the curved floor.
+  const liftArc = 6;
+  const liftX = -RING_R * Math.sin(liftArc / RING_R);
+  const liftY = RING_R * (1 - Math.cos(liftArc / RING_R));
+  roadLift.g.position.set(liftX, liftY, 17);    // local x = s, local z = w
+  roadLift.g.rotation.z = -liftArc / RING_R;     // sit tangent to the curved floor
   dockFrame.add(roadLift.g);
-  roadLift.s = 0;
-  roadLift.w = 0;
+  const liftApron = new THREE.Mesh(new THREE.BoxGeometry(9.0, 0.3, 10.0), M.steelDark);
+  liftApron.position.set(liftX, liftY - 0.15, 17);
+  liftApron.rotation.z = -liftArc / RING_R;
+  liftApron.receiveShadow = true;
+  dockFrame.add(liftApron);
+  roadLift.s = RING_CIRC - liftArc;
+  roadLift.w = 17;
   roadLift.halfS = 2.8;
   roadLift.halfW = 3.6;
+  // Touch the whole side bay (deck + apron), not just the deck plate: the same
+  // 9 x 10 rectangle the LIFT marker stands for. The south edge still clears the
+  // arrival spawn by 0.6, so the visit never triggers itself on arrival.
+  roadLift.triggerHalfS = 4.5;
+  roadLift.triggerHalfW = 5.0;
+  // Arrive and leave at the same shoulder lift. The spawn sits just off its
+  // road-side flank (not on the deck) so the car can roll away on arrival and
+  // deliberately drive back onto the lift when it is time to go home.
+  const liftSpawnW = roadLift.w - roadLift.halfW - 2.0;
 
   // ---- A dormant launch rocket, hidden until the arrival cine ------------
   const arrival = buildArrivalShip();
@@ -1488,13 +1553,14 @@ export function buildSpaceWorld(scene) {
   const api = {
     group,
     skyGroup,
+    bubble,
     core: core.g,
     coreRadius: CORE_R,
     floor,
     // The eye-port at the station centre (setDoors below drives its lids).
     bay,
-    // The ring-floor frame at the spur head: holds the loading arm, and the
-    // departure's berth/load camera coordinates (main.js: spaceWorld.dockFrame).
+    // The ring-floor frame at the spur head: carries the side departure lift and
+    // its apron (main.js only needs it as `spaceWorld.dockFrame`).
     dockFrame,
     spur: spurGroup,
     consoles,
@@ -1511,13 +1577,12 @@ export function buildSpaceWorld(scene) {
     arrivalSeat: arrival.seat,
     arrivalHinge: arrival.hinge,
     arrivalPlume: { g: arrival.plume, outer: arrival.outer, inner: arrival.inner },
-    // The road-centre departure lift: the player pulls into an open flank and
-    // the deck lifts the car to the exit rocket's hold (main.js drives
-    // `deck`/`beacons` and uses `s`/`halfS`/`halfW` for the collision).
+    // The shoulder departure lift: a completely open pad the car pulls onto to
+    // fly home (main.js drives the rising `deck` and uses `s`/`halfS`/`halfW`
+    // for the trigger).
     roadLift,
-    hangarArm,
-    // The berth, in the dock frame's local frame: where the car parks to be
-    // loaded (world = dockFrame.localToWorld). The load cine grabs the car here.
+    // The berth, in the dock frame's local frame — kept as a plain reference
+    // point on the spur (nothing boards there any more).
     berthLocal: new THREE.Vector3(0, 0.0, DOCK_SPUR_Z1 - 1.0),
     // The dock spur's driveable footprint, for the lane widening + boarding
     // trigger in main.js (loop-distance half-width, max w, and berth w).
@@ -1544,6 +1609,14 @@ export function buildSpaceWorld(scene) {
         const k = 0.5 + 0.5 * Math.sin(t * 4 + i * (Math.PI / 2));
         roadLift.beacons[i].scale.setScalar(0.8 + k * 0.5);
       }
+      // Occasional sun glints sliding along the glass roof: the enclosure is
+      // meant to be seen, but only as a passing reflection, not frosted glass.
+      const glints = bubble.userData.glints;
+      for (let i = 0; i < glints.length; i++) {
+        const g = glints[i];
+        const k = Math.sin(t * 0.45 + g.phase);
+        g.mat.opacity = g.base * Math.max(0, k) * Math.max(0, k);
+      }
       const su = skyGroup.userData;
       for (const c of su.clouds) c.material.opacity = c.userData.base + Math.sin(t * 0.25 + c.userData.phase) * c.userData.amp;
       for (const q of su.quasars) q.mat.opacity = q.base + Math.sin(t * q.speed + q.phase) * 0.2;
@@ -1565,7 +1638,9 @@ export function buildSpaceWorld(scene) {
       sectors.update(dt, t, car || null, car2 || null);
     },
     mapFeatures: [],
-    spawn: { s: 0, w: 5.4, heading: 0 },
+    // Roll out beside the departure lift, facing the dock: the same shoulder
+    // platform is where the visit starts and where the flight home begins.
+    spawn: { s: roadLift.s, w: liftSpawnW, heading: 0 },
   };
 
   api.setDoors(0);

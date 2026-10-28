@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { nearestRoadDistance } from './cityRoads.js';
 import { outwardYaw } from './modules/heading.js';
-import { addKnockable } from './physics.js?v=1800000000002';
+import { addKnockable } from './physics.js?v=1800000000006';
 
 // ===== The City Buildings =====
 // The twelve landmark buildings that give the city its character, in place of
@@ -1694,10 +1694,53 @@ function lampMatOf() {
 // 5 wide minus its 0.4 walls left a 4.6 slot for a 4.4-diameter collision
 // circle — 0.1 either side, which is not drivable without grinding both walls.
 // At 7 the interior is 6.6 and the car has a unit of slack each way.
+// A fenced back yard behind a suburban house: timber post-and-rail down both
+// side boundaries and across the rear, with a tree and a couple of shrubs in
+// the lawn. The builder adds matching colliders so the fence is solid to the
+// car, but leaves the front open so the lawn and driveway still read as the
+// public face of the house.
+function addBackyard(g, W, D, colliders, yardW = W, yardDepth = 12) {
+  const half = yardW / 2 + 0.9;
+  const zFront = -D / 2;
+  const zRear = -(D / 2 + yardDepth);
+  const height = 1.15;
+  const post = (x, z) => box(g, 0.16, height, 0.16, x, height / 2, z, M.wood, false);
+  const run = (x0, z0, x1, z1) => {
+    const dx = x1 - x0, dz = z1 - z0;
+    const len = Math.hypot(dx, dz);
+    const n = Math.max(2, Math.round(len / 2.4));
+    for (let i = 0; i <= n; i++) post(x0 + (dx * i) / n, z0 + (dz * i) / n);
+    for (const y of [0.38, 0.82]) {
+      if (Math.abs(dx) > Math.abs(dz)) box(g, len, 0.11, 0.1, (x0 + x1) / 2, y, z0, M.wood, false);
+      else box(g, 0.1, 0.11, len, x0, y, (z0 + z1) / 2, M.wood, false);
+    }
+  };
+  run(-half, zFront, -half, zRear);
+  run(half, zFront, half, zRear);
+  run(-half, zRear, half, zRear);
+
+  // Lawn planting, kept clear of the house and the fence line.
+  const tx = -yardW / 4, tz = zRear + 4.2;
+  cyl(g, 0.24, 0.34, 2.4, tx, 1.2, tz, M.wood, 7, false);
+  sph(g, 1.5, tx, 2.9, tz, M.hedge, false);
+  sph(g, 1.1, tx + 0.9, 3.7, tz - 0.4, M.hedgeLight, false);
+  cornerBush(g, yardW / 4, zRear + 2.8, 0.8);
+  cornerBush(g, yardW / 2 - 2.4, zFront - 3.0, 0.65);
+  cornerBush(g, -yardW / 2 + 2.4, zFront - 5.0, 0.7);
+
+  colliders.push({ x: 0, z: zRear, halfW: half, halfD: 0.18, h: height });
+  colliders.push({ x: -half, z: (zFront + zRear) / 2, halfW: 0.18, halfD: yardDepth / 2, h: height });
+  colliders.push({ x: half, z: (zFront + zRear) / 2, halfW: 0.18, halfD: yardDepth / 2, h: height });
+}
+
 function houseWithGarage() {
   const g = new THREE.Group();
-  const MAIN_X = 2.25, W = 9, D = 9, BODY = 3.4;   // main block sits right of centre
-  const GW = 7, GH = 2.9;                            // garage, attached on -X
+  // Same 28 x 28 footprint as its neighbour. The body is 21 wide and the
+  // 7-wide shut garage fills the remaining strip on -X, so the pair read as
+  // equal-sized detached houses from the street, not as a cottage next to a
+  // mansion.
+  const GW = 7, GH = 2.9;                            // garage strip, on -X
+  const MAIN_X = 3.5, W = 21, D = 28, BODY = 3.4;
   const colliders = [];
 
   // ---- Main house ----
@@ -1806,6 +1849,7 @@ function houseWithGarage() {
   // No trigger is exported from here any more. `houseGarageTrigger()` reads
   // `houseGarageLocal`, which is set by the brown-roofed open bay instead - that
   // is the way into the house now, and this is a shut door on the street.
+  addBackyard(g, W, D, colliders, 28);
   return { group: g, colliders, h: BODY + 0.6 };
 }
 
@@ -1818,16 +1862,17 @@ function houseWithGarage() {
 // dormer over the door, and a picket-fenced lawn behind.
 function houseStandard() {
   const g = new THREE.Group();
-  // A big footprint: 20 wide by 12 deep, matching the giant square of the world
-  // inside the front door. It used to be a compact 11 by 11, which was the size
-  // of the house back when the door on it was a plain 1-wide box with a canopy.
-  const W = 20, D = 12, BODY = 6.6;
+  // A big square footprint: 28 by 28, matching the giant square of the world
+  // inside the front door. It used to be a compact 11 by 11, then a 20 by 12
+  // house; it is now widened and deepened to a square so the outside has the
+  // same plan as the house the door leads into.
+  const W = 28, D = 28, BODY = 3.4;
   // The garage here is a ROOM, not a door: an open bay in the front elevation
   // with a floor, a back wall and a ceiling that you drive into. GX/GW2/GH2
-  // describe that opening. 6.4 wide is what the 20-wide elevation gives up
+  // describe that opening. 6.4 wide is what the 28-wide elevation gives up
   // once the front door and its window keep the west end, and it leaves 1.0
   // either side of the 2.2-radius car, which is room to line up in.
-  const GX = 4.6, GW2 = 6.4, GH2 = 3.8;
+  const GX = 8.5, GW2 = 6.4, GH2 = 3.0;
   const gx0 = GX - GW2 / 2, gx1 = GX + GW2 / 2;   // opening edges in x
   const gz1 = D / 2, gz0 = 0;                    // mouth at the front, back wall at z 0
   // ---- The front door: the house interior's own door, scaled down ----------
@@ -1842,7 +1887,7 @@ function houseStandard() {
   // three quarters of the way up the opening, so it is under the lintel rather
   // than taller than the bay it stands next to. At the old factor - taken off
   // the bay's width - the door came out 4.6 wide and 5.0 tall, which is
-  // taller than the 3.8 bay and reads as a hole in the wall.
+  // taller than the 3.0 bay and reads as a hole in the wall.
   //
   // The gap to the bay is still the interior's own: the house's front door
   // stands 13 clear of the roller door the car comes out of, and this bay is
@@ -1864,7 +1909,7 @@ function houseStandard() {
   box(g, GW2, BODY - GH2, 0.6, GX, GH2 + (BODY - GH2) / 2, gz1 - 0.3, M.whiteStucco);
   const roof = new THREE.Group();
   roof.position.y = BODY;
-  gableRoof(roof, W, D, 2.6, 0.5, M.shingleWarm);
+  gableRoof(roof, W, D, 2.3, 0.5, M.shingleWarm);
   g.add(roof);
   // Front dormer, over the front door rather than over the garage gable. It is
   // sized off the DOOR below (the door assembly is 1.8 wide once its
@@ -1874,7 +1919,7 @@ function houseStandard() {
   const DORMER_W = DOOR_W + 2.6 * K, DORMER_H = 12 * K;
   const dRoof = new THREE.Group();
   dRoof.position.set(DOOR_X, BODY + DORMER_H, gz1 - 1.5);
-  gableRoof(dRoof, DORMER_W + 0.2, 2.8, 1.2, 0.3, M.shingleWarm);
+  gableRoof(dRoof, DORMER_W + 0.2, 2.8, 1.0, 0.3, M.shingleWarm);
   g.add(dRoof);
   box(g, DORMER_W, DORMER_H, 2.6, DOOR_X, BODY + DORMER_H / 2, gz1 - 1.5, M.whiteStucco, false);
   panel(g, DORMER_W * 0.6, DORMER_H * 0.7, DOOR_X, BODY + DORMER_H / 2, gz1 - 0.18, 0, M.windowLit);
@@ -2050,7 +2095,7 @@ function houseStandard() {
   box(g, DOOR_W + 1.2, 0.22, 0.7, DOOR_X, 0.11, gz1 + 0.35, M.concreteDark, false);
   flatPanel(g, 2.4, 6.0, DOOR_X, 0.03, gz1 + 3.0, M.concrete);
   // One window on the west end of the elevation. The house used to have two,
-  // either side of the old door; the door is 1.6 wide now, so there is room
+  // either side of the old door; the door is 1.23 wide now, so there is room
   // for the window and not much else.
   panel(g, 1.7, 1.7, WIN_X, 1.9, gz1 + 0.03, 0, M.windowLit);
   // House number, beside the door.
@@ -2074,7 +2119,7 @@ function houseStandard() {
   // test with no height term, so these three are what enclose the room on three
   // sides and the mouth is simply the space between them. The lintel over the
   // opening needs no collider either: one there would stop the car dead even
-  // though it is 3.8 up, which is the same trap that sealed the house interior's
+  // though it is 3.0 up, which is the same trap that sealed the house interior's
   // own garage exit.
   const H = BODY + 0.6;
   colliders.push({ x: (gx0 - W / 2) / 2, z: 0, halfW: (gx0 + W / 2) / 2, halfD: D / 2, h: H });
@@ -2113,6 +2158,7 @@ function houseStandard() {
     // between it and the car.
     camX: GX + 3.6, camY: 7.0, camZ: gz1 + 8.5,
   };
+  addBackyard(g, W, D, colliders);
   return { group: g, colliders, h: BODY + 0.6 };
 }
 
@@ -2339,6 +2385,32 @@ function school() {
   // Painted court lines and a key.
   for (const s of [-1, 1]) flatPanel(g, 0.16, YARD_D - 3, yx + s * (YARD_W / 2 - 1.5), 0.035, 0, M.paintWhite);
   flatPanel(g, YARD_W - 3, 0.16, yx, 0.035, 0, M.paintWhite);
+  // A net hanging from the rim: alternating strands and two rings, thin enough
+  // to read as cord rather than a solid cone.
+  const hoopNet = (x, y, z, rimR = 0.3) => {
+    const N = 10, H = 0.58, botR = rimR * 0.56;
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3();
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const b = a + Math.PI / N;
+      const tx = x + Math.cos(a) * rimR, tz = z + Math.sin(a) * rimR;
+      const bx = x + Math.cos(b) * botR, bz = z + Math.sin(b) * botR;
+      dir.set(tx - bx, H, tz - bz);
+      const len = dir.length();
+      const strand = new THREE.Mesh(cylGeo(0.016, 0.016, len, 4), M.paintWhite);
+      strand.position.set((tx + bx) / 2, y - H / 2, (tz + bz) / 2);
+      strand.quaternion.setFromUnitVectors(up, dir.normalize());
+      g.add(strand);
+    }
+    for (const [rr, yy] of [[rimR * 0.94, y - H * 0.42], [botR, y - H]]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.016, 4, 16), M.paintWhite);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(x, yy, z);
+      g.add(ring);
+    }
+  };
+
   for (const s of [-1, 1]) {
     flatPanel(g, 3.0, 0.14, yx, 0.035, s * (YARD_D / 2 - 6), M.paintWhite);
     flatPanel(g, 3.0, 0.14, yx, 0.035, s * (YARD_D / 2 - 3.5), M.paintWhite);
@@ -2347,10 +2419,19 @@ function school() {
     box(g, 0.22, 3.4, 0.22, yx, 1.7, hz, M.metal, false);
     box(g, 1.8, 1.05, 0.12, yx, 3.1, hz - s * 0.2, M.porcelain, false);
     box(g, 1.2, 0.75, 0.06, yx, 2.95, hz - s * 0.3, M.woodDark, false);
+    // The rim is a RING IN THE HORIZONTAL PLANE, standing out from the board —
+    // the old torus was left unrotated, so it hung flat against the backboard
+    // like a dinner plate.
+    const rimX = yx;
+    const rimZ = hz - s * 0.62;
     const rim = new THREE.Mesh(cached('hoopRim', () => new THREE.TorusGeometry(0.32, 0.04, 6, 14)), M.signRed);
-    rim.position.set(yx, 2.7, hz - s * 0.55);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(rimX, 2.7, rimZ);
     g.add(rim);
-    box(g, 0.05, 0.4, 0.5, yx, 2.7, hz - s * 0.35, M.signRed, false);
+    // Mounting arm from the board out to the rim.
+    box(g, 0.12, 0.1, 0.5, yx, 2.7, hz - s * 0.4, M.signRed, false);
+    // ...and the net under it.
+    hoopNet(rimX, 2.7, rimZ, 0.3);
   }
   chainFence(g, W / 2 + YARD_W / 2, -YARD_D / 2, W / 2 + YARD_W / 2, YARD_D / 2, 2.4);
   chainFence(g, W / 2 + YARD_W / 2, YARD_D / 2, W / 2, YARD_D / 2, 2.4);
@@ -2731,24 +2812,18 @@ const LAYOUT = [
   { name: 'bank',          build: bank,          x: -24,   z: 92,   face: 'E' },
   { name: 'hospital',      build: hospital,      x: 26,    z: 95,   face: 'S' },
   { name: 'apartments',    build: apartments,    x: -58,   z: -22,  face: 'N' },
-  // Both houses turn EAST onto the outer-belt cul-de-sac. The only house with
-  // an open garage is the brown-roofed one (houseStandard), and its garage bay
-  // must face the same way as the house level's garage (EAST). The grey-roofed
-  // house (houseGarage) has its roller door shut, as before. Both sit west of
-  // the cul-de-sac so their fronts open onto the tarmac, same as they used to
-  // open onto arterial-ns.
+  // Both houses turn EAST onto the residential loop in the north-west belt.
+  // They are pulled well clear of the west and north boundary walls, with a
+  // wide lawn between the rear fences and the wall, and a grass verge between
+  // their fronts and the curving street. The only house with an open garage is
+  // the brown-roofed one (houseStandard), and its garage bay must face the same
+  // way as the house level's garage (EAST). The grey-roofed house (houseGarage)
+  // has its roller door shut, as before. Both are 28 by 28 footprints.
   //
-  // They are spaced 19 apart along z, the same gap they kept on the old
-  // residential street. The grey-roofed house is the TALL one in z: its garage
-  // is hung off the local -X side, which after the E facing lands on world +Z,
-  // so it reaches 9.25 north of its origin while houseStandard reaches 10. The
-  // brown house was made bigger (20 x 12, where it used to be 11 x 11) to fit
-  // a scaled copy of the house interior's front door on it, and it was pushed
-  // half a unit back in x so its front face stayed on the same line - 109.5 -
-  // as before. Any closer and the grey garage would push into the brown
-  // house's back wall.
-  { name: 'houseStandard', build: houseStandard, x: 103.5, z: 52,   face: 'E' },
-  { name: 'houseGarage',   build: houseGarage,   x: 104,   z: 71,   face: 'E' },
+  // The pair is separated along z by 35, so there is a 7-unit gap between their
+  // side fences, and each has a fenced back yard running another 12 west.
+  { name: 'houseStandard', build: houseStandard, x: -138, z: 170, face: 'E' },
+  { name: 'houseGarage',   build: houseGarage,   x: -138, z: 205, face: 'E' },
   // The substation fills the far corner and the two public buildings face the
   // street. The gas station sits back from south-main so its drive-in forecourt
   // has room: its canopy starts 6 south of the kerb. The substation is pushed
@@ -3310,6 +3385,9 @@ export function newspaperRack(parent, x, z) {
 // The bed east of the door is tucked up against it rather than left to land on
 // the concrete, because a flower bed parked on a driveway reads as broken
 // rather than quaint.
+// For the new suburban loop, we keep a grass verge in front and a fenced back
+// yard only - skip the front picket fence to avoid duplicate fencing with
+// addBackyard's rear enclosures.
 export function frontYard(parent, W, D, doorX = -3.2, doorW = 1.0, winX = -1.4, driveX = null) {
   const picketMat = cached('picket', () => new THREE.MeshStandardMaterial({ color: 0xf0efe6, roughness: 0.8 }));
   const picketLine = (z, from, to) => {
@@ -3320,11 +3398,10 @@ export function frontYard(parent, W, D, doorX = -3.2, doorW = 1.0, winX = -1.4, 
     }
     box(parent, Math.abs(to - from), 0.1, 0.07, (from + to) / 2, 0.62, z, picketMat, false);
   };
-  picketLine(-D / 2 - 2.5, -W / 2 - 1, W / 2 + 1);
-  picketLine(-D / 2 - 2.5, -W / 2 - 1, -W / 2 - 1);
-  // Side runs, with the gate left as a gap on the -X side.
+  // Keep the side/gate runs minimal (they won't be seen once fenced) - skip
+  // the full front picket to match the new layout. Still add front planting.
   for (const sz of [-1, 1]) {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       box(parent, 0.12, 0.85, 0.12, W / 2 + 1, 0.42, -D / 2 - 2.5 + (i * (D + 5) / 4), picketMat, false);
     }
   }

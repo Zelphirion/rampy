@@ -154,6 +154,71 @@ export function houseLandingY(list, x, z) {
   return best;
 }
 
+// ---- Skate-bowl launch + containment ---------------------------------------
+// A bowl can be marked `launch` (the bathtub is): run the car up its inside wall
+// with speed and it pops out over the lip instead of gluing to the curve.
+//
+// Why a pop is needed at all: the heightfield's dish is steeper near the rim
+// than any car can leave — if the car simply went airborne at the surface, the
+// rising floor would catch it again on the next frame. So the launch is a
+// skate-style lip-pop: the caller lifts the car to the rim and hands it a
+// ballistic vertical speed, and the normal airborne branch does the rest.
+//
+// `x/z` is where the car is now, `prevX/prevZ` where it was last frame, `speed`
+// the signed drive speed. The trigger is outward TRAVEL in the bowl's own
+// normalised radius: carving a circle inside the dish never launches you, but
+// driving up the wall does.
+export function bowlLaunchAt(list, x, z, prevX, prevZ, speed) {
+  const v = Math.abs(speed);
+  for (const s of list) {
+    if (s.kind !== BOWL || !s.launch) continue;
+    if (v < (s.launchMinSpeed ?? 4)) continue;
+    const t = Math.hypot((x - s.x) / s.rx, (z - s.z) / s.rz);
+    if (t < (s.launchFrom ?? 0.95) || t > 1.6) continue;
+    const pt = Math.hypot((prevX - s.x) / s.rx, (prevZ - s.z) / s.rz);
+    if (!(t - pt > 0.004)) continue;          // not travelling outward
+    return {
+      yVelocity: Math.min(
+        s.launchMax ?? 9,
+        Math.max(s.launchMinY ?? 6, v * (s.launch ?? 0.8) + 1.5),
+      ),
+      rimY: s.y,
+      bowl: s,
+    };
+  }
+  return null;
+}
+
+// Keep a grounded car inside a launch bowl even though its collision circle is
+// wider than a bathtub. The porcelain colliders are solid at deck level, but a
+// car up on the dish has to be able to climb all the way to the rim — otherwise
+// a 2.2-radius car in a 3.6-radius bath can never get above the middle third.
+// Returns the corrected x/z, or null when no correction is needed / the point is
+// not inside a launch bowl.
+export function containInBowl(list, x, z, y, margin = 0.995) {
+  // A car on the 0.5 deck is the colliders' job (they release at 0.6, the bath
+  // floor). Only a car genuinely on the dish is clamped by the rim.
+  if (y <= 0.5) return null;
+  for (const s of list) {
+    if (s.kind !== BOWL || !s.launch) continue;
+    // The boogie board is a real way in and out: don't clamp a car that is over
+    // its footprint, or the only exit would be the launch.
+    if (s.exit && x >= s.exit.x0 && x <= s.exit.x1 && z >= s.exit.z0 && z <= s.exit.z1) continue;
+    const t = Math.hypot((x - s.x) / s.rx, (z - s.z) / s.rz);
+    if (t <= margin || t > 1.6) continue;
+    const k = margin / t;
+    const cx = s.x + (x - s.x) * k;
+    const cz = s.z + (z - s.z) * k;
+    // Only a car that is actually ON the dish is contained. A car climbing the
+    // boogie board is well below the lip height where it crosses the rim, and
+    // must not be yanked sideways off the board by this.
+    const lip = surfaceAt(s, cx, cz);
+    if (lip === null || Math.abs(y - lip) > 0.35) continue;
+    return { x: cx, z: cz, t: margin, bowl: s };
+  }
+  return null;
+}
+
 // ---- Builders ------------------------------------------------------------
 // Small constructors so a level file reads as a list of things rather than as
 // object literals with the axis convention spelled out every time.

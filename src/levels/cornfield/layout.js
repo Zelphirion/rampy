@@ -10,8 +10,8 @@ export const CORN_SPAWN = { x: -38, z: -62, yaw: Math.PI / 2 };
 export const CORN_RETURN = { x: -38, z: -97, halfW: 3.4, halfD: 5.5 };
 
 // ===== Barn =====
-// A big working barn (~5x the old footprint, x0..48 z-20..20) with a tall
-// drive-up hayloft.
+// A big working barn (~5x the old footprint, x0..48 z-20..20) with a steep
+// drive-up hayloft filling the back half of its floor, wall to wall.
 export const BARN = {
   x: 24, z: 0,
   halfW: 24, halfD: 20,    // footprint x 0..48, z -20..20
@@ -19,25 +19,29 @@ export const BARN = {
   loftY: 7.5,
   doorHalf: 5,             // doorway half-width (along x) in the south wall
   doorX: 36.5,             // doorway centre on the south wall (loft centre)
-  loftWest: 0,             // hayloft spans the full width...
+  loftWest: 0,             // the deck runs the barn's full width (west wall)...
   loftSouth: 0,            // ...from z 0 (barn centre) to the north (back) wall
 };
+// The big drive-out window in the barn's north wall. It sits in the loft, so a
+// car that has climbed the ramp can cross the hay floor and drop out the back of
+// the barn instead of turning round indoors.
+export const BARN_WINDOW = { x0: 32, x1: 40, y0: BARN.loftY, y1: 11.4 };
 // The hayloft ramp runs along the EAST SIDE WALL, not across the doorway: it
-// starts in the south-east corner, just inside the side wall, and climbs north
-// to the back-half loft, so it is out of the way the moment you drive in. Narrow
-// (3.6) and built of old boards rather than a solid wedge (see buildBarn).
+// starts just north of the south-east corner and climbs north to the east-half
+// loft. Its 12 m run for a 7.5 m rise is the same ~32° grade as the park slide's
+// chute, so it is a proper steep hay ramp rather than a long shallow bank.
 export const BARN_RAMP = {
-  x: BARN.x + BARN.halfW - 2.3, z: -BARN.halfD + 0.8, runX: 0, runZ: 1,
-  len: 21, width: 3.6, height: BARN.loftY, baseY: 0, boost: 0,
+  x: BARN.x + BARN.halfW - 2.3, z: BARN.z - 12, runX: 0, runZ: 1,
+  len: 12, width: 3.6, height: BARN.loftY, baseY: 0, boost: 0,
 };
 
 // ===== Silo =====
 // Closed SCENERY: a full banded-metal cylinder with a conical roof cap. No
 // door, no gap, no interior spiral — the colliders ring it solid at full
-// height and nothing opens into it. Stands on flat ground west of the barnyard
-// in a clearing of the corn (the north-side plateau swallowed its old spot by
-// the corn rows).
-export const SILO = { x: -30, z: 8, r: 6, h: 14 };
+// height and nothing opens into it. It stands on the open grass just north of
+// the apple orchard, clear of the barn door, the corn, the farmhouse and the
+// tractor loop.
+export const SILO = { x: 65, z: 10, r: 6, h: 14 };
 
 // ===== Water tower =====
 // A steel tank on four braced legs, standing well south of the barn (clear of
@@ -65,9 +69,10 @@ export function waterTowerColliders() {
 // ===== Field footprints =====
 // A wider field at a looser spacing: more stalks than before, but each plant is
 // a detailed multi-part model with room to be seen, so the rows read as rows
-// instead of a solid block of green. The north edge stops short of the
-// plateau's toe (HILL.zNear) so no stalks grow out of the rising mound.
-export const CORNFIELD_RECT = { x0: -70, x1: -14, z0: -54, z1: 42 };
+// instead of a solid block of green. The north edge stops short of BOTH the
+// river leg (legZ0 = 34) and the plateau's toe (HILL.zNear) so no stalk grows
+// out of the water or up the rising mound.
+export const CORNFIELD_RECT = { x0: -70, x1: -14, z0: -54, z1: 30 };
 // The pumpkin patch rides the LEVEL top of the north plateau, inside the flat
 // crown band (HILL.zTop..HILL.zFar), so every pumpkin rests on flat high
 // ground and rolls off the lip when knocked.
@@ -114,23 +119,32 @@ export function spiralRampSegments({ cx, cz, startAngle = 0, r = 3, y0 = 0, y1 =
 // Walls only. The hayloft is NOT a collider: it is a soft surface handled by the
 // cornfield's own Y branch (index.js `loftTopAt`), so a car on the ground floor
 // under it is never lifted onto it. Every wall carries `top = wallH`, so a car
-// up at loft height is still contained until it drives off the open west edge.
+// up at loft height is still contained until it reaches the big window in the
+// north wall. That window's collider is only a low sill: it stops ground-floor
+// cars from driving through the wall, but its top sits just under the loft
+// floor so a loft-height car passes over it and drives out.
 export function barnColliders() {
   const w = 0.5;   // wall half-thickness
   const westEnd = BARN.x - BARN.halfW;
   const eastEnd = BARN.x + BARN.halfW;
   const doorL = BARN.doorX - BARN.doorHalf;
   const doorR = BARN.doorX + BARN.doorHalf;
+  const nz = BARN.z + BARN.halfD;
+  const win = BARN_WINDOW;
   return [
     // East wall (solid, full height).
     { x: eastEnd, z: BARN.z, halfW: w, halfD: BARN.halfD, h: BARN.wallH, top: BARN.wallH },
-    // North wall.
-    { x: BARN.x, z: BARN.z + BARN.halfD, halfW: BARN.halfW, halfD: w, h: BARN.wallH, top: BARN.wallH },
+    // North wall, split around the big drive-out window.
+    { x: (westEnd + win.x0) / 2, z: nz, halfW: (win.x0 - westEnd) / 2, halfD: w, h: BARN.wallH, top: BARN.wallH },
+    { x: (win.x1 + eastEnd) / 2, z: nz, halfW: (eastEnd - win.x1) / 2, halfD: w, h: BARN.wallH, top: BARN.wallH },
     // South wall, split around the doorway.
     { x: (westEnd + doorL) / 2, z: BARN.z - BARN.halfD, halfW: (doorL - westEnd) / 2, halfD: w, h: BARN.wallH, top: BARN.wallH },
     { x: (doorR + eastEnd) / 2, z: BARN.z - BARN.halfD, halfW: (eastEnd - doorR) / 2, halfD: w, h: BARN.wallH, top: BARN.wallH },
     // West wall (solid now).
     { x: westEnd, z: BARN.z, halfW: w, halfD: BARN.halfD, h: BARN.wallH, top: BARN.wallH },
+    // The sill below the big north window. Low enough for a loft-height car,
+    // tall enough that the ground floor is still walled off.
+    { x: (win.x0 + win.x1) / 2, z: nz, halfW: (win.x1 - win.x0) / 2, halfD: w, h: win.y0 - 0.2, top: win.y0 - 0.2, noRoof: true, windowSill: true },
   ];
 }
 
@@ -167,9 +181,25 @@ export function cornGrid(rect = CORNFIELD_RECT, spacing = CORN.spacing) {
 }
 
 // Does a car at (carX, carZ) moving at `speed` bend this stalk over?
-export function shouldKnockStalk(carX, carZ, speed, stalk, radius = CORN.knockR) {
+// With no footprint this is the original circle of `radius` around the car's
+// centre. Pass a footprint ({ halfLen, halfWid }) plus the car's `heading` and
+// the test becomes the car's actual oriented rectangle (plus a stalk-sized
+// margin), so a wide ride — monster truck, bus, train — knocks down every
+// stalk its body covers, corners included, instead of slipping between rows.
+export function shouldKnockStalk(carX, carZ, speed, stalk, radius = CORN.knockR, footprint = null, heading = 0) {
   if (Math.abs(speed) < CORN.minSpeed) return false;
   const dx = carX - stalk.x, dz = carZ - stalk.z;
+  if (footprint && (footprint.halfLen > 0 || footprint.halfWid > 0)) {
+    const fx = -Math.cos(heading), fz = Math.sin(heading);   // nose
+    const rx = Math.sin(heading), rz = Math.cos(heading);    // across
+    const along = dx * fx + dz * fz;
+    const side = dx * rx + dz * rz;
+    // The margin is the stalk's own girth plus a hand's width of slack, NOT the
+    // old knockR: the rectangle already accounts for the bodywork.
+    const margin = 0.6;
+    return Math.abs(along) <= footprint.halfLen + margin &&
+      Math.abs(side) <= footprint.halfWid + margin;
+  }
   return dx * dx + dz * dz < radius * radius;
 }
 
@@ -479,6 +509,43 @@ export function hillColliders() {
   return [];
 }
 
+// ===== The covered bridge =====
+// A single-span New England covered bridge across the river leg, on the exact
+// line out of the portal: the spawn sits at x = -38 facing north, so driving
+// straight through the corn crosses the bridge and climbs the hill beyond. The
+// deck is flush with both banks, so the car drives straight on at ground level
+// while the water runs underneath. The footprint is exempt from `riverAt` at
+// deck height (see `deckClear`), so the current cannot shove a car sideways
+// while it is crossing the bridge — but a car already down in the water can
+// still drive UNDER the span, where the river is what it rides.
+export const BRIDGE = {
+  x: CORN_SPAWN.x, z: 39,
+  halfW: 3.6,        // outer side-wall envelope
+  halfLen: 5.5,      // spans z 33.5..44.5, just past both banks
+  eaveY: 4.0,        // top of the side trusses / roof eaves
+  ridgeY: 5.4,       // gable ridge
+  // Below this height a car inside the bridge footprint is UNDER the deck (in
+  // the river), not on it. The deck surface is y=0 and its underside is about
+  // -0.26, so anything at or under -0.35 is a submerged car.
+  deckClear: -0.35,
+};
+export function bridgeAt(x, z) {
+  return x >= BRIDGE.x - BRIDGE.halfW && x <= BRIDGE.x + BRIDGE.halfW &&
+    z >= BRIDGE.z - BRIDGE.halfLen && z <= BRIDGE.z + BRIDGE.halfLen;
+}
+export function bridgeColliders() {
+  const t = 0.3;
+  const side = BRIDGE.halfW - t / 2;
+  // `bottom` is the deck line: the side trusses are solid from there upward, so
+  // a car crossing the deck is fenced in, while a car down in the river drives
+  // straight underneath them instead of hitting an invisible wall in the water.
+  const bottom = BRIDGE.deckClear;
+  return [
+    { x: BRIDGE.x - side, z: BRIDGE.z, halfW: t / 2, halfD: BRIDGE.halfLen, h: BRIDGE.ridgeY, top: BRIDGE.ridgeY, bottom, noRoof: true },
+    { x: BRIDGE.x + side, z: BRIDGE.z, halfW: t / 2, halfD: BRIDGE.halfLen, h: BRIDGE.ridgeY, top: BRIDGE.ridgeY, bottom, noRoof: true },
+  ];
+}
+
 // ===== The river =====
 // An L-shaped watercourse: it comes in along the east side (the channel),
 // and at the plateau's SOUTH toe it turns the corner and runs WEST the whole
@@ -498,7 +565,14 @@ export const RIVER = {
   flowSpeed: 11,         // u/s
   flowDrag: 1.2,         // per-second throttle bleed while afloat
 };
-export function riverAt(x, z) {
+export function riverAt(x, z, y) {
+  // The covered bridge spans the leg: its deck is flush with the banks, so a car
+  // at deck height is ON the bridge (no current, no water). A car already down
+  // in the water drives UNDER it — for that, pass the car's height: below the
+  // deck the river is still there and is what the car should ride.
+  if (bridgeAt(x, z)) {
+    if (y === undefined || y > BRIDGE.deckClear) return null;
+  }
   const inChannel = x >= RIVER.x0 && x <= RIVER.x1 && z <= RIVER.legZ1;
   const inLeg = z >= RIVER.legZ0 && z <= RIVER.legZ1 && x >= RIVER.legX0 && x <= RIVER.x1;
   return inChannel || inLeg ? RIVER : null;
@@ -548,7 +622,7 @@ export function riverWallColliders() {
 export const MILL = {
   x: -96, z: 18,
   halfW: 16, halfD: 14, wallH: 12,
-  doorHalf: 3.0,             // doorway half-width (along x) in the south wall
+  doorHalf: 5.5,             // a wide doorway (11 m) so the car can always turn out
   loftY: 8,                  // gantry walkway around the machinery
   wheel: { x: -96, y: 1.4, z: 38.5, r: 4, halfW: 4.5 },   // spans the river; spins about Z
   drum: { x: -101.5, y: 2.6, z: 14, r: 1.0, len: 3.0 },
@@ -563,7 +637,11 @@ export function millColliders() {
   // walls. Kept as separate boxes so the gaps between them stay drivable.
   const millTrain = [
     { x: x - 6, z: z - 4, halfW: 4.0, halfD: 3.4, h: 3.2, top: 3.2 },   // hurst frame/stones
-    { x: x + 1, z: z - 2, halfW: 0.9, halfD: 0.9, h: 9.8, top: 9.8 },   // elevator legs
+    // The elevator legs were planted right in the doorway's centre line, which
+    // made the mill a trap: you drove in and met a post with no room to swing
+    // round. They now stand at the back of the floor, clear of the straight
+    // entry/exit lane.
+    { x: x + 1, z: z + 8, halfW: 0.9, halfD: 0.9, h: 9.8, top: 9.8 },     // elevator legs
     { x: x + 11, z: z + 2.5, halfW: 1.8, halfD: 1.8, h: 3.2, top: 3.2 }, // pot still + furnace
     { x: x + 11, z: z + 11, halfW: 2.4, halfD: 1.7, h: 2.2, top: 2.2 },  // worm box
     { x: x + 8.5, z: z - 6, halfW: 2.2, halfD: 2.2, h: 2.6, top: 2.6 },  // mash tun
@@ -605,6 +683,17 @@ export function farmHouseColliders() {
     { x, z: z - halfD, halfW, halfD: w, h: wallH, top: wallH },
     { x, z: z + halfD, halfW, halfD: w, h: wallH, top: wallH },
   ];
+}
+
+// Is this point under a roof? The orchard's squirrel only lobs apples at a car
+// out in the open: once you duck inside the barn, the mill or the farmhouse it
+// has nothing to aim at, and a throw already in the air cannot reach you there
+// either. Footprints are used rather than the wall colliders so the whole
+// interior — including the loft — counts as shelter. The silo and the water
+// tower are closed scenery you cannot get inside, so they are not listed.
+export function insideFarmBuilding(x, z) {
+  const inBox = (b) => Math.abs(x - b.x) <= b.halfW && Math.abs(z - b.z) <= b.halfD;
+  return inBox(BARN) || inBox(MILL) || inBox(FARM_HOUSE);
 }
 
 // ---- the wrap-around porch ----
@@ -689,4 +778,25 @@ export function farmBoundsColliders() {
     { x: cx, z: z0, halfW: (x1 - x0) / 2, halfD: t, h, top: h },
     { x: cx, z: z1, halfW: (x1 - x0) / 2, halfD: t, h, top: h },
   ];
+}
+
+// The backstop behind those colliders. A knock slides the car WITHOUT any
+// collision test (see main.js), and the squirrel's apple and the bull's horn
+// both throw it hard enough to clear a 1 m thick wall in a single frame — so
+// the wall alone cannot promise the car stays on the farm. This is the promise:
+// given a position, hand back the nearest point inside the fence and which
+// boundary runs were crossed, so the caller can kill the outward half of the
+// knock instead of letting it grind against the wall.
+export const FARM_WALL_INSET = 0.6;   // the boundary collider's half-thickness, and a hair
+export function clampInsideFarm(x, z, inset = FARM_WALL_INSET) {
+  const { x0, x1, z0, z1 } = FARM_BOUNDS;
+  const west = x0 + inset, east = x1 - inset;
+  const south = z0 + inset, north = z1 - inset;
+  return {
+    x: Math.min(Math.max(x, west), east),
+    z: Math.min(Math.max(z, south), north),
+    // -1 = past the low side, +1 = past the high side, 0 = inside.
+    hitX: x < west ? -1 : x > east ? 1 : 0,
+    hitZ: z < south ? -1 : z > north ? 1 : 0,
+  };
 }

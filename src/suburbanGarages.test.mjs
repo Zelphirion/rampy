@@ -2,8 +2,9 @@
 //
 // There are two of them, and they have swapped jobs. They used to sit on the
 // west side of arterial-ns (z -49 / z -68); they now sit in a cul-de-sac in the
-// east outer belt, fronting a north-south street, still face 'E' and still 19
-// apart along z. They used to be:
+// north-west outer belt, fronting a north-south street with their backs to the
+// west boundary wall. They still face 'E' and sit 22.5 apart along z. They used
+// to be:
 //
 //   houseGarage   (gray shingle roof)  - PANELLED roller door, wound UP.
 //                                        You drove in through it, and the
@@ -27,11 +28,11 @@
 // door SHUT across a solid block with no room behind it. Both are fixed, and the
 // fix this time is that the roles changed rather than the styling.
 //
-// The brown house has since been made much bigger - 20 by 12 where it used to be
-// 11 by 11 - and given the house interior's own front door, scaled down to the
-// size of its garage bay and set down beside it exactly as it sits beside the
-// roller door inside. The bay is the way in; the door on the street is shut and
-// locked, and always was.
+// The brown house has since been made a 28 by 28 square at the grey house's
+// height (it used to be 20 by 12, and 11 by 11 before that) and given the house
+// interior's own front door, scaled down to the size of its garage bay and set
+// down beside it exactly as it sits beside the roller door inside. The bay is
+// the way in; the door on the street is shut and locked, and always was.
 //
 // Run: node --test src/suburbanGarages.test.mjs
 import test from 'node:test';
@@ -267,7 +268,7 @@ test('the grey-roofed garage has a collider across its mouth', () => {
   // the car. That is the point now: this door is shut, and the car has to bounce
   // off it on the apron.
   const pushes = [...shut.matchAll(/colliders\.push\(\{([^}]*)\}/g)].map((m) => m[1].replace(/\s+/g, ' '));
-  assert.equal(pushes.length, 4, `expected 4 colliders on the grey-roofed house, found ${pushes.length}`);
+  assert.equal(pushes.length, 4, `expected 4 shell colliders on the grey-roofed house, found ${pushes.length}`);
   assert.ok(pushes.some((p) => /gFrontZ/.test(p)),
     'no collider sits at the garage mouth, so the shut door does not stop the car');
 });
@@ -335,7 +336,7 @@ test('the brown-roofed bay is a room you can actually drive into', () => {
   assert.ok(!solid,
     'houseStandard is back to a single solid collider, so the bay is a recess again');
   assert.equal([...open.matchAll(/colliders\.push\(/g)].length, 3,
-    'the bay should be enclosed by exactly three colliders, open at the front');
+    'the bay should be enclosed by three shell colliders, open at the front (the back-yard fence is added by addBackyard)');
 });
 
 test('the brown-roofed bay has the beckoning light and the tools', () => {
@@ -516,7 +517,7 @@ test('the bay mouth is not sealed by a collider', () => {
       halfD: resolve(parts.halfD, openDefs),
     };
   });
-  assert.equal(cols.length, 3, 'the bay should be enclosed by exactly three colliders');
+  assert.equal(cols.length, 3, 'the bay should be enclosed by three shell colliders (the back-yard fence is added by addBackyard)');
   for (const c of cols) {
     assert.ok([c.x, c.z, c.halfW, c.halfD].every((v) => v !== null),
       `could not resolve a collider: ${JSON.stringify(c)}`);
@@ -547,7 +548,7 @@ test('the two houses really do have different roof colours', () => {
 
 // ---- The streetlights in front of the two garages ----
 //
-// props.js runs a short lamp-post row down the verge of the east outer-belt
+// props.js runs a short lamp-post row down the verge of the north-west outer-belt
 // cul-de-sac, in front of the two houses, and it must not drop a post in either
 // garage mouth: the open bay (the way into the house) and the shut roller door.
 // props.js knows nothing about buildings, so it declares the two frontage bands
@@ -568,7 +569,7 @@ function garageMouthZ(builderSrc, entryName) {
   const entryZ = n(entry[1]);
 
   if (entryName === 'houseStandard') {
-    // The open bay: GX = 2.25, GW2 = 5.5.
+    // The open bay: GX = 8.5, GW2 = 6.4.
     const GX = n(/GX = (-?[\d.]+)/.exec(builderSrc)[1]);
     const GW2 = n(/GW2 = (-?[\d.]+)/.exec(builderSrc)[1]);
     return { z0: entryZ - (GX + GW2 / 2) - 0.5, z1: entryZ - (GX - GW2 / 2) + 0.5 };
@@ -614,7 +615,7 @@ test('no streetlight stands in a garage mouth, and the front doors are lit', () 
   // it against the two frontage bands. The row skips a post that would land on
   // a garage mouth AND a post that would land on one of the door lamps.
   const row = [];
-  for (let z = 44; z <= 84; z += 6) {
+  for (let z = 158; z <= 244; z += 6) {
     if (declared.some((f) => z > f.z0 && z < f.z1)) continue;
     if (doorLamps.some((d) => Math.abs(z - d) < 1.5)) continue;
     row.push(z);
@@ -630,14 +631,14 @@ test('no streetlight stands in a garage mouth, and the front doors are lit', () 
     }
   }
   // The skipped posts must not simply have been deleted: each frontage still
-  // needs lighting, so a post stands on the verge (x ~110.5) by each front door.
+  // needs lighting, so a post stands on the verge (x -147.5) by each front door.
   assert.ok(doorLamps.length >= 2,
     `expected a lamp by each front door, found ${doorLamps.length}`);
-  assert.match(PROPS, /for \(const z of DOOR_LAMPS\) makeLampPost\(scene, 110\.5, z\);/,
+  assert.match(PROPS, /for \(const z of DOOR_LAMPS\) makeLampPost\(scene, -123, z\);/,
     'the door lamps are not being built');
   for (const d of doorLamps) {
     // Both lamps stand on the same stretch of street the two houses front.
-    assert.ok(d > 42 && d < 82,
+    assert.ok(d > 156 && d < 246,
       `the culs-de-sac lamp at z ${d} is not on the street the two houses front`);
     for (const [i, f] of declared.entries()) {
       assert.ok(!(d > f.z0 && d < f.z1),

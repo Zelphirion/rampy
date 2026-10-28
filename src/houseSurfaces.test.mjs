@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PAD, WEDGE, BOWL, surfaceAt, surfacesAt, houseSurfaceY, houseLandingY,
-  stepAllowance, pad, wedge, bowl,
+  stepAllowance, pad, wedge, bowl, bowlLaunchAt, containInBowl,
 } from './levels/house/surfaces.js';
 
 test('a pad is flat and only exists inside its rectangle', () => {
@@ -161,6 +161,44 @@ test('a car stranded in the tub can drive back out the way it came', () => {
   // ...and once on the rim, the board is there to climb. Same climb, in reverse.
   const board = wedge(53.5, 30, 0, 20, 7, TILE_Y + 0.4, 0);
   assert.equal(houseSurfaceY([board, ...BATHROOM], 60, 30, 0.75), 0.825);
+});
+
+test('a launch bowl pops the car out when it drives up the wall with speed', () => {
+  const b = bowl(0, 0, 3.6, 7.6, 5.2, 4.6, {
+    launch: 0.8, launchMinSpeed: 4, launchFrom: 0.95, launchMinY: 6.5, launchMax: 9.5,
+  });
+  const jump = bowlLaunchAt([b], 3.5, 0, 3.2, 0, 8);
+  assert.ok(jump, 'a fast outward climb should launch');
+  assert.equal(jump.rimY, 5.2, 'the launch knows the rim height');
+  assert.ok(jump.yVelocity >= 6.5 && jump.yVelocity <= 9.5, `launch ${jump.yVelocity}`);
+  // Too slow: the car just rides the wall.
+  assert.equal(bowlLaunchAt([b], 3.5, 0, 3.2, 0, 3), null, 'a crawl does not launch');
+  // Carving a circle at a constant radius is not an outward climb.
+  assert.equal(bowlLaunchAt([b], 3.5, 0.4, 3.5, 0.2, 8), null, 'carving does not launch');
+  // Driving DOWN the wall is not a launch either.
+  assert.equal(bowlLaunchAt([b], 2.6, 0, 3.1, 0, 8), null, 'inward travel does not launch');
+  // Only bowls marked as launch bowls.
+  assert.equal(bowlLaunchAt([bowl(0, 0, 3.6, 7.6, 5.2, 4.6)], 3.5, 0, 3.2, 0, 8), null);
+});
+
+test('a bowl rim contains a car up on the dish, but never one down on the board', () => {
+  const b = bowl(0, 0, 3.6, 7.6, 5.2, 4.6, { launch: 0.8 });
+  // A car crossing the rim at lip height is pulled back inside the dish.
+  const keep = containInBowl([b], 4.2, 0, 5.15);
+  assert.ok(keep, 'the car should have been contained');
+  assert.ok(Math.hypot(keep.x / 3.6, keep.z / 7.6) <= 0.995 + 1e-9,
+    'the correction does not put the car back inside the rim');
+  // Deck level is the colliders' job.
+  assert.equal(containInBowl([b], 4.2, 0, 0.5), null, 'deck level is left to the colliders');
+  // A car climbing the board crosses the rim far below the lip height.
+  assert.equal(containInBowl([b], 4.2, 0, 3.0), null, 'a car on the board is not contained');
+  // Well outside the bowl is untouched.
+  assert.equal(containInBowl([b], 6, 0, 5.2), null, 'far outside the bowl');
+  // ...and the boogie board's footprint is deliberately open as an exit.
+  const withBoard = bowl(0, 0, 3.6, 7.6, 5.2, 4.6, {
+    launch: 0.8, exit: { x0: -6, x1: -3, z0: -3, z1: 3 },
+  });
+  assert.equal(containInBowl([withBoard], -4.2, 0, 5.15), null, 'the board exit is clamped shut');
 });
 
 test('a pad is not a step: it has to be reached by something you can climb', () => {
