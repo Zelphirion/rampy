@@ -68,7 +68,7 @@ import { tryClaim, makeClaimState, cancelClaims, claimStatePlayers, MAX_PLAYERS 
 import { splitViewports, SPLIT_FOV } from './modules/splitViewports.js?v=1791700000000';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js?v=1800000000167';
 import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, ROOM_LABELS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1800000000165';
-import { buildMuseumWorld, MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM, RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY } from './levels/museum/index.js?v=1800000000170';
+import { buildMuseumWorld, MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM, RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY } from './levels/museum/index.js?v=1800000000191';
 import { houseSurfaceY, houseLandingY, bowlLaunchAt, containInBowl, surfaceAt } from './levels/house/surfaces.js?v=1800000000047';
 import { createTrackState, stepTrack, sampleTrack, poseOnTrack, nearestTrackS, trackStick, releaseYaw, launchRampStart, createLaunchFlight, stepLaunchFlight, TRACK_CAPTURE, TRACK_LIFT } from './levels/house/hotwheels.mjs?v=1800000000020';
 import { addCat } from './cat.js?v=1791479956919';
@@ -2295,8 +2295,10 @@ function updateSplitMarkers(rects) {
       tag.scale.set(bs.x * grow, bs.y * grow, 1);
       // Keep the tag's underside a fixed gap above the car: as it grows with
       // distance its centre lifts, so it floats clear instead of draping over
-      // (or touching) the car from far away.
-      tag.position.y = SPLIT_MARKER_BASE_Y + bs.y * grow * 0.5;
+      // (or touching) the car from far away. A giant ride (the mech) needs the
+      // bubble over its own head rather than buried in its torso.
+      const baseGap = other.kind === 'robot' ? 16 : SPLIT_MARKER_BASE_Y;
+      tag.position.y = baseGap + bs.y * grow * 0.5;
     }
 
     if (onScreen || !ind) {
@@ -2367,6 +2369,9 @@ function beginSplit() {
   // Dress Player 1 in the ride they picked. Must run BEFORE their name tag is
   // attached below (swapPlayerCar rebuilds the car's children).
   if (pickKinds[0] && pickKinds[0] !== playerCarKind) swapPlayerCar(pickKinds[0]);
+  // The record follows P1's ride too (swapPlayerCar skips a no-op swap): the
+  // rival's floating tag reads it to clear a tall body.
+  players[0].kind = playerCarKind;
   // ...and stand up Player 2 with a fresh car beside Player 1, facing the same
   // way, so nobody drops on top of anybody.
   players[1] = makePlayer(1, { device: devs[1].device, padIndex: devs[1].padIndex });
@@ -2558,6 +2563,53 @@ function placePlayerTwoNearP1() {
 // single-player block. `p2Jump` is always false in v1 (P2 never launches and
 // never rides ramps' areal maths) - the "airborne rides over things" rule is
 // therefore reduced to roof-riding via buildingTopAt, exactly like P1's.
+
+// The twin's walk cycle. P1's three gait updaters (updatePlayerRobotWalk,
+// updatePlayerTarantulaWalk, updatePlayerCrabScuttle) all animate the global
+// `car` from one shared phase, so Player 2's legged rides used to slide along
+// the road with their legs frozen. This is the same maths against the twin's
+// own rig and its own phase, so the split-screen mech stomps instead of gliding.
+function updateTwoRideGait(p, dt) {
+  if (!p || !p.car) return;
+  const ud = p.car.userData;
+  const speed = p.velocity.value;
+  const t = THREE.MathUtils.clamp(Math.abs(speed) / 1.2, 0, 1);   // 0 at rest → 1 at a jog
+  p.gaitPhase = (p.gaitPhase || 0) + dt * (0.5 + Math.abs(speed) * 1.15);
+  const ph = p.gaitPhase;
+  if (p.kind === 'tarantula') {
+    const a = ud.tarantulaAnim || ud.robotAnim;
+    if (!a || !a.legs) return;
+    const s = Math.sin(ph) * 0.5 * (0.25 + t * 0.75);
+    const A = [0, 3, 4, 7];   // front-left + the two cross-diagonals move together
+    for (let i = 0; i < a.legs.length; i++) {
+      a.legs[i].rotation.y = (A.indexOf(i) >= 0 ? 1 : -1) * s
+        + 0.06 * Math.sin(ph * 1.7 + i * 1.4);
+    }
+    return;
+  }
+  if (p.kind === 'crab') {
+    if (!ud.crabLegs || !ud.crabLegs.length) return;
+    const tt = THREE.MathUtils.clamp(Math.abs(speed) / 1.4, 0, 1);
+    const scuttle = (p.crabPhase = (p.crabPhase || 0) + dt * (3.5 + Math.abs(speed) * 2.6));
+    for (let i = 0; i < ud.crabLegs.length; i++) {
+      ud.crabLegs[i].rotation.x = Math.sin(scuttle + i * 1.7) * 0.34 * (0.25 + 0.75 * tt);
+    }
+    if (ud.crabClaws) {
+      for (let i = 0; i < ud.crabClaws.length; i++) {
+        ud.crabClaws[i].rotation.x = -0.18 * tt + Math.sin(scuttle * 0.7 + i * 2) * 0.12;
+      }
+    }
+    return;
+  }
+  const a = ud.robotAnim;
+  if (!a || !a.legL) return;
+  const swing = Math.sin(ph) * 0.62 * t;
+  a.legL.rotation.x = swing;
+  a.legR.rotation.x = -swing;
+  a.armL.rotation.x = -swing * 0.55;
+  a.armR.rotation.x = swing * 0.55;
+}
+
 function stepTwoPlayer(p, dt) {
   if (!p || !p.car) return;
   const carTwo = p.car;
@@ -2590,6 +2642,15 @@ function stepTwoPlayer(p, dt) {
   // it also covers the P1-as-rider / P2-as-passenger case where P2 must hold a
   // still pose rather than drive.)
   if (rocketRide.active || spaceArrival.active) {
+    p.velocity.value = 0;
+    p.steering.value = 0;
+    if (p.jump) { p.jump.inAir = false; p.jump.yVelocity = 0; }
+    return;
+  }
+  // The museum cuts script one car through the doors and hold the picture until
+  // the world swaps. Neither player drives during that shot, so park the twin
+  // (the rider's own transform is written by the cut every frame).
+  if (museumCine.active || museumOutCine.active) {
     p.velocity.value = 0;
     p.steering.value = 0;
     if (p.jump) { p.jump.inAir = false; p.jump.yVelocity = 0; }
@@ -2786,6 +2847,10 @@ function stepTwoPlayer(p, dt) {
   // both cars read the same slope (null where the ground is flat, or where a
   // ramp owns the attitude instead).
   let pitchSurface2 = null;
+  // True while the twin is climbing the museum's grand flight (or dropping back
+  // down it). Mirrors P1's `onMuseumStair`: the treads are the surface both ways
+  // and the body pitches to them.
+  let onMuseumStair2 = false;
   if (worldState === 'ramp') {
     const r2 = rampRampInfoAt(carTwo.position.x, carTwo.position.z);
     if (r2 && r2.s > 0.02 && r2.s < 0.98) {
@@ -2808,14 +2873,46 @@ function stepTwoPlayer(p, dt) {
     if (sup2.ramp) { onRamp2 = true; rampDef2 = sup2.ramp; }
     ugTwoStepOff = sup2.stepOff;
   } else if (worldState === 'house') {
-    // The house has its own walk-based heightfield for the main car; Player 2
-    // rides the flat floor in v1. The walls still block (above), so the twin
-    // stays inside the shell.
-    groundY2 = groundHeight;
+    // The house's own heightfield (furniture tops, the playroom ramp, the bath
+    // dish and its boogie board) is P1's surface query; the twin rides it too,
+    // so it climbs the same slopes instead of skating along a flat floor.
+    // `fromY` is the twin's own height, so it only steps onto something it could
+    // actually climb.
+    const surfs2 = houseWorld.surfaces;
+    const hy2 = houseSurfaceY(surfs2, carTwo.position.x, carTwo.position.z, carTwo.position.y);
+    groundY2 = hy2 === null ? HOUSE.floorY : hy2;
+    // The bath dish and the boogie board are the only slopes in the house, and
+    // P1 restricts its pitch sample to them for the same reason: sampling the
+    // highest thing under the car would flip the pitch at the lip.
+    const br2 = ROOMS.bathroom;
+    if (carTwo.position.x > br2.x0 && carTwo.position.x < br2.x1
+        && carTwo.position.z > br2.z0 && carTwo.position.z < br2.z1
+        && carTwo.position.y > 0.55) {
+      const bath2 = surfs2.filter((s) => s.kind !== 'pad'
+        && s.x > br2.x0 && s.x < br2.x1 && s.z > br2.z0 && s.z < br2.z1);
+      pitchSurface2 = (x, z) => {
+        let best = null;
+        for (const s of bath2) {
+          const h = surfaceAt(s, x, z);
+          if (h !== null && (best === null || h > best)) best = h;
+        }
+        // Off the board/dish (over the lip): level with the twin rather than
+        // dropping the sample to the deck.
+        return best === null ? carTwo.position.y : best;
+      };
+    }
   } else if (worldState === 'museum') {
     // The twin rides the same atrium / ramp / exhibit-floor surface as P1; the
-    // walls always block above.
-    groundY2 = museumWorld.surfaceAt(carTwo.position.x, carTwo.position.z);
+    // walls always block above. Passing the twin's own height makes the ramp a
+    // ROOF as well as a road, so a car down in the exhibit hall drives under the
+    // slope instead of being yanked up onto it.
+    groundY2 = museumWorld.surfaceAt(carTwo.position.x, carTwo.position.z, carTwo.position.y);
+    if (museumWorld.onRamp(carTwo.position.x, carTwo.position.z)) {
+      // The ramp down into the exhibit is the building's only slope: sample it a
+      // half wheelbase fore and aft exactly as P1's museum block does, so the
+      // twin tips nose-down on the way down and nose-up coming back up.
+      pitchSurface2 = (x, z) => museumWorld.surfaceAt(x, z, carTwo.position.y);
+    }
   } else if (worldState === 'cornfield') {
     // The farm's own surface families — the same queries P1's Y branch uses:
     // barn ramp + silo spiral (rampInfoAt, baseY-aware), the rounded mound, the
@@ -2889,8 +2986,21 @@ function stepTwoPlayer(p, dt) {
       onRamp2 = true;
       rampDef2 = cityRamp;
     } else {
-      groundY2 = Math.max(groundHeight, cityGroundHeightAt(carTwo.position.x, carTwo.position.z));
-      if (natureHillHeightAt(carTwo.position.x, carTwo.position.z) > 0) pitchSurface2 = natureHillHeightAt;
+      // Rooftops and the museum's grand flight. P1 climbs that flight through
+      // the ordinary rooftop path — the treads are soft colliders — so the twin
+      // has to read the same building tops or it drives into the staircase and
+      // stops dead at the first riser (the giant robot could never get up to the
+      // museum doors as Player 2).
+      const roof2 = buildingTopAt(carTwo.position.x, carTwo.position.z);
+      onMuseumStair2 = worldState === 'city' && museumStairAt(carTwo.position.x, carTwo.position.z) >= 0;
+      if (roof2 > 0) {
+        // On the flight the tread IS the surface both ways, so P2 steps down each
+        // riser on the way back instead of hanging at the top step.
+        groundY2 = roof2;
+      } else {
+        groundY2 = Math.max(groundHeight, cityGroundHeightAt(carTwo.position.x, carTwo.position.z));
+        if (natureHillHeightAt(carTwo.position.x, carTwo.position.z) > 0) pitchSurface2 = natureHillHeightAt;
+      }
     }
   }
 
@@ -2907,6 +3017,15 @@ function stepTwoPlayer(p, dt) {
   // sends the twin into a ballistic arc; gravity brings it back down. P2 never
   // sat on a ramp last frame and flies off one now, that launches them.
   const j2 = p.jump || (p.jump = { inAir: false, yVelocity: 0 });
+  // The museum's atrium lip and balconies drop 36 units to the exhibit floor at
+  // once; the house has the same idea on a smaller scale (off the playroom ramp,
+  // over the bath rim, off a furniture top). Go ballistic and land — P1's
+  // MUSEUM_LEDGE_DROP rule — instead of teleporting the twin down in one frame.
+  if (!j2.inAir && carTwo.position.y - groundY2 > (worldState === 'museum' ? MUSEUM_LEDGE_DROP : 1.0)
+      && (worldState === 'museum' || worldState === 'house' || worldState === 'city')) {
+    j2.inAir = true;
+    j2.yVelocity = 0;
+  }
   const rampLaunchWorld = worldState === 'ramp' || worldState === 'underground' || worldState === 'city';
   if (!j2.inAir && p.wasOnRamp2 && !onRamp2 && rampLaunchWorld && p.velocity.value > 4) {
     j2.inAir = true;
@@ -2983,6 +3102,19 @@ function stepTwoPlayer(p, dt) {
     const rampPitch = -slopeAngle * Math.sign(alongRun);
     carTwo.rotation.z += (rampPitch - carTwo.rotation.z) * 0.28;
     carTwo.rotation.x += (0 - carTwo.rotation.x) * 0.12;
+  } else if (onMuseumStair2 && !j2.inAir) {
+    // The museum's grand flight — the same two-point tread read P1 gets, so the
+    // twin's nose rocks up over each riser and settles on each tread.
+    const halfBase = 1.35;
+    const fh = buildingTopAt(carTwo.position.x + _sp2Dir.x * halfBase, carTwo.position.z + _sp2Dir.z * halfBase);
+    const rh = buildingTopAt(carTwo.position.x - _sp2Dir.x * halfBase, carTwo.position.z - _sp2Dir.z * halfBase);
+    const frontH = fh > 0 ? fh : carTwo.position.y;
+    const rearH = rh > 0 ? rh : carTwo.position.y;
+    const maxPitch = Math.atan2(MUSEUM_STAIR.stepRise, MUSEUM_STAIR.stepDepth);
+    const stairPitch2 = THREE.MathUtils.clamp(
+      -Math.atan2(frontH - rearH, halfBase * 2), -maxPitch * 1.3, maxPitch * 1.3);
+    carTwo.rotation.z += (stairPitch2 - carTwo.rotation.z) * 0.3;
+    carTwo.rotation.x += (0 - carTwo.rotation.x) * 0.12;
   } else if (p.terrainPitch2 !== undefined && !j2.inAir) {
     // Any heightfield terrain — the farm's mound and river banks, the city's
     // outer-belt hills, the beach shelf and the ramp world's hills — tips the
@@ -2998,11 +3130,16 @@ function stepTwoPlayer(p, dt) {
     carTwo.rotation.x += (accelPitch2 - carTwo.rotation.x) * 0.12;
   }
 
-  // Wheel spin + front-wheel steering.
-  const spin2 = p.velocity.value * dt * 2.6;
-  if (carTwo.userData.wheels) for (const w of carTwo.userData.wheels) w.rotation.y += spin2;
-  const pivs2 = carTwo.userData.wheelPivots;
-  if (pivs2) for (let i = 0; i < Math.min(2, pivs2.length); i++) pivs2[i].rotation.y = p.steering.value * 0.55;
+  // Wheel spin + front-wheel steering — or, for the legged rides (the robot,
+  // the tarantula, the crab), the same walk cycle P1's block runs on `car`.
+  if (p.kind === 'robot' || p.kind === 'tarantula' || p.kind === 'crab') {
+    updateTwoRideGait(p, dt);
+  } else {
+    const spin2 = p.velocity.value * dt * 2.6;
+    if (carTwo.userData.wheels) for (const w of carTwo.userData.wheels) w.rotation.y += spin2;
+    const pivs2 = carTwo.userData.wheelPivots;
+    if (pivs2) for (let i = 0; i < Math.min(2, pivs2.length); i++) pivs2[i].rotation.y = p.steering.value * 0.55;
+  }
 }
 
 // ===== Player 2's chase camera =====
@@ -3084,19 +3221,44 @@ function followCameraTwo(p, dt) {
   }
 
   camB.up.set(0, 1, 0);   // undo a previous rim visit's rolled up-vector
+  // Rides much bigger than a car need the lens held back — and, for the mech,
+  // aimed at its chest — exactly as P1's updateCamera does. Without this the
+  // split half sat inside the 14-tall robot's leg, filling the screen with its
+  // own body instead of showing the road. The train follows the same underground
+  // headroom rule P1 uses so it does not poke through the cavern's ceiling.
+  const monsterT2 = THREE.MathUtils.clamp(Math.max(Math.abs(p.velocity.value), 2) / 14, 0.3, 1);
+  let camRadius2 = c.orbit.radius;
+  if (p.kind === 'robot') camRadius2 = 18;
+  else if (p.kind === 'monstertruck') camRadius2 = Math.max(camRadius2, MONSTER_CAM_MAX_RADIUS * monsterT2);
+  else if (p.kind === 'train') {
+    camRadius2 = 34;
+    if (worldState === 'underground') {
+      const headroom2 = UG_TRAIN_CAM_MAX_Y - 2.2 - pcar.position.y;
+      camRadius2 = THREE.MathUtils.clamp(headroom2 / Math.max(Math.cos(1.0), 0.06), 8, 52);
+    }
+  }
+  const targetLift = p.kind === 'robot' ? 7 : 0;
   if (!c.offset) {
     // First frame: park the camera directly on the chase offset so there is no
     // slide-in from the origin.
     c.offset = new THREE.Vector3(0, 0, 0);
     _camTwDesired.set(
-      c.orbit.radius * Math.sin(c.orbit.phi) * Math.cos(c.yaw),
-      c.orbit.radius * Math.cos(c.orbit.phi) + 2.2,
-      c.orbit.radius * Math.sin(c.orbit.phi) * Math.sin(c.yaw));
+      camRadius2 * Math.sin(c.orbit.phi) * Math.cos(c.yaw),
+      camRadius2 * Math.cos(c.orbit.phi) + 2.2,
+      camRadius2 * Math.sin(c.orbit.phi) * Math.sin(c.yaw));
     c.offset.copy(_camTwDesired);
   }
   const target = c.target || (c.target = new THREE.Vector3());
   target.copy(pcar.position);
-  target.y = Math.max(0.8, pcar.position.y);
+  // Follow the twin DOWN below the y=0 datum too: the museum's exhibit floor is
+  // 36 under the atrium, the underground skate-park bowls drop below grade and
+  // the beach shelves into the sea. Clamping at 0.8 there left the camera up in
+  // the atrium looking down at nothing (P1's camera has the same exception).
+  target.y = ((worldState === 'underground' || worldState === 'beach' || worldState === 'museum')
+      && pcar.position.y < 0.8)
+    ? pcar.position.y
+    : Math.max(0.8, pcar.position.y);
+  target.y += targetLift;
 
   _camTwFwd.set(-1, 0, 0).applyQuaternion(pcar.quaternion);
   _camTwFwd.y = 0;
@@ -3105,9 +3267,9 @@ function followCameraTwo(p, dt) {
   const theta = heading + c.yaw;
 
   _camTwDesired.set(
-    c.orbit.radius * Math.sin(c.orbit.phi) * Math.cos(theta),
-    c.orbit.radius * Math.cos(c.orbit.phi) + 2.2,
-    c.orbit.radius * Math.sin(c.orbit.phi) * Math.sin(theta));
+    camRadius2 * Math.sin(c.orbit.phi) * Math.cos(theta),
+    camRadius2 * Math.cos(c.orbit.phi) + 2.2,
+    camRadius2 * Math.sin(c.orbit.phi) * Math.sin(theta));
   const damp = THREE.MathUtils.clamp(dt * 8, 0, 1);
   c.offset.lerp(_camTwDesired, damp);
 
@@ -3116,7 +3278,25 @@ function followCameraTwo(p, dt) {
     camB.far = wantFar;
     camB.updateProjectionMatrix();
   }
+  // The museum is one big room two storeys tall: keep P2's lens inside its
+  // shell, under the coffered ceiling and off both floors — the same clamp
+  // updateCamera applies to P1's. Without it the split half could not follow
+  // the twin down the ramp onto the exhibit floor.
+  let museumDrop2 = 0;
+  if (worldState === 'museum') {
+    const inLobby2 = camB.position.z > ATRIUM_EDGE;
+    const mx0 = inLobby2 ? ATRIUM.minX + 3 : MUSEUM_HALL.minX + 3;
+    const mx1 = inLobby2 ? ATRIUM.maxX - 3 : MUSEUM_HALL.maxX - 3;
+    camB.position.x = THREE.MathUtils.clamp(camB.position.x, mx0, mx1);
+    camB.position.z = THREE.MathUtils.clamp(camB.position.z, MUSEUM_HALL.minZ + 3, MUSEUM_VESTIBULE.z1 - 3);
+    if (camB.position.y > MUSEUM_HALL.ceil - 4) {
+      museumDrop2 = camB.position.y - (MUSEUM_HALL.ceil - 4);
+      camB.position.y = MUSEUM_HALL.ceil - 4;
+    }
+    if (camB.position.y < EXHIBIT.floorY + 0.6) camB.position.y = EXHIBIT.floorY + 0.6;
+  }
   _camTwLook.copy(target).addScaledVector(_camTwFwd, THREE.MathUtils.clamp(p.velocity.value, 0, 14) * 0.12);
+  _camTwLook.y += museumDrop2 * 0.6;
   camB.lookAt(_camTwLook);
 }
 
@@ -3794,6 +3974,7 @@ const museumOutCine = {
   phase: 'drive',     // 'drive' | 'hold'
   t: 0,
   holdT: 0,
+  rider: 0,           // which player is driving out: 0 = P1, 1 = P2
   startX: 0,
   startZ: 0,
   carZ: 0,
@@ -3807,6 +3988,7 @@ const museumCine = {
   active: false,
   phase: 'drive',     // 'drive' | 'hold'
   t: 0,
+  rider: 0,           // which player is driving in: 0 = P1, 1 = P2
   startX: 0,
   startZ: 0,
   speed: 10,
@@ -3814,6 +3996,15 @@ const museumCine = {
   camPos: new THREE.Vector3(),
   camQuat: new THREE.Quaternion(),
 };
+// The car (and player record) a museum cut is driving. Both the entrance and
+// exit shots are written around P1's globals; these pick the rider's instead so
+// Player 2 can drive through the doors and into (or out of) the museum too.
+function museumRiderCar(rider) {
+  return (rider === 1 && car2) ? car2 : car;
+}
+function museumRiderPlayer(rider) {
+  return (rider === 1 && players[1]) ? players[1] : players[0];
+}
 const museumPortal = {
   armed: true,
   leaving: false,
@@ -6637,16 +6828,21 @@ function freezeChasePose(store) {
   store.camQuat.copy(camera.quaternion);
 }
 
-function startMuseumCine() {
+function startMuseumCine(rider = 0) {
   if (museumCine.active) return;
   museumCine.active = true;
   museumCine.phase = 'drive';
   museumCine.t = 0;
   museumCine.holdT = 0;
-  museumCine.startX = car.position.x;
-  museumCine.startZ = car.position.z;
+  // The player whose car nosed the doors drives in; the other is brought along
+  // when the world swaps.
+  museumCine.rider = rider === 1 && car2 ? 1 : 0;
+  const rc = museumRiderCar(museumCine.rider);
+  const rp = museumRiderPlayer(museumCine.rider);
+  museumCine.startX = rc.position.x;
+  museumCine.startZ = rc.position.z;
   museumCine.speed = THREE.MathUtils.clamp(
-    Math.abs(velocity.value) || 9,
+    Math.abs((rp && rp.velocity ? rp.velocity.value : 0)) || 9,
     8,
     14,
   );
@@ -6655,24 +6851,30 @@ function startMuseumCine() {
 
   velocity.value = 0;
   steering.value = 0;
+  if (rp && rp.velocity) rp.velocity.value = 0;
+  if (rp && rp.steering) rp.steering.value = 0;
+  if (rp && rp.jump) { rp.jump.inAir = false; rp.jump.yVelocity = 0; }
+  if (rp) rp.knock = null;
   jumpState.inAir = false;
   jumpState.yVelocity = 0;
   wasOnRamp = null;
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  flatCar2State = createFlatCarState(false);
   taffyState = createTaffyState(false);
   portalGrace = 60;
-  car.visible = true;
+  rc.visible = true;
   museumPortal.armed = false;
 }
 
 function updateMuseumCine(delta) {
   if (!museumCine.active) return;
   museumCine.t += delta;
-  // The script owns the car for the whole shot.
+  // The script owns the rider's car for the whole shot.
   velocity.value = 0;
   steering.value = 0;
+  const rc = museumRiderCar(museumCine.rider);
 
   const stopX = MUSEUM_DOOR.backX + playerCarRadius;
   if (museumCine.phase === 'drive') {
@@ -6683,14 +6885,14 @@ function updateMuseumCine(delta) {
     const p = Math.min(1, dist / 5);
     const blend = p * p * (3 - 2 * p);
     const z = museumCine.startZ + (MUSEUM_DOOR.z - museumCine.startZ) * blend;
-    car.position.set(x, MUSEUM_DOOR.y, z);
-    car.rotation.set(0, 0, 0);   // yaw 0 faces west, through the doors
-    car.visible = true;
+    rc.position.set(x, MUSEUM_DOOR.y, z);
+    rc.rotation.set(0, 0, 0);   // yaw 0 faces west, through the doors
+    rc.visible = true;
     if (cityMuseum && cityMuseum.userData.museumDoors) {
-      cityMuseum.userData.museumDoors.update(car.position, delta);
+      cityMuseum.userData.museumDoors.update(rc.position, delta);
     }
     if (x <= stopX + 0.001) {
-      car.position.x = stopX;
+      rc.position.x = stopX;
       museumCine.phase = 'hold';
       museumCine.holdT = 0;
     }
@@ -6699,9 +6901,9 @@ function updateMuseumCine(delta) {
 
   // Hold the shot on the empty doorway for half a second, then cut.
   museumCine.holdT += delta;
-  car.position.x = stopX;
+  rc.position.x = stopX;
   if (cityMuseum && cityMuseum.userData.museumDoors) {
-    cityMuseum.userData.museumDoors.update(car.position, delta);
+    cityMuseum.userData.museumDoors.update(rc.position, delta);
   }
   if (museumCine.holdT >= MUSEUM_CINE_HOLD) {
     museumCine.active = false;
@@ -6711,16 +6913,62 @@ function updateMuseumCine(delta) {
   }
 }
 
-// The cut itself: move the car into the atrium, park it on the runner facing the
-// desk, and fade up.
+// The cut itself: move the rider's car into the atrium, park it on the runner
+// facing the desk, and fade up. The other player is brought in beside it.
 function completeMuseumSwap() {
-  if (car.parent) car.parent.remove(car);
-  museumScene.add(car);
+  const riderIsP2 = museumCine.rider === 1 && !!car2;
+  const rc = riderIsP2 ? car2 : car;
+  const otherCar = riderIsP2 ? car : car2;
+  if (rc.parent) rc.parent.remove(rc);
+  museumScene.add(rc);
   setWorldState('museum');
   portalCarScale = 1;
-  car.position.set(MUSEUM_START.x, MUSEUM_HALL.floorY, MUSEUM_START.z);
-  car.rotation.set(0, MUSEUM_START.yaw, 0);
-  car.visible = true;
+  rc.position.set(MUSEUM_START.x, MUSEUM_HALL.floorY, MUSEUM_START.z);
+  rc.rotation.set(0, MUSEUM_START.yaw, 0);
+  rc.visible = true;
+
+  if (riderIsP2 && splitActive && otherCar) {
+    // P2 drove in: bring P1 alongside and hand it the same clean state P1's
+    // normal arrival gets.
+    if (otherCar.parent) otherCar.parent.remove(otherCar);
+    museumScene.add(otherCar);
+    const fx = -Math.cos(rc.rotation.y), fz = Math.sin(rc.rotation.y);
+    otherCar.position.set(rc.position.x + (-fz) * 4, rc.position.y, rc.position.z + fx * 4);
+    otherCar.rotation.copy(rc.rotation);
+    otherCar.scale.set(1, 1, 1);
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+    wasOnRamp = null;
+    currentRamp = null;
+    playerKnock = null;
+    flatCarState = createFlatCarState(false);
+    taffyState = createTaffyState(false);
+    players[0].knock = null;
+    players[0].spawn = otherCar.position.clone();
+    const p2 = players[1];
+    if (p2) {
+      p2.velocity.value = 0;
+      p2.steering.value = 0;
+      p2.knock = null;
+      p2.jump = { inAir: false, yVelocity: 0 };
+      p2.wasOnRamp2 = false;
+      p2.spawn = rc.position.clone();
+    }
+    flatCar2State = createFlatCarState(false);
+  } else {
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+    wasOnRamp = null;
+    currentRamp = null;
+    playerKnock = null;
+    flatCarState = createFlatCarState(false);
+    taffyState = createTaffyState(false);
+    placePlayerTwoNearP1();
+  }
 
   resetKnockables();
   museumWorld.reset();          // fresh ladders, no paint on the drop cloth
@@ -6730,21 +6978,11 @@ function completeMuseumSwap() {
   globalDarkness = false;
   applyGlobalDarkness();
 
-  velocity.value = 0;
-  steering.value = 0;
-  jumpState.inAir = false;
-  jumpState.yVelocity = 0;
-  wasOnRamp = null;
-  currentRamp = null;
-  playerKnock = null;
-  flatCarState = createFlatCarState(false);
-  taffyState = createTaffyState(false);
   portalGrace = 1.5;
   museumCine.phase = 'drive';
   museumOutCine.active = false;
   museumPortal.leaving = false;
 
-  placePlayerTwoNearP1();
   setTimeout(() => {
     _fadeOverlay.style.transition = 'opacity 0.8s';
     _fadeOverlay.style.opacity = '0';
@@ -6755,40 +6993,50 @@ function completeMuseumSwap() {
 // live chase camera freezes behind the car, the car carries on south, pushing
 // the leaves open as it goes and running out across the vestibule, and then the
 // picture cuts to it at the foot of the grand flight outside.
-function startMuseumOutCine() {
+function startMuseumOutCine(rider = 0) {
   if (museumOutCine.active || museumPortal.leaving) return;
   museumOutCine.active = true;
   museumOutCine.phase = 'drive';
   museumOutCine.t = 0;
   museumOutCine.holdT = 0;
-  museumOutCine.startX = car.position.x;
-  museumOutCine.startZ = car.position.z;
-  museumOutCine.carZ = car.position.z;
-  museumOutCine.stopZ = Math.max(MUSEUM_OUT_STOP_Z, car.position.z + 6);
-  museumOutCine.speed = THREE.MathUtils.clamp(Math.abs(velocity.value) || 9, 9, 15);
+  museumOutCine.rider = rider === 1 && car2 ? 1 : 0;
+  const rc = museumRiderCar(museumOutCine.rider);
+  const rp = museumRiderPlayer(museumOutCine.rider);
+  museumOutCine.startX = rc.position.x;
+  museumOutCine.startZ = rc.position.z;
+  museumOutCine.carZ = rc.position.z;
+  museumOutCine.stopZ = Math.max(MUSEUM_OUT_STOP_Z, rc.position.z + 6);
+  museumOutCine.speed = THREE.MathUtils.clamp(
+    Math.abs((rp && rp.velocity ? rp.velocity.value : 0)) || 9, 9, 15);
 
   freezeChasePose(museumOutCine);
 
   museumPortal.leaving = true;   // the shot owns the world from here
   velocity.value = 0;
   steering.value = 0;
+  if (rp && rp.velocity) rp.velocity.value = 0;
+  if (rp && rp.steering) rp.steering.value = 0;
+  if (rp && rp.jump) { rp.jump.inAir = false; rp.jump.yVelocity = 0; }
+  if (rp) rp.knock = null;
   jumpState.inAir = false;
   jumpState.yVelocity = 0;
   wasOnRamp = null;
   currentRamp = null;
   playerKnock = null;
   flatCarState = createFlatCarState(false);
+  flatCar2State = createFlatCarState(false);
   taffyState = createTaffyState(false);
   portalGrace = 60;
-  car.visible = true;
+  rc.visible = true;
 }
 
 function updateMuseumOutCine(delta) {
   if (!museumOutCine.active) return;
   museumOutCine.t += delta;
-  // The script owns the car for the whole shot.
+  // The script owns the rider's car for the whole shot.
   velocity.value = 0;
   steering.value = 0;
+  const rc = museumRiderCar(museumOutCine.rider);
 
   museumOutCine.carZ = Math.min(museumOutCine.carZ + museumOutCine.speed * delta, MUSEUM_VESTIBULE.z1 - 3);
   // Ease onto the door centreline over the first few metres, so the car leaves
@@ -6797,10 +7045,10 @@ function updateMuseumOutCine(delta) {
   const p = Math.min(1, Math.max(0, travelled) / 5);
   const blend = p * p * (3 - 2 * p);
   const x = museumOutCine.startX * (1 - blend);
-  car.position.set(x, MUSEUM_HALL.floorY, museumOutCine.carZ);
-  car.rotation.set(0, Math.PI / 2, 0);   // yaw +PI/2 faces south, out of the doors
-  car.visible = true;
-  museumWorld.update(delta, car.position);   // the leaves are pushed by the car
+  rc.position.set(x, MUSEUM_HALL.floorY, museumOutCine.carZ);
+  rc.rotation.set(0, Math.PI / 2, 0);   // yaw +PI/2 faces south, out of the doors
+  rc.visible = true;
+  museumWorld.update(delta, rc.position);   // the leaves are pushed by the car
 
   if (museumOutCine.phase === 'drive' && museumOutCine.carZ >= museumOutCine.stopZ - 0.001) {
     museumOutCine.phase = 'hold';
@@ -6820,19 +7068,24 @@ function updateMuseumOutCine(delta) {
   }
 }
 
-// The cut itself: the car is put down on the forecourt at the foot of the grand
-// flight, facing east down the approach, and the picture fades up.
+// The cut itself: the rider's car is put down on the forecourt at the foot of
+// the grand flight, facing east down the approach, and the picture fades up. The
+// other player is set beside it.
 function completeMuseumExitSwap() {
-  if (car.parent) car.parent.remove(car);
-  scene.add(car);
+  const riderIsP2 = museumOutCine.rider === 1 && !!car2;
+  const rc = riderIsP2 ? car2 : car;
+  const otherCar = riderIsP2 ? car : car2;
+  if (rc.parent) rc.parent.remove(rc);
+  scene.add(rc);
   setWorldState('city');
-  car.position.set(
+  rc.position.set(
     MUSEUM_EXIT_POSE.x,
     cityGroundHeightAt(MUSEUM_EXIT_POSE.x, MUSEUM_EXIT_POSE.z),
     MUSEUM_EXIT_POSE.z,
   );
-  car.rotation.set(0, MUSEUM_EXIT_POSE.yaw, 0);
-  car.visible = true;
+  rc.rotation.set(0, MUSEUM_EXIT_POSE.yaw, 0);
+  rc.visible = true;
+  rc.scale.set(1, 1, 1);
   portalCarScale = 1;
   parkMuseumChase();            // the blue car stays behind in the museum
   resetKnockables();
@@ -6840,22 +7093,54 @@ function completeMuseumExitSwap() {
   resetHouseAsh();
   globalDarkness = false;
   applyGlobalDarkness();
-  velocity.value = 0;
-  steering.value = 0;
-  jumpState.inAir = false;
-  jumpState.yVelocity = 0;
-  wasOnRamp = null;
-  currentRamp = null;
-  playerKnock = null;
-  flatCarState = createFlatCarState(false);
-  taffyState = createTaffyState(false);
+
+  if (riderIsP2 && splitActive && otherCar) {
+    if (otherCar.parent) otherCar.parent.remove(otherCar);
+    scene.add(otherCar);
+    const fx = -Math.cos(rc.rotation.y), fz = Math.sin(rc.rotation.y);
+    otherCar.position.set(rc.position.x + (-fz) * 4, rc.position.y, rc.position.z + fx * 4);
+    otherCar.rotation.copy(rc.rotation);
+    otherCar.scale.set(1, 1, 1);
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+    wasOnRamp = null;
+    currentRamp = null;
+    playerKnock = null;
+    flatCarState = createFlatCarState(false);
+    taffyState = createTaffyState(false);
+    players[0].knock = null;
+    players[0].spawn = otherCar.position.clone();
+    const p2 = players[1];
+    if (p2) {
+      p2.velocity.value = 0;
+      p2.steering.value = 0;
+      p2.knock = null;
+      p2.jump = { inAir: false, yVelocity: 0 };
+      p2.wasOnRamp2 = false;
+      p2.spawn = rc.position.clone();
+    }
+    flatCar2State = createFlatCarState(false);
+  } else {
+    velocity.value = 0;
+    steering.value = 0;
+    jumpState.inAir = false;
+    jumpState.yVelocity = 0;
+    wasOnRamp = null;
+    currentRamp = null;
+    playerKnock = null;
+    flatCarState = createFlatCarState(false);
+    taffyState = createTaffyState(false);
+    placePlayerTwoNearP1();
+  }
+
   portalGrace = 2.5;
   // The exit spot is far from the door trigger, but require the car to arm it
   // again anyway so a sloppy arrival cannot bounce straight back in.
   museumPortal.armed = false;
   museumPortal.leaving = false;
   museumOutCine.active = false;
-  placePlayerTwoNearP1();
   setTimeout(() => {
     _fadeOverlay.style.transition = 'opacity 0.7s';
     _fadeOverlay.style.opacity = '0';
@@ -6873,39 +7158,51 @@ function updateMuseumPortal(delta) {
 
   if (worldState === 'city') {
     const t = MUSEUM_DOOR.trigger;
-    const inBox = car.position.x > t.x0 && car.position.x < t.x1 &&
-      car.position.z > t.z0 && car.position.z < t.z1;
-    if (!inBox) {
+    const inTrigger = (pos) => pos.x > t.x0 && pos.x < t.x1 &&
+      pos.z > t.z0 && pos.z < t.z1;
+    const p1In = inTrigger(car.position);
+    const p2In = !!(splitActive && car2 && inTrigger(car2.position));
+    if (!p1In && !p2In) {
       museumPortal.armed = true;
       return;
     }
     // Only the roof garden approach counts: the trigger box sits over the
     // museum's own footprint, and the ground under it is inside the building.
-    const onRoof = car.position.y > MUSEUM_DOOR.y - 3;
-    if (museumPortal.armed && portalGrace <= 0 && onRoof && !jumpState.inAir) {
-      startMuseumCine();
+    // Either player can be the one who nosed the doors; the other is carried
+    // along by the world swap.
+    const p1OnRoof = p1In && car.position.y > MUSEUM_DOOR.y - 3 && !jumpState.inAir;
+    const p2OnRoof = p2In && car2.position.y > MUSEUM_DOOR.y - 3
+      && !(players[1] && players[1].jump && players[1].jump.inAir);
+    if (museumPortal.armed && portalGrace <= 0 && (p1OnRoof || p2OnRoof)) {
+      startMuseumCine(p1OnRoof ? 0 : 1);
     }
   } else if (worldState === 'museum') {
     if (portalGrace > 0) return;
     // Nosing the entrance doors on the way out starts the drive-out shot. The
-    // leaves only move once the car touches them, so this is exactly the frame
-    // the push begins.
+    // leaves only move once a car touches them, so this is exactly the frame
+    // the push begins. Either player may be the one driving out.
     const planeZ = MUSEUM_HALL.maxZ;
-    const noseZ = car.position.z + playerCarRadius;
-    const inDoor = Math.abs(car.position.x) < MUSEUM_HALL.doorGap.x1;
-    if (inDoor && noseZ >= planeZ) {
-      _museumFwd.set(-1, 0, 0).applyQuaternion(car.quaternion);
-      if (_museumFwd.z > 0.2) {
-        startMuseumOutCine();
-        return;
-      }
+    const atDoor = (c) => {
+      if (Math.abs(c.position.x) >= MUSEUM_HALL.doorGap.x1) return false;
+      if (c.position.z + playerCarRadius < planeZ) return false;
+      _museumFwd.set(-1, 0, 0).applyQuaternion(c.quaternion);
+      return _museumFwd.z > 0.2;
+    };
+    const inExit = (c) => {
+      const e = MUSEUM_EXIT;
+      return c.position.x > e.x0 && c.position.x < e.x1 &&
+        c.position.z > e.z0 && c.position.z < e.z1;
+    };
+    const twoAtDoor = splitActive && car2 && atDoor(car2) && !atDoor(car);
+    const twoAtExit = splitActive && car2 && inExit(car2) && !inExit(car);
+    if (twoAtDoor || twoAtExit) {
+      startMuseumOutCine(1);
+      return;
     }
-    const e = MUSEUM_EXIT;
-    if (car.position.x > e.x0 && car.position.x < e.x1 &&
-        car.position.z > e.z0 && car.position.z < e.z1) {
+    if (atDoor(car) || inExit(car)) {
       // Fallback for a car that somehow reaches the far end without touching the
       // leaves: same shot, it just starts from further down the vestibule.
-      startMuseumOutCine();
+      startMuseumOutCine(0);
     }
   }
 }
@@ -11676,6 +11973,9 @@ function swapPlayerCar(kind) {
   while (car.children.length > 0) car.remove(car.children[0]);
   car.add(inner);
   playerCarKind = kind;
+  // Keep the player record's ride id in step (P2's twin does the same in
+  // applyPlayerTwoCar): the split HUD and the twin's camera read it.
+  if (players[0]) players[0].kind = kind;
   // Measure the new body for the farm's wide-car corn knocking.
   playerFootprint = measureCarFootprint(car);
   // The body is entirely new, so any soot cached against the old one is stale and
@@ -11729,8 +12029,11 @@ function applyPlayerTwoCar(kind) {
   const inner = new THREE.Group();
   if (entry.scale !== 1) inner.scale.setScalar(entry.scale);
   while (newMesh.children.length > 0) inner.add(newMesh.children[0]);
-  if (entry.faceZ) inner.rotation.y = -Math.PI / 2;
   const isRobot = entry.id === 'robot';
+  // The robot faces +Z like the skater/tarantula: quarter-turn it onto the
+  // cars' -X forward, exactly as swapPlayerCar does, or Player 2's mech drives
+  // sideways (its arms swinging across the direction of travel).
+  if (isRobot || entry.faceZ) inner.rotation.y = -Math.PI / 2;
   car2.userData.wheels = isRobot ? [] : (newMesh.userData.wheels || []);
   car2.userData.wheelPivots = isRobot ? [] : (newMesh.userData.wheelPivots || []);
   car2.userData.effects = isRobot ? null : (newMesh.userData.effects || null);
@@ -11743,6 +12046,11 @@ function applyPlayerTwoCar(kind) {
   while (car2.children.length > 0) car2.remove(car2.children[0]);
   car2.add(inner);
   playerTwoCarKind = entry.id;
+  // The twin's record must follow a LIVE body swap (the multiplayer settings
+  // cycle calls this without touching p2.kind): the walk cycle and the chase
+  // camera read p.kind, and a stale id left the mech with frozen legs and a
+  // camera inside its shin.
+  if (players[1]) players[1].kind = entry.id;
   playerTwoFootprint = measureCarFootprint(car2);
   // Give Player 2 the same ride abilities P1 gets. The monster truck shares the
   // steamroller's heavy crush path; the fire engine is heavy too (it can trip
@@ -14085,6 +14393,9 @@ function museumPaintActors() {
       speed: players[1] && players[1].velocity ? players[1].velocity.value : 0,
       knock: true,
       yaw: car2.rotation.y,
+      // P2's ride can be anything from the picker; the paint reads it for the
+      // right tyre signature (the robot's footprints, the roller's one drum).
+      kind: (players[1] && players[1].kind) || playerTwoCarKind,
     });
   }
   if (bumperInMuseum) {
@@ -14094,6 +14405,7 @@ function museumPaintActors() {
       speed: bumperState.speed,
       knock: false,
       yaw: bumperCar.rotation.y,
+      kind: chaseCarKind || 'little',
     });
   }
   return _museumActors;
@@ -17771,7 +18083,7 @@ function animate() {
   // cut the cine step owns the car and updates the level itself (so the leaves
   // are pushed by the scripted position, not by a stale one).
   if (worldState === 'museum' && !museumOutCine.active) {
-    museumWorld.update(delta, car.position, velocity.value, museumPaintActors(), car.rotation.y);
+    museumWorld.update(delta, car.position, velocity.value, museumPaintActors(), car.rotation.y, playerCarKind);
   }
 
   // Cornfield: flatten corn, roll pumpkins, blow hay off the loft. The level
@@ -19348,6 +19660,32 @@ if (location.search.includes('debug')) {
   }
   window.__game = {
     car: () => ({ x: car.position.x, y: car.position.y, z: car.position.z, rx: car.rotation.x, rz: car.rotation.z, ry: car.rotation.y, scaleY: +car.scale.y.toFixed(3), world: worldState }),
+    // Split-screen twin readout (?debug only): where P2's car is, how its body
+    // is tilted and where its chase camera sits, so the twin's physics and
+    // camera can be checked without driving the pair around by hand.
+    p2: () => (car2 && players[1] ? {
+      kind: playerTwoCarKind,
+      x: +car2.position.x.toFixed(2), y: +car2.position.y.toFixed(2), z: +car2.position.z.toFixed(2),
+      rx: +car2.rotation.x.toFixed(3), ry: +car2.rotation.y.toFixed(3), rz: +car2.rotation.z.toFixed(3),
+      inAir: !!(players[1].jump && players[1].jump.inAir),
+      cam: camB ? { x: +camB.position.x.toFixed(2), y: +camB.position.y.toFixed(2), z: +camB.position.z.toFixed(2) } : null,
+      world: worldState,
+    } : null),
+    // Place P2 (world coords) so a split test can be staged anywhere (?debug
+    // only) — the twin has no keyboard route to an arbitrary spot otherwise.
+    placeP2(x, y, z, heading = 0) {
+      if (!car2) return false;
+      car2.position.set(x, y, z);
+      car2.rotation.set(0, heading, 0);
+      players[1].velocity.value = 0;
+      players[1].steering.value = 0;
+      players[1].jump = { inAir: false, yVelocity: 0 };
+      return true;
+    },
+    // Jump straight into the museum, skipping the pavilion doors (?debug only).
+    toMuseum() {
+      completeMuseumSwap();
+    },
     // Gear menu: which car body the player is driving right now.
     carKind: () => ({ kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster, indy: playerIndy, train: playerTrain, robot: playerRobot, tarantula: playerTarantula }),
     setCar(kind) { swapPlayerCar(kind); },

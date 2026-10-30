@@ -30,7 +30,7 @@ import {
   RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY, RAMP_UNDER_CLEARANCE,
   museumSurfaceAt, museumOnRamp,
 } from './layout.js?v=1800000000151';
-import { buildPaintExhibit } from './paint.js?v=1800000000163';
+import { buildPaintExhibit } from './paint.js?v=1800000000190';
 
 export {
   MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM,
@@ -793,12 +793,14 @@ export function buildMuseumWorld(scene, opts = {}) {
   let t = 0;
   // `actors` are any other cars in the room this frame (P2, the chase car):
   // each lays its own paint, and only the ones allowed to may topple ladders.
-  // `carYaw` is the player's heading, which the ladder's hit test needs.
-  const update = (delta, carPos, speed = 0, actors = null, carYaw = null) => {
+  // `carYaw` is the player's heading, which the ladder's hit test needs, and
+  // `carKind` picks the player's tyre signature (monster-truck ruts, the
+  // steamroller's single drum, the robot's footprints).
+  const update = (delta, carPos, speed = 0, actors = null, carYaw = null, carKind = null) => {
     t += delta;
     chandLight.intensity = 2.55 + Math.sin(t * 1.7) * 0.06 + Math.sin(t * 3.1) * 0.03;
     if (carPos) entranceDoor.update(carPos, delta);
-    paint.update(delta, carPos, speed, actors, carYaw);
+    paint.update(delta, carPos, speed, actors, carYaw, carKind);
   };
 
   return {

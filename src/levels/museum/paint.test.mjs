@@ -629,3 +629,70 @@ test('a reset stands the ladders back up and wipes the paint away', () => {
   assert.equal(st.marks, 0);
   for (const L of st.ladders) assert.equal(L.spilled, false);
 });
+
+// ---- Per-ride tyre signatures ---------------------------------------------
+// Lay a trail with the default car until its tyres are wet but thinning (the
+// tail of the stroke), then hand the same painter a different ride: the marks
+// laid after that are that ride's own signature.
+function thinningRun(kind, steps = 20) {
+  const paint = makeSolo();
+  const spill = soakTyres(paint);
+  let { x, z } = drive(paint, spill.x, spill.z, 290, -0.4);
+  ({ x, z } = drive(paint, x, z, 60, 0.4));
+  assert.equal(paint.stats().lastMark.solid, false, 'the tyres never thinned to tracks');
+  const before = paint.stats().marks;
+  for (let i = 0; i < steps; i++) {
+    z -= 0.4;
+    paint.update(0.05, { x, y: FLOOR, z }, 14, null, 0, kind);
+  }
+  const st = paint.stats();
+  const added = st.marks - before;
+  return { added, marks: st.lastMarks(Math.max(1, added)), st };
+}
+
+test('the giant robot leaves footprints, not tyre tracks', () => {
+  const { added, marks, st } = thinningRun('robot', 60);
+  assert.equal(st.profile, 'robot');
+  // One print is two pads (toe + heel) and prints step along a 6.4-unit stride:
+  // a short run lays only a handful of marks, not a continuous twin ribbon.
+  assert.ok(added > 0 && added <= 12, `the robot laid ${added} marks, not footprints`);
+  // Prints alternate left and right of the centreline.
+  const xs = new Set(marks.map((m) => Math.round(m.x * 10) / 10));
+  assert.ok(xs.size >= 2, 'the robot prints are all on one line');
+  assert.ok(marks.every((m) => !m.solid), 'a footprint was flagged as a solid tyre band');
+});
+
+test('the steamroller leaves one wide drum track that never separates', () => {
+  const { added, marks, st } = thinningRun('steamroller');
+  assert.equal(st.profile, 'steamroller');
+  // Half the marks of a two-tyre car: one ribbon per step, not two.
+  assert.equal(added, 20, `the drum laid ${added} marks — that is a tyre pair`);
+  const xs = new Set(marks.map((m) => Math.round(m.x * 10) / 10));
+  assert.equal(xs.size, 1, 'the drum track split into two lines');
+});
+
+test("the monster truck's ruts are wider than a hatchback's", () => {
+  const car = thinningRun('classic');
+  const monster = thinningRun('monstertruck');
+  assert.equal(monster.st.profile, 'monstertruck');
+  const gauge = (r) => {
+    const xs = r.marks.map((m) => m.x);
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  assert.ok(gauge(monster) > gauge(car) + 0.4,
+    `monster gauge ${gauge(monster).toFixed(2)} is not wider than the car's ${gauge(car).toFixed(2)}`);
+  // ...and the contact patch itself is fatter.
+  assert.ok(monster.marks[0].r > car.marks[0].r + 0.1,
+    'the monster truck leaves the same thin tyre as a car');
+});
+
+test('a school bus and a skateboard keep their own gauges', () => {
+  const bus = thinningRun('bus');
+  const skater = thinningRun('skateboarder');
+  const gauge = (r) => {
+    const xs = r.marks.map((m) => m.x);
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  assert.ok(gauge(bus) > gauge(skater) + 1,
+    'the bus and the skateboard leave the same width of track');
+});

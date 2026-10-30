@@ -11,6 +11,11 @@
 // paint up again: a full-width band re-soaks them (band, then tracks), while
 // crossing bare tyre tracks leaves tracks of that colour.
 //
+// The tracks keep the shape of the ride that pressed into them (see
+// VEHICLE_TRACKS): each car has its own gauge and tread width, the steamroller
+// leaves one unbroken drum ribbon, and the legged rides — above all the giant
+// robot — leave alternating footprints instead of tyres.
+//
 // The module owns only presentation and paint state; the museum hands it the
 // exhibit floor and the frame time.
 // ============================================================================
@@ -138,6 +143,48 @@ const PUDDLE_TAU = 1.7;      // seconds; the spread slows as it goes
 // skitters away, pouring out another puddle as it goes. Each can holds enough
 // for a few more pours, then it really is empty.
 const CAN_POURS = 3;
+
+// ===== Per-vehicle tyre signatures =====
+// Paint keeps the shape of whatever pressed into it, so each ride leaves its own
+// marks: two parallel ribbons for a normal car, one wide drum for the
+// steamroller (the drum can never split into a pair), fat knobby ruts for the
+// monster truck, and separate boot prints for the legged rides (above all the
+// giant robot, whose feet must never read as tyres). `track` is the half-gap
+// between the twin tyres, `tread` the half-width of one tyre's contact patch and
+// `band` the half-width of the full-width wash laid while the tyres are soaked.
+// Distances are in the model's own units — the same numbers cars.js places the
+// wheels at, so the marks line up with what you can see.
+const DEFAULT_TRACK = { track: 0.95, tread: 0.46, band: 1.7 };
+const VEHICLE_TRACKS = {
+  classic: DEFAULT_TRACK,
+  city: DEFAULT_TRACK,
+  taxi: DEFAULT_TRACK,
+  bug: { track: 0.92, tread: 0.42, band: 1.6 },
+  jeep: { track: 0.98, tread: 0.34, band: 1.65 },
+  little: { track: 0.55, tread: 0.26, band: 1.0 },
+  // Four enormous knobby off-road tyres: wide gauge, huge contact patches.
+  monstertruck: { track: 1.22, tread: 0.62, band: 2.6 },
+  hotrod: { track: 1.0, tread: 0.45, band: 2.0 },
+  bus: { track: 1.1, tread: 0.34, band: 2.05 },
+  indy: { track: 0.9, tread: 0.24, band: 1.5 },
+  taco: { track: 1.12, tread: 0.34, band: 1.85 },
+  tractor: { track: 0.78, tread: 0.42, band: 1.8 },
+  firetruck: { track: 1.18, tread: 0.34, band: 2.05 },
+  train: { track: 1.05, tread: 0.22, band: 2.2 },
+  // The road roller's front drum is 2.5 wide and one piece: a single unbroken
+  // ribbon, whatever the paint load — it must NEVER separate into two tracks.
+  steamroller: { single: true, track: 0, tread: 1.25, band: 1.25 },
+  skateboarder: { track: 0.33, tread: 0.1, band: 0.8 },
+  // Legged rides print feet, not tyres. `footAcross`/`footAlong` are the print's
+  // full size, `footSpread` how far each foot sits off the centreline, and
+  // `stride` the distance between one print and the next.
+  robot: { feet: true, footAcross: 2.7, footAlong: 4.4, footSpread: 1.3, stride: 6.4 },
+  tarantula: { feet: true, footAcross: 2.2, footAlong: 3.0, footSpread: 2.4, stride: 7.0 },
+  crab: { feet: true, footAcross: 1.4, footAlong: 2.0, footSpread: 1.5, stride: 4.4 },
+};
+function trackProfile(kind) {
+  return VEHICLE_TRACKS[kind] || DEFAULT_TRACK;
+}
 const CAN_HIT_R = 3.2;       // car centre to can: the car's flank + a can
 const CAN_HIT_CD = 0.35;     // seconds between shoves of the same can
 const CAN_DRAG = 0.06;       // per-second speed left after friction
@@ -795,6 +842,10 @@ export function buildPaintExhibit(parent, options = {}) {
         lastZ: null,
         load: 0,          // 0..1 paint carried on the tyres
         color: 0,
+        // Which ride is painting: picks this vehicle's tyre signature (or its
+        // feet), so a monster truck and a steamroller do not leave the same
+        // pair of ribbons as a hatchback.
+        kind: 'classic',
         // True while the tyres carry enough to lay the full-width band; paint
         // picked up from a tyre-track mark only ever leaves tyre tracks.
         solid: false,
@@ -808,6 +859,9 @@ export function buildPaintExhibit(parent, options = {}) {
         bandEdge: null,
         trackEdgeL: null,
         trackEdgeR: null,
+        // Footprints (the legged rides) step along instead of drawing ribbons.
+        footAcc: 0,       // distance since the last print
+        footSide: 1,      // which foot is next: +1 or -1
       };
       painters.set(id, p);
     }
@@ -819,6 +873,7 @@ export function buildPaintExhibit(parent, options = {}) {
     pa.bandEdge = null;
     pa.trackEdgeL = null;
     pa.trackEdgeR = null;
+    pa.footAcc = 0;
     // A half-done colour change dies with the stroke: the next stroke starts on
     // clean tyres, not mid-scrub.
     pa.wear = null;
@@ -840,7 +895,40 @@ export function buildPaintExhibit(parent, options = {}) {
     return far;
   };
 
+  // One boot print's pad: a rectangle `halfAcross` wide and `halfAlong` long,
+  // centred at (cx, cz) and squared to the direction of travel.
+  const emitFootPad = (cx, cz, dirX, dirZ, halfAcross, halfAlong, pa, alpha, paintY, refY) => {
+    const ax = dirX * halfAlong, az = dirZ * halfAlong;
+    const bx = -dirZ * halfAcross, bz = dirX * halfAcross;
+    addQuad(
+      [cx - ax + bx, cz - az + bz],
+      [cx + ax + bx, cz + az + bz],
+      [cx + ax - bx, cz + az - bz],
+      [cx - ax - bx, cz - az - bz],
+      pa.color, alpha, false, pa.odometer, pa.id, paintY, refY,
+    );
+  };
+
+  // One footprint: alternate feet left and right of the centreline, each print a
+  // broad toe pad plus a narrower heel pad, so the mark reads as a boot rather
+  // than a tyre segment. Sized from the ride's own profile (the giant robot's
+  // is 2.7 x 4.4).
+  const addFootprint = (pa, cx, cz, dirX, dirZ, prof, alpha, paintY, refY) => {
+    pa.footSide = -(pa.footSide || 1);
+    const latX = -dirZ, latZ = dirX;
+    const fx = cx + latX * (prof.footSpread || 0) * pa.footSide;
+    const fz = cz + latZ * (prof.footSpread || 0) * pa.footSide;
+    const W = prof.footAcross, L = prof.footAlong;
+    // Toe: the wide front of the foot.
+    emitFootPad(fx + dirX * L * 0.26, fz + dirZ * L * 0.26, dirX, dirZ,
+      W * 0.5, L * 0.26, pa, alpha, paintY, refY);
+    // Heel: narrower and set back.
+    emitFootPad(fx - dirX * L * 0.24, fz - dirZ * L * 0.24, dirX, dirZ,
+      W * 0.33, L * 0.22, pa, alpha, paintY, refY);
+  };
+
   const layTrail = (pa, x0, z0, x1, z1, dist, refY) => {
+    const prof = trackProfile(pa.kind);
     const dirX = (x1 - x0) / dist;
     const dirZ = (z1 - z0) / dist;
     const steps = Math.max(1, Math.ceil(dist / MARK_SPACING));
@@ -852,18 +940,35 @@ export function buildPaintExhibit(parent, options = {}) {
       const px = x0 + (x1 - x0) * t;
       const pz = z0 + (z1 - z0) * t;
       const alpha = Math.min(1, pa.load / 0.14);
-      if (pa.solid && pa.load > SOLID_LOAD) {
+      if (prof.feet) {
+        // Stepping marks: no ribbons at all.
+        pa.bandEdge = null;
+        pa.trackEdgeL = null;
+        pa.trackEdgeR = null;
+        pa.footAcc = (pa.footAcc || 0) + stepDist;
+        if (pa.footAcc >= prof.stride) {
+          pa.footAcc -= prof.stride;
+          addFootprint(pa, px, pz, dirX, dirZ, prof, alpha, paintY, refY);
+        }
+      } else if (prof.single) {
+        // One piece of rubber on the road (the steamroller's drum): a single
+        // wide ribbon that stays whole however thin the paint gets.
+        pa.trackEdgeL = null;
+        pa.trackEdgeR = null;
+        pa.bandEdge = extendRibbon(pa.bandEdge, fx, fz, px, pz, prof.tread, pa.color, alpha, true, pa.odometer, pa.id, paintY, refY);
+      } else if (pa.solid && pa.load > SOLID_LOAD) {
         // Full-width band while the tyres are soaked.
         pa.trackEdgeL = null;
         pa.trackEdgeR = null;
-        pa.bandEdge = extendRibbon(pa.bandEdge, fx, fz, px, pz, 1.7, pa.color, alpha, true, pa.odometer, pa.id, paintY, refY);
+        pa.bandEdge = extendRibbon(pa.bandEdge, fx, fz, px, pz, prof.band, pa.color, alpha, true, pa.odometer, pa.id, paintY, refY);
       } else {
-        // Thinning out: just the two tyre tracks.
+        // Thinning out: just the two tyre tracks, at this vehicle's gauge and
+        // tread width.
         pa.bandEdge = null;
-        const ox = -dirZ * 0.95;
-        const oz = dirX * 0.95;
-        pa.trackEdgeL = extendRibbon(pa.trackEdgeL, fx + ox, fz + oz, px + ox, pz + oz, 0.46, pa.color, alpha, false, pa.odometer, pa.id, paintY, refY);
-        pa.trackEdgeR = extendRibbon(pa.trackEdgeR, fx - ox, fz - oz, px - ox, pz - oz, 0.46, pa.color, alpha, false, pa.odometer, pa.id, paintY, refY);
+        const ox = -dirZ * prof.track;
+        const oz = dirX * prof.track;
+        pa.trackEdgeL = extendRibbon(pa.trackEdgeL, fx + ox, fz + oz, px + ox, pz + oz, prof.tread, pa.color, alpha, false, pa.odometer, pa.id, paintY, refY);
+        pa.trackEdgeR = extendRibbon(pa.trackEdgeR, fx - ox, fz - oz, px - ox, pz - oz, prof.tread, pa.color, alpha, false, pa.odometer, pa.id, paintY, refY);
       }
       fx = px;
       fz = pz;
@@ -880,7 +985,7 @@ export function buildPaintExhibit(parent, options = {}) {
   // The split-screen twin passes knock: true; the chase car passes knock: false
   // so it can lay paint but never topple the exhibit. `carYaw` is the player's
   // heading, which the ladder hit test needs to know where their body is.
-  const update = (delta, carPos, speed = 0, others = null, carYaw = null) => {
+  const update = (delta, carPos, speed = 0, others = null, carYaw = null, carKind = null) => {
     // Spills spread and their droplets settle.
     for (const s of spills) {
       s.age += delta;
@@ -915,11 +1020,11 @@ export function buildPaintExhibit(parent, options = {}) {
 
     // Then every car lays its own paint: the player first, then whoever else is
     // in the room (P2, and the chase car, which may not touch the exhibit).
-    updatePainter(p1, carPos, speed, true, carYaw);
+    updatePainter(p1, carPos, speed, true, carYaw, carKind);
     if (others) {
       for (const o of others) {
         if (!o || !o.pos) continue;
-        updatePainter(painterFor(o.id || 'other'), o.pos, o.speed || 0, o.knock !== false, o.yaw ?? null);
+        updatePainter(painterFor(o.id || 'other'), o.pos, o.speed || 0, o.knock !== false, o.yaw ?? null, o.kind || null);
       }
     }
 
@@ -984,7 +1089,8 @@ export function buildPaintExhibit(parent, options = {}) {
 
   // One car's frame: knock over what it runs into (if it is allowed to), then
   // pick paint up and lay it back down.
-  function updatePainter(pa, carPos, speed, canKnock, carYaw = null) {
+  function updatePainter(pa, carPos, speed, canKnock, carYaw = null, kind = null) {
+    if (kind) pa.kind = kind;
     if (!carPos) {
       pa.lastX = null;
       pa.lastZ = null;
@@ -1151,6 +1257,8 @@ export function buildPaintExhibit(parent, options = {}) {
     marks: markCount,
     load: p1.load,
     solid: p1.solid,
+    // The tyre signature currently in use (cars.js kind id), for tests.
+    profile: p1.kind,
     // A colour change in progress: how much of the old paint is still to scrub
     // off, and which colour is waiting to take over.
     wear: p1.wear ? { color: p1.wear.color, remaining: +p1.wear.remaining.toFixed(2) } : null,
@@ -1162,6 +1270,15 @@ export function buildPaintExhibit(parent, options = {}) {
     lastMark: markCount > 0
       ? { color: markCol[markCount - 1], solid: markSolid[markCount - 1] === 1 }
       : null,
+    // The most recent marks (newest last), so a test can inspect the shape the
+    // ride is leaving — two ribbons, one drum, or a pair of footprints.
+    lastMarks: (n = 8) => {
+      const out = [];
+      for (let i = Math.max(0, markCount - n); i < markCount; i++) {
+        out.push({ x: markX[i], z: markZ[i], r: markR[i], solid: markSolid[i] === 1 });
+      }
+      return out;
+    },
     // Draw order of the trail mesh: above every puddle, or the paint the tyres
     // lay would be hidden under the pool they drove through.
     trailOrder: trail.renderOrder,

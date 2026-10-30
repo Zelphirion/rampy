@@ -202,6 +202,30 @@ cars drivable by their hardcoded schemes.
 - [x] 7.3 Decide/document FOV tuning; exotic rides feasibility; portal lock vs
       teleport; pause menu shared and works.
       — FOV 72, split by scissor, portals reparent P2, pause shared.
+- [x] 7.11 Twin ride parity: the giant robot (and the tarantula / crab) drive
+      properly as Player 2. `applyPlayerTwoCar` quarter-turns the mech onto the
+      cars' -X forward axis, `updateTwoRideGait` runs the walk cycle on the
+      twin's own rig, and `p.kind` follows a live body swap from the in-split
+      settings. `followCameraTwo` holds the lens back (18) and aims at the mech's
+      chest (7 up) exactly as P1's camera does, and the rival's floating tag now
+      rides above the mech instead of inside its torso.
+- [x] 7.12 Twin rides every slope: the museum ramp is sampled for body pitch and
+      passed the twin's own height (so it is a roof as well as a road, and a car
+      in the exhibit hall drives under it), the house rides its own heightfield
+      with the bath dish / boogie board pitch instead of a flat floor, and the
+      museum / house ledge drops go ballistic rather than teleporting P2 down.
+      `followCameraTwo` no longer clamps its look target at y=0.8, so it follows
+      the twin down onto the exhibit floor (and into skate bowls or the sea), and
+      its lens is kept inside the museum shell like P1's.
+- [x] 7.13 Twin climbs into the museum and paints its own tracks. Player 2's
+      city step now reads `buildingTopAt` and the museum flight, so a giant
+      robot can climb the grand staircase and tip its body to the treads (it
+      used to stop dead at the first riser); either player can trigger the
+      entrance/exit cuts (`museumCine.rider` / `museumOutCine.rider`), the twin
+      is frozen while a cut owns the frame, and the other player is brought
+      through the world swap. The exhibit paint also takes the rider's kind, so
+      each ride leaves its own mark: the robot prints alternating boot prints,
+      the steamroller one unbroken drum track, the monster truck fat wide ruts.
 - [ ] 7.4 Full manual checklist: keyboard+keyboard, keyboard+pad, pad+pad;
       resize mid-game; enter/exit split; pause; level transition moves both;
       markers face both viewports and hide per player.
@@ -229,3 +253,6 @@ cars drivable by their hardcoded schemes.
 - Headless: `node --import ./src/objects/nodeShims.mjs --test "src/**/*.test.mjs"`
 - New suites to add: `src/splitscreenInput.test.mjs` (readInput + claim rules),
   `src/splitscreenCamera.test.mjs` (scissor/viewport math, layers).
+  `src/splitTwinRides.test.mjs` now pins the twin's ride/camera parity (museum
+  ramp pitch, house heightfield, ledge drops, the twin camera below y=0 datum
+  and inside the museum shell, the robot's quarter-turn and walk cycle).

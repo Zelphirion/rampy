@@ -66,3 +66,25 @@ test('the tripod stays on the car\'s own storey in the museum', () => {
     /offStorey[\s\S]{0,200}?cinePickSpot\(\)/,
     'a held tripod a floor away from the car never re-picks');
 });
+
+test('either player can drive through the museum doors', () => {
+  // Player 2 could not enter the museum: the roof trigger only looked at P1's
+  // car and both cut scenes drove P1. The trigger and the cuts now carry a
+  // rider, and the twin's physics stands down while a cut owns the frame.
+  assert.match(src, /function startMuseumCine\(rider = 0\)/,
+    'the entrance cut does not take a rider');
+  assert.match(src, /function startMuseumOutCine\(rider = 0\)/,
+    'the exit cut does not take a rider');
+  assert.match(src, /startMuseumCine\(p1OnRoof \? 0 : 1\)/,
+    'the roof trigger never starts the cut for Player 2');
+  assert.match(src, /startMuseumOutCine\(1\)/,
+    'Player 2 cannot start the drive-out shot');
+  assert.match(src, /museumCine\.rider = rider === 1 && car2 \? 1 : 0;/,
+    'the entrance cut never records who is driving');
+  assert.match(src, /const rc = museumRiderCar\(museumCine\.rider\);/,
+    'the entrance cut still drives P1\'s car whatever the rider');
+  assert.match(src, /const riderIsP2 = museumCine\.rider === 1 && !!car2;/,
+    'the swap still only moves P1 into the museum');
+  assert.match(src, /if \(museumCine\.active \|\| museumOutCine\.active\) \{/,
+    'the twin is not frozen while a museum cut owns the frame');
+});
