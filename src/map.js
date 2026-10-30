@@ -9,7 +9,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // grey garage's, from before the roles were swapped, and that door is now shut.
 import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000164';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
-import { addCityOuter, buildGehryMuseum } from './cityOuter.js?v=1800000000161';
+import { addCityOuter, buildGehryMuseum } from './cityOuter.js?v=1800000000196';
 import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
 import { buildSoccerField } from './soccer.js?v=1800000000162';
 

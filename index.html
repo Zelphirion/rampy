@@ -52,72 +52,115 @@
         margin-bottom: 4px;
       }
 
-      /* ===== Touch joystick (bottom-right; a second one joins it in a
-         two-player touch split, left = P1 / right = P2) ===== */
+      /* ===== Touch direction pad (bottom-right; a second one joins it in a
+         two-player touch split, left = P1 / right = P2) =====
+         Five pressable arrows arched around the pad — turn left, forward-left,
+         straight ahead, forward-right, turn right — plus a reverse arrow in the
+         middle of the arch, level with the left / right arrows and directly
+         under the forward one. Multi-touch adds up, so "forward" + "left" is the
+         same 45° combo as the diagonal. */
       #joystick, #joystick2 {
         position: fixed;
-        right: 24px;
-        bottom: 24px;
-        width: 128px;
-        height: 128px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.07);
-        border: 2px solid rgba(255, 255, 255, 0.35);
-        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4), inset 0 0 30px rgba(0, 0, 0, 0.25);
-        box-sizing: border-box;
+        right: 16px;
+        bottom: 12px;
+        width: 208px;
+        height: 132px;
         pointer-events: none;
         z-index: 10;
+        --joy-arch-r: 72px; /* arch radius */
       }
 
-      #joystick::before, #joystick2::before {
-        content: '';
+      .joy-arrow {
         position: absolute;
         left: 50%;
-        top: 50%;
-        width: 2px;
-        height: 84px;
-        margin: -42px 0 0 -1px;
-        background: rgba(255, 255, 255, 0.12);
-      }
-
-      #joystick::after, #joystick2::after {
-        content: '';
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        width: 84px;
-        height: 2px;
-        margin: -1px 0 0 -42px;
-        background: rgba(255, 255, 255, 0.12);
-      }
-
-      #joy-knob, #joy2-knob {
-        position: absolute;
-        left: 50%;
-        top: 50%;
-        width: 56px;
-        height: 56px;
-        margin: -28px 0 0 -28px;
-        border-radius: 50%;
-        background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.6), rgba(255,255,255,0.16) 60%, rgba(255,255,255,0.04));
-        border: 1px solid rgba(255,255,255,0.5);
-        box-shadow: 0 2px 10px rgba(0,0,0,0.45);
-        pointer-events: none;
-        will-change: transform;
-      }
-
-      #joystick-hit, #joystick2-hit {
-        position: fixed;
-        right: 4px;
         bottom: 4px;
-        width: 168px;
-        height: 168px;
+        width: 46px;
+        height: 46px;
+        margin-left: -23px;
         border-radius: 50%;
+        box-sizing: border-box;
+        background:
+          radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.05) 58%, rgba(0, 0, 0, 0.32)),
+          rgba(22, 28, 40, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        box-shadow:
+          0 5px 14px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.28),
+          inset 0 -7px 12px rgba(0, 0, 0, 0.28);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
+        pointer-events: auto;
         touch-action: none;
-        z-index: 9;
+        cursor: pointer;
+        -webkit-tap-highlight-color: transparent;
+        /* Arch layout: swing the button around the pivot at the pad's bottom
+           centre, then swing it back so only the position — not the arrow —
+           follows the angle. --a is the slot angle, --joy-arch-r the radius.
+           (The -23px margin centres the circle on that pivot.) */
+        transform:
+          rotate(var(--a, 0deg))
+          translateY(calc(-1 * var(--joy-arch-r)))
+          rotate(calc(-1 * var(--a, 0deg)));
+        transition:
+          background 90ms linear,
+          border-color 90ms linear,
+          box-shadow 90ms linear;
       }
-      /* The second joystick only exists while a touch split is live. */
-      #joystick2, #joystick2-hit { display: none; }
+
+      .joy-arrow::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 0;
+        height: 0;
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-bottom: 11px solid rgba(255, 255, 255, 0.8);
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+        transform: translate(-50%, -50%) rotate(var(--a, 0deg));
+        transition: border-bottom-color 90ms linear;
+      }
+
+      .joy-arrow.is-down {
+        background:
+          radial-gradient(circle at 34% 26%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.18) 58%, rgba(255, 255, 255, 0.06)),
+          rgba(120, 200, 255, 0.4);
+        border-color: rgba(200, 240, 255, 0.9);
+        box-shadow:
+          0 0 18px rgba(120, 200, 255, 0.6),
+          inset 0 1px 0 rgba(255, 255, 255, 0.55);
+      }
+
+      .joy-arrow.is-down::before {
+        border-bottom-color: #fff;
+      }
+
+      .joy-arrow[data-dir='left']     { --a: -90deg; }
+      .joy-arrow[data-dir='up-left']  { --a: -45deg; }
+      .joy-arrow[data-dir='up']       { --a: 0deg; }
+      .joy-arrow[data-dir='up-right'] { --a: 45deg; }
+      .joy-arrow[data-dir='right']    { --a: 90deg; }
+
+      /* Reverse sits INSIDE the arch, at the pivot: the unrotated position,
+         which is centred under the forward arrow at the same height as the
+         left / right ones. --a still turns its glyph to point down. */
+      .joy-arrow[data-dir='down'] {
+        --a: 180deg;
+        transform: none;
+      }
+
+      /* The second pad only exists while a touch split is live. */
+      #joystick2 { display: none; }
+
+      @media (max-width: 760px) {
+        /* A tighter arch, but keep the arrows a comfortable 46px tap target. */
+        #joystick, #joystick2 {
+          --joy-arch-r: 66px;
+          bottom: 6px;
+          right: 6px;
+        }
+      }
 
       @media (max-width: 700px) {
         .hud {
@@ -1231,9 +1274,7 @@
       body.pick-active #minimap,
       body.pick-active #minimap-p2,
       body.pick-active #joystick,
-      body.pick-active #joystick-hit,
       body.pick-active #joystick2,
-      body.pick-active #joystick2-hit,
       body.pick-active #gear-btn,
       body.pick-active #gear-fps,
       body.pick-active #hud { display: none !important; }
@@ -1468,16 +1509,12 @@
         letter-spacing: 0.06em;
         text-transform: uppercase;
       }
-      /* The single-view joystick hides in a controller split; the touch split
+      /* The single-view pad hides in a controller split; the touch split
          brings back TWO, one per player (left = P1, right = P2). */
-      body.split-on #joystick, body.split-on #joystick-hit,
-      body.split-on #joystick2, body.split-on #joystick2-hit { display: none; }
-      body.split-touch #joystick, body.split-touch #joystick-hit,
-      body.split-touch #joystick2, body.split-touch #joystick2-hit { display: block; }
+      body.split-on #joystick, body.split-on #joystick2 { display: none; }
+      body.split-touch #joystick, body.split-touch #joystick2 { display: block; }
       body.split-touch #joystick { left: 5%; right: auto; }
-      body.split-touch #joystick-hit { left: calc(5% - 20px); right: auto; }
       body.split-touch #joystick2 { right: 5%; left: auto; }
-      body.split-touch #joystick2-hit { right: calc(5% - 20px); left: auto; }
       #split-divider {
         position: fixed;
         left: 50%;
@@ -1637,14 +1674,14 @@
          WebGL viewports are split by scissor rects, not by this div. -->
     <div id="split-divider"></div>
 
-    <!-- Touch joystick: drag the knob to drive -->
-    <div id="joystick"><div id="joy-knob"></div></div>
-    <div id="joystick-hit"></div>
+    <!-- Touch direction pad: hold an arrow in the arch to drive. The buttons
+         are built by setupJoyPad() in main.js; the container only anchors them
+         to the bottom-right corner. -->
+    <div id="joystick"></div>
 
-    <!-- Second touch joystick: only shown in a two-player touch split, where
-         Player 1 drives with the left stick and Player 2 with this one. -->
-    <div id="joystick2"><div id="joy2-knob"></div></div>
-    <div id="joystick2-hit"></div>
+    <!-- Second pad: only shown in a two-player touch split, where Player 1
+         drives with the left arch and Player 2 with this one. -->
+    <div id="joystick2"></div>
 
     <!-- Settings (gear) button, top-left. Opens the car showroom; while the
          showroom is open it becomes the return-to-game button. The optional
@@ -1818,8 +1855,10 @@
               <td class="ctl-pad"><span class="padbtn">B</span></td>
             </tr>
             <tr class="ctl-note">
-              <td colspan="3">On touch screens: drag the joystick to drive, drag
-                the world to orbit the camera, and pinch to zoom.</td>
+              <td colspan="3">On touch screens: hold an arrow in the arch
+                (bottom right) to go straight ahead, turn in place, or turn and
+                go at 45° — hold two neighbouring arrows for a diagonal too.
+                Drag the world to orbit the camera, and pinch to zoom.</td>
             </tr>
           </tbody>
         </table>
@@ -2122,6 +2161,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1800000000192"></script>
+    <script type="module" src="./src/main.js?v=1800000000196"></script>
   </body>
 </html>

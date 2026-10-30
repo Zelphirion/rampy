@@ -10,10 +10,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { register } from 'node:module';
 
 const src = readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 const { MUSEUM_HALL, ATRIUM, EXHIBIT } = await import('./levels/museum/layout.js');
 const { worldXLo, worldXHi, worldZLo, worldZHi } = await import('./modules/world.js');
+
+// The city-side museum is a CDN three.js module; the house shim loads it headless
+// so its roof rectangle and the door/stair geometry can be measured for real.
+register('./levels/house/threeShim.mjs', import.meta.url);
+const { MUSEUM_ROOF, MUSEUM_DOOR, MUSEUM_STAIR } = await import('./cityOuter.js');
+const outerSrc = readFileSync(new URL('./cityOuter.js', import.meta.url), 'utf8');
 
 test('the museum really is bigger than the overworld rectangle', () => {
   // If this ever stops being true the clamp would be harmless and the test
@@ -65,6 +72,75 @@ test('the tripod stays on the car\'s own storey in the museum', () => {
   assert.match(branch.slice(0, branch.indexOf("// ===== Chase-cam handoff")),
     /offStorey[\s\S]{0,200}?cinePickSpot\(\)/,
     'a held tripod a floor away from the car never re-picks');
+});
+
+test('the museum roof plaza keeps the collider walls switched on', () => {
+  // The gallery masses rise 2-14 m above the roof garden while every one of their
+  // colliders reports the garden's own ROOF height, so the city's "a car on a
+  // rooftop ignores colliders" rule let a player drive off the garden straight
+  // into a mass's empty shell. main.js must switch that rule off inside
+  // MUSEUM_ROOF, for both cars, or the building is not solid up there.
+  assert.match(src, /const onMuseumRoof = worldState === 'city' &&/,
+    'main.js no longer detects the museum roof plaza');
+  assert.match(src, /buildingTopAt\(car\.position\.x, car\.position\.z\) > 0 && car\.position\.y > 0\.5 && !onMuseumRoof/,
+    'a car on the museum roof still ignores the masses it can drive into');
+  assert.match(src, /!\(worldState === 'city' &&\s*nextX > MUSEUM_ROOF\.x0 && nextX < MUSEUM_ROOF\.x1 &&\s*nextZ > MUSEUM_ROOF\.z0 && nextZ < MUSEUM_ROOF\.z1\)\)/,
+    'the twin still drives through the museum masses on the roof');
+  // The garden's own floor is `top`-capped at the roof, or the car would be
+  // walled in by the very slab it stands on.
+  assert.match(outerSrc, /colliders\.push\(\{ x: cx, z: 176, halfW: 20, halfD: 10, h: ROOF, top: ROOF \}\)/,
+    'the rear block under the garden is no longer capped at roof height');
+});
+
+test('the museum roof rectangle covers the massing, not the flight', () => {
+  // The garden and the doors are inside the plaza, so driving at them keeps the
+  // walls on...
+  for (const z of [MUSEUM_ROOF.z0 + 1, MUSEUM_DOOR.z, MUSEUM_ROOF.z1 - 1]) {
+    assert.ok(z > MUSEUM_ROOF.z0 && z < MUSEUM_ROOF.z1,
+      `the plaza stops short of the garden at z=${z}`);
+  }
+  assert.ok(MUSEUM_DOOR.x > MUSEUM_ROOF.x0 && MUSEUM_DOOR.x < MUSEUM_ROOF.x1,
+    'the pavilion doors stand outside the roof plaza');
+  // ...while the flight and the forecourt are outside it, so the climb keeps the
+  // ordinary rooftop rules it was tuned with.
+  assert.ok(MUSEUM_STAIR.x0 > MUSEUM_ROOF.x1,
+    'the roof plaza reaches down the grand flight');
+  assert.ok(MUSEUM_ROOF.x0 < MUSEUM_DOOR.x - 5,
+    'the plaza does not reach far enough back over the gallery masses');
+});
+
+test('the building masses are solid boxes at ground level', () => {
+  // One collider per mass, each a full-height box: the city's museum must not
+  // be drivable-through at street level either.
+  assert.match(outerSrc, /for \(const m of \[mA, mB, mC, mD\]\) \{\s*colliders\.push\(\{ x: m\.x, z: m\.z, halfW: m\.w \/ 2, halfD: m\.d \/ 2, h: ROOF \}\);/,
+    'the museum masses are no longer solid boxes');
+});
+
+test('the pavilion glass is solid, so the door bay is the only way in', () => {
+  // A car that sidestepped the leaves used to sail through the clear glazing
+  // beside them, or through a flank, and into the lantern. Every pane is a wall
+  // now; the entrance cut starts on the nose reaching the door plane, so the
+  // car never needs to pass through the bay.
+  assert.match(outerSrc, /const pvSolid = \(lx, lz, w, d\) => colliders\.push\(\{/,
+    'the pavilion no longer contributes colliders');
+  assert.match(outerSrc, /const DOOR_HALF = 3\.7;/,
+    'the door bay width changed; check the trigger still covers it');
+  assert.match(outerSrc, /pvSolid\(frontFace - GLASS_T \/ 2/,
+    'the glazing either side of the doors is open again');
+  assert.match(outerSrc, /pvSolid\(0, sgn \* \(sideFace - GLASS_T \/ 2\), PW, GLASS_T\)/,
+    'a pavilion flank is open again');
+  assert.match(outerSrc, /pvSolid\(backFace - GLASS_T \/ 2, 0, GLASS_T, PD\)/,
+    'the back of the pavilion is open again');
+  // The bay has to sit INSIDE the bump trigger, or a car nosing a leaf could
+  // reach the solid jamb before the cut starts.
+  const bay = 3.7;
+  assert.ok(MUSEUM_DOOR.z - bay > MUSEUM_DOOR.trigger.z0 &&
+    MUSEUM_DOOR.z + bay < MUSEUM_DOOR.trigger.z1,
+    'the door bay pokes outside the entrance trigger');
+  // ...and the trigger has to start before the glass, or the car would be
+  // stopped by the pane before the cut could take the wheel.
+  assert.ok(MUSEUM_DOOR.x - 0.2 > MUSEUM_DOOR.trigger.x0,
+    'the trigger begins past the door plane, behind the glass');
 });
 
 test('either player can drive through the museum doors', () => {

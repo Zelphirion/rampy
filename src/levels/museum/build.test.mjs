@@ -88,13 +88,60 @@ test('the top of the stairs opens left and right onto the balconies', () => {
 
 test('the balconies are open ledges, so the car can fly off them', () => {
   const world = build();
-  const edges = world.colliders.filter((c) => !c.ceiling &&
+  // The fascias BELOW the lips are the pit's walls (solid from the exhibit
+  // floor up to atrium height, marked with `top`), but nothing stands ON the
+  // lip: only colliders that are still solid at atrium height could fence the
+  // car in, so those are the only ones that count here.
+  const solidAtAtrium = (c) => c.top === undefined || c.top > 0.5;
+  const edges = world.colliders.filter((c) => !c.ceiling && solidAtAtrium(c) &&
     Math.abs(Math.abs(c.x) - BALCONY.innerX) < 2 && c.z < ATRIUM_EDGE);
   assert.equal(edges.length, 0,
     `${edges.length} collider(s) still fence the balcony edge, e.g. (${edges[0]?.x}, ${edges[0]?.z})`);
-  const northEnd = world.colliders.filter((c) => !c.ceiling &&
+  const northEnd = world.colliders.filter((c) => !c.ceiling && solidAtAtrium(c) &&
     Math.abs(c.z - EXHIBIT.northInnerZ) < 2 && c.halfW > 40);
   assert.equal(northEnd.length, 0, 'the far balcony still has a railing across it');
+});
+
+// Is anything solid at (x, z) for a car at height y?
+function solidAt(world, x, z, y) {
+  return world.colliders.some((c) => !c.ceiling && !c.soft && !c.soapy &&
+    !(c.top !== undefined && y >= c.top - 0.05) &&
+    !(c.bottom !== undefined && y < c.bottom - 0.05) &&
+    Math.abs(x - c.x) <= c.halfW && Math.abs(z - c.z) <= c.halfD);
+}
+
+test('the exhibit pit is a closed box: no driving out into the shell', () => {
+  const world = build();
+  const pit = EXHIBIT.floorY;
+  // Under the lobby floor: the hall's front wall used to stop at atrium height,
+  // so a car down in the pit drove through it into the empty shell of the
+  // building. It must be solid all the way across the hall.
+  for (const x of [-120, -60, 0, 60, 120]) {
+    assert.ok(solidAt(world, x, ATRIUM_EDGE, pit),
+      `a car in the exhibit hall can still drive out under the lobby at x=${x}`);
+  }
+  // The balcony fascias are walls to the floor, not just skirtings.
+  for (const s of [-1, 1]) {
+    for (const z of [-240, -120, 0, 50]) {
+      assert.ok(solidAt(world, s * BALCONY.innerX, z, pit),
+        `the pit's side wall is open at (${s * BALCONY.innerX}, ${z})`);
+    }
+  }
+  // ...and the far end of the hall too.
+  assert.ok(solidAt(world, 0, EXHIBIT.northInnerZ, pit), 'the pit is open to the north');
+  // None of those walls may fence the lip at balcony height.
+  assert.equal(solidAt(world, BALCONY.innerX, -120, MUSEUM_HALL.floorY), false,
+    'the balcony lip is walled off at driving height');
+});
+
+test('the glass wall at the end of the vestibule is solid', () => {
+  const world = build();
+  // The exit trigger sits just short of it; the glass must not be walk-through
+  // for the couple of seconds after arrival when that trigger is still disarmed.
+  assert.ok(solidAt(world, 0, MUSEUM_VESTIBULE.z1, MUSEUM_HALL.floorY),
+    'a car can drive through the far glass wall and out into the void');
+  assert.equal(solidAt(world, 0, MUSEUM_EXIT.z0 + 1, MUSEUM_HALL.floorY), false,
+    'the exit trigger is now walled off');
 });
 
 test('the start and exit handed back are the plan values', () => {

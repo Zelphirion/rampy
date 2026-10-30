@@ -444,6 +444,18 @@ const MUSEUM_FRAME = {
   stair: { z0: 208, z1: 186, w: 20, steps: 30 },
 };
 
+// The gallery masses, in the building's own frame. They are the pile of boxes
+// the museum is: each is a shell `h` tall standing on the plot, and the rear
+// block behind the garden is a plain ROOF-high box. Kept as data because the
+// usable roof rectangle below is measured from exactly the same list.
+const MUSEUM_MASSES = [
+  { px: 0, pz: 150, w: 44, d: 30, h: 16, ry: 0.08, rz: 0.05 },
+  { px: 10, pz: 142, w: 28, d: 22, h: 20, ry: 0.24, rz: 0.08 },
+  { px: -12, pz: 156, w: 26, d: 18, h: 24, ry: -0.16, rz: -0.04 },
+  { px: 4, pz: 160, w: 18, d: 14, h: 28, ry: 0.42, rz: 0.1 },
+];
+const MUSEUM_REAR = { px: MUSEUM_FRAME.cx, pz: 176, w: 40, d: 20 };
+
 // Building frame -> world, for the plot's yaw and offset. Props that have to
 // stand in the world in their own right (anything the car can knock over) are
 // placed with this.
@@ -451,6 +463,35 @@ function museumToWorld(x, z) {
   const c = Math.cos(MUSEUM.yaw), s = Math.sin(MUSEUM.yaw);
   return { x: MUSEUM.x + x * c + z * s, z: MUSEUM.z - x * s + z * c };
 }
+
+// The museum's roof plaza, in world space: the union of the massing and the rear
+// block. This is the one roof in the city with walls standing ON it — the
+// gallery masses rise 2 to 14 m above the garden while every one of their
+// colliders reports the same ROOF height the garden is driven at, so the
+// "a car on a rooftop ignores colliders" rule let a player drive off the garden
+// and straight through a mass's shell. main.js keeps that rule switched off
+// inside this rectangle, which puts the ordinary collider sweep back on up
+// there: the rear block is `top`-capped at the roof, so the garden stays
+// drivable, and the masses stand in the car's way like the walls they are.
+export const MUSEUM_ROOF = (() => {
+  const boxes = MUSEUM_MASSES.map((m) => ({
+    x: m.px + MUSEUM_FRAME.cx, z: m.pz, halfW: m.w / 2, halfD: m.d / 2,
+  }));
+  boxes.push({
+    x: MUSEUM_REAR.px, z: MUSEUM_REAR.pz, halfW: MUSEUM_REAR.w / 2, halfD: MUSEUM_REAR.d / 2,
+  });
+  const out = { x0: Infinity, x1: -Infinity, z0: Infinity, z1: -Infinity };
+  for (const b of boxes) {
+    // A quarter turn keeps every footprint axis-aligned, so the two opposite
+    // corners are enough to bound it in the world.
+    for (const corner of [[-1, -1], [1, 1]]) {
+      const w = museumToWorld(b.x + corner[0] * b.halfW, b.z + corner[1] * b.halfD);
+      out.x0 = Math.min(out.x0, w.x); out.x1 = Math.max(out.x1, w.x);
+      out.z0 = Math.min(out.z0, w.z); out.z1 = Math.max(out.z1, w.z);
+    }
+  }
+  return out;
+})();
 
 // The drive surface of that flight in world space, which is what main.js needs
 // to pitch the car up the treads and knock it over each riser the way the
@@ -685,10 +726,9 @@ export function buildGehryMuseum(buildingColliders = []) {
       upper: { w: w * 0.82, d: d * 0.92, h: h * 0.62, baseY: 0, lower: upperFrame },
     };
   }
-  const mA = mass(0, 150, 44, 30, 16, 0.08, 0.05);
-  const mB = mass(10, 142, 28, 22, 20, 0.24, 0.08);
-  const mC = mass(-12, 156, 26, 18, 24, -0.16, -0.04);
-  const mD = mass(4, 160, 18, 14, 28, 0.42, 0.1);
+  const [mA, mB, mC, mD] = MUSEUM_MASSES.map(
+    (m) => mass(m.px, m.pz, m.w, m.d, m.h, m.ry, m.rz),
+  );
 
   const rear = new THREE.Mesh(new THREE.BoxGeometry(40, ROOF, 20), museumTitanium);
   rear.position.set(cx, ROOF / 2, 176);
@@ -917,10 +957,16 @@ export function buildGehryMuseum(buildingColliders = []) {
   // and not fine now that a road runs past its foot. Every box reports the ROOF
   // height, not the mass's own: the roof is driven at ROOF + 0.3, and a taller
   // collider would yank a car on the roof up onto its top.
+  //
+  // Those boxes are what make the masses SOLID for a car up on the roof garden:
+  // main.js switches the elevated-roof rule off inside MUSEUM_ROOF (see there),
+  // so a car that leaves the garden is stopped by these instead of sinking into
+  // the shell. The rear block under the garden is the one box capped at the roof
+  // (`top`), because that is the surface the car is driving on.
   for (const m of [mA, mB, mC, mD]) {
     colliders.push({ x: m.x, z: m.z, halfW: m.w / 2, halfD: m.d / 2, h: ROOF });
   }
-  colliders.push({ x: cx, z: 176, halfW: 20, halfD: 10, h: ROOF });
+  colliders.push({ x: cx, z: 176, halfW: 20, halfD: 10, h: ROOF, top: ROOF });
 
   warmLight.position.set(cx, 4.2, 214);      // over the forecourt, at the foot of the flight
   building.add(warmLight);
@@ -1316,8 +1362,8 @@ export function buildGehryMuseum(buildingColliders = []) {
     add(new THREE.BoxGeometry(PW + 0.9, 0.16, PD + 0.9), forecourtMat, 0, 0.08, 0);
     add(new THREE.BoxGeometry(PW + 1.4, 0.5, PD + 1.4), museumTitanium, 0, PH + 0.25, 0);
     // The back of the box is glazed too, so the pavilion is a lantern on the roof
-    // rather than a solid room: the lit panel inside glows out through it, and a
-    // car that rolls in through the doors comes out into the garden behind.
+    // rather than a solid room: the lit panel inside glows out through it. It is
+    // a wall to the car like every other pane (see the colliders below).
     add(new THREE.BoxGeometry(0.08, PH, PD), museumGlass, -PW / 2 + 0.05, 0.16 + PH / 2, 0);
 
     // Corner posts, then the two glazed flanks with mullions every 3.2 m.
@@ -1370,6 +1416,39 @@ export function buildGehryMuseum(buildingColliders = []) {
       color: 0x3a3126, roughness: 0.72, emissive: 0xffb469, emissiveIntensity: 0.26,
     });
     add(new THREE.BoxGeometry(0.14, PH - 1.9, PD - 6), pavInnerMat, -PW / 2 + 0.7, 0.16 + (PH - 1.9) / 2, 0);
+
+    // ---- The glass is SOLID: the door bay is the only way in ---------------
+    // A car that sidestepped the two leaves used to sail through the clear
+    // glazing beside them, or through a flank, and into the pavilion. Now every
+    // pane is a wall; the entrance cut starts the moment a nose reaches the
+    // door plane (MUSEUM_DOOR), so the car never has to pass through the bay
+    // itself. Collected in the building's frame: the pavilion is turned a
+    // quarter, so its local x runs down the building's +z and its local z down
+    // the building's +x.
+    //
+    //   pvSolid(localX, localZ, sizeAlongLocalX, sizeAlongLocalZ)
+    const pvSolid = (lx, lz, w, d) => colliders.push({
+      x: px - lz, z: pz + lx, halfW: d / 2, halfD: w / 2,
+      h: base + PH, bottom: base - 1.5, noRoof: true,
+    });
+    const DOOR_HALF = 3.7;                       // half the width of the leaf bay
+    // The panes are only a few centimetres thick, so their colliders are made
+    // thick — growing INWARD, never toward the car. A collision check is a
+    // single point test per frame, so a pane thin enough to match the glass
+    // could be stepped over between two frames by a fast car.
+    const GLASS_T = 2.2;
+    const frontFace = ex + 0.2;                  // outer face of the front glazing
+    const sideFace = PD / 2 - 0.05 + 0.2;        // outer face of a flank
+    const backFace = -PW / 2 + 0.25;             // inner face of the back glazing
+    for (const sgn of [-1, 1]) {
+      // The glazed front, from the door jamb out to the corner post.
+      pvSolid(frontFace - GLASS_T / 2, sgn * (DOOR_HALF + (PD / 2 - DOOR_HALF) / 2),
+        GLASS_T, PD / 2 - DOOR_HALF);
+      // The glazed flanks, run the full depth so they close the corners.
+      pvSolid(0, sgn * (sideFace - GLASS_T / 2), PW, GLASS_T);
+    }
+    // The glazed back.
+    pvSolid(backFace - GLASS_T / 2, 0, GLASS_T, PD);
 
     // Canopy over the threshold, with warm strip lights under it.
     add(new THREE.BoxGeometry(2.4, 0.2, PD - 3), museumTitanium, PW / 2 + 1.0, 4.75, 0);

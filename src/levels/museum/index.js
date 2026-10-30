@@ -29,7 +29,7 @@ import {
   MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM,
   RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY, RAMP_UNDER_CLEARANCE,
   museumSurfaceAt, museumOnRamp,
-} from './layout.js?v=1800000000151';
+} from './layout.js?v=1800000000193';
 import { buildPaintExhibit } from './paint.js?v=1800000000190';
 
 export {
@@ -662,15 +662,37 @@ export function buildMuseumWorld(scene, opts = {}) {
   });
 
   // ---- Balconies ----------------------------------------------------------
-  // Open ledges: no railings, no colliders along the inner edge, so the car can
-  // drive straight off the lip and drop the 36 units to the exhibit floor.
+  // Open ledges: no railings on the lip itself, so the car can drive straight
+  // off it and drop the 36 units to the exhibit floor. The fascia BELOW the lip
+  // is the pit's side wall, so it is solid — a car down in the hall used to nose
+  // it and be snapped up onto the balcony through the wall.
   const railLen = exhibitDepth;
   for (const s of [-1, 1]) {
     // Fascia under the balcony edge, from the deep floor up to the balcony.
     box(1.2, -EXHIBIT.floorY, railLen, wallMat, s * BALCONY.innerX, EXHIBIT.floorY / 2, exhibitZc);
+    colliders.push({
+      x: s * BALCONY.innerX, z: exhibitZc, halfW: 0.6, halfD: railLen / 2,
+      h: MUSEUM_HALL.floorY, top: MUSEUM_HALL.floorY, bottom: EXHIBIT.floorY, noRoof: true,
+    });
   }
   // And under the far (north) end.
   box(innerW, -EXHIBIT.floorY, 1.2, wallMat, 0, EXHIBIT.floorY / 2, EXHIBIT.northInnerZ);
+  colliders.push({
+    x: 0, z: EXHIBIT.northInnerZ, halfW: innerW / 2, halfD: 0.6,
+    h: MUSEUM_HALL.floorY, top: MUSEUM_HALL.floorY, bottom: EXHIBIT.floorY, noRoof: true,
+  });
+
+  // The hall's front wall UNDER the lobby floor. Above atrium height the portal
+  // and its flanks own that face (see the portal build below), but below it
+  // there was nothing at all: a car in the exhibit hall could drive out from
+  // under the landing, through the wall beside the portal, and away around the
+  // empty shell of the building. This closes the pit into a box — it stops just
+  // under the floor slabs so no face is coplanar with them.
+  box(ATRIUM.maxX * 2, -EXHIBIT.floorY - 0.5, 1.2, wallMat, 0, EXHIBIT.floorY / 2 - 0.25, AT);
+  colliders.push({
+    x: 0, z: AT, halfW: ATRIUM.maxX, halfD: 0.6,
+    h: MUSEUM_HALL.floorY, top: MUSEUM_HALL.floorY, bottom: EXHIBIT.floorY, noRoof: true,
+  });
 
   // ---- The art exhibit: paint ladders on one giant drop cloth --------------
   // Two hundred ordinary A-frame ladders, each with a bucket of vivid rainbow
@@ -740,8 +762,11 @@ export function buildMuseumWorld(scene, opts = {}) {
   }
   box(V.halfW * 2 + 4, 0.4, vestLen + 4, trimMat, 0, 26.6, vestZc);
   // The glass wall at the far end, with a steel frame. The exit trigger fires
-  // before the car reaches it.
+  // before the car reaches it, but the glass is SOLID too: the trigger is dead
+  // for the first couple of seconds after arriving, and a boosted car used to
+  // shoot through this invisible wall and out into the void around the shell.
   box(V.halfW * 2, 26, 0.4, clearGlass, 0, 13, V.z1);
+  colliders.push({ x: 0, z: V.z1, halfW: V.halfW, halfD: 0.2, h: 26, noRoof: true });
   for (const x of [-V.halfW, -15, 0, 15, V.halfW]) {
     box(0.6, 26, 0.6, trimMat, x, 13, V.z1);
   }

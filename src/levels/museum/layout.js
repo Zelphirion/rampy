@@ -92,10 +92,13 @@ export const RAMP = { halfW: 24, zTop: 54, zBottom: -32, yTop: 0, yBottom: EXHIB
 
 // How far below a surface you have to be before the level treats it as a roof
 // over your head rather than the ground under your wheels. It is what lets a car
-// in the exhibit hall drive UNDER the ramp and the balconies: below the overhang
+// in the exhibit hall drive UNDER the ramp and the landing: below the overhang
 // by this much, the hall floor is the floor. It is also the snap window a car
 // climbing the ramp has to stay inside, so it must be far bigger than one frame
 // of climbing (14 u/s up a 23° slope moves 0.1 a frame).
+//
+// The balcony fascias are walls down to the hall floor, so the pit is a closed
+// box: the balconies are only reachable from the landing at atrium height.
 export const RAMP_UNDER_CLEARANCE = 3;
 
 // The balconies are open ledges at atrium height: no railings, so the car can
@@ -108,17 +111,23 @@ export const BALCONY = { innerX: EXHIBIT.innerX, northInnerZ: EXHIBIT.northInner
 // that knows the atrium, the ramp, the landings and the deep floor apart; main.js
 // and the tests both read it.
 //
-// `y` is optional and is the height of whatever is asking. Pass it and the ramp
-// becomes a roof as well as a road: a car down in the hall, well below the
-// slope, is told to drive on the hall floor and passes UNDER the ramp. Without
-// it (a camera asking "where is the ground here?") the slope is the surface.
+// `y` is optional and is the height of whatever is asking. Pass it and every
+// upstairs slab — the ramp, the landing, the balconies and the atrium — becomes
+// a roof as well as a road: a car down in the hall, well below the slab, is told
+// to drive on the hall floor and passes UNDER it. Without it (a camera asking
+// "where is the ground here?") the slab is the surface.
 export function museumSurfaceAt(x, z, y = null) {
-  if (z >= ATRIUM_EDGE) return MUSEUM_HALL.floorY;
+  // A car this far below the atrium storey has the slab over its head, not
+  // under its wheels. Answering with the storey above instead snapped the car
+  // up through the landing (and the balcony fascias) the moment it nosed them
+  // from the exhibit floor, so it could climb out of the pit through a wall.
+  const underAtrium = y !== null && y < MUSEUM_HALL.floorY - RAMP_UNDER_CLEARANCE;
+  if (z >= ATRIUM_EDGE) return underAtrium ? EXHIBIT.floorY : MUSEUM_HALL.floorY;
   // The landing at the head of the ramp spans the full width of the hall, so
   // the top of the stairs opens left and right onto the balconies.
-  if (z >= RAMP.zTop) return MUSEUM_HALL.floorY;
-  if (Math.abs(x) >= BALCONY.innerX) return MUSEUM_HALL.floorY;
-  if (z <= BALCONY.northInnerZ) return MUSEUM_HALL.floorY;
+  if (z >= RAMP.zTop) return underAtrium ? EXHIBIT.floorY : MUSEUM_HALL.floorY;
+  if (Math.abs(x) >= BALCONY.innerX) return underAtrium ? EXHIBIT.floorY : MUSEUM_HALL.floorY;
+  if (z <= BALCONY.northInnerZ) return underAtrium ? EXHIBIT.floorY : MUSEUM_HALL.floorY;
   if (Math.abs(x) <= RAMP.halfW && z >= RAMP.zBottom) {
     const t = (RAMP.zTop - z) / (RAMP.zTop - RAMP.zBottom);
     const rampY = RAMP.yTop + (RAMP.yBottom - RAMP.yTop) * t;

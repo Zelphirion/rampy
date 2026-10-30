@@ -94,6 +94,25 @@ test('the ramp is a roof as well as a road: a car below it drives under it', () 
   assert.ok(RAMP_UNDER_CLEARANCE > 1 && RAMP_UNDER_CLEARANCE < 10);
 });
 
+test('the landing and the balconies are roofs to a car down in the pit', () => {
+  // A car on the exhibit floor that noses the landing (or a balcony fascia)
+  // must be told the pit floor is its floor, not snapped up through the slab.
+  assert.equal(museumSurfaceAt(0, 100, EXHIBIT.floorY), EXHIBIT.floorY,
+    'the lobby floor reads as ground to a car under it');
+  assert.equal(museumSurfaceAt(60, (RAMP.zTop + ATRIUM_EDGE) / 2, EXHIBIT.floorY), EXHIBIT.floorY,
+    'the landing reads as ground to a car under it');
+  assert.equal(museumSurfaceAt(BALCONY.innerX + 20, -100, EXHIBIT.floorY), EXHIBIT.floorY,
+    'a balcony reads as ground to a car under it');
+  assert.equal(museumSurfaceAt(0, EXHIBIT.northInnerZ - 5, EXHIBIT.floorY), EXHIBIT.floorY,
+    'the far balcony reads as ground to a car under it');
+  // A car ON the storey still gets the storey, and a car on the ramp still
+  // gets the slope.
+  assert.equal(museumSurfaceAt(60, (RAMP.zTop + ATRIUM_EDGE) / 2, MUSEUM_HALL.floorY), MUSEUM_HALL.floorY);
+  assert.equal(museumSurfaceAt(0, 100, MUSEUM_HALL.floorY), MUSEUM_HALL.floorY);
+  const z = (RAMP.zTop + RAMP.zBottom) / 2;
+  assert.equal(museumSurfaceAt(0, z, museumSurfaceAt(0, z)), museumSurfaceAt(0, z));
+});
+
 test('the exhibit hall is a 336 square, and the lobby is the narrow wing', () => {
   // The open void is 336 across and 336 deep — a perfect square.
   assert.equal(EXHIBIT.innerX * 2, 336);

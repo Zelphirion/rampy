@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1800000000095';
-import { MUSEUM_STAIR, MUSEUM_DOOR, MUSEUM_EXIT_POSE } from './cityOuter.js?v=1800000000161';
+import { MUSEUM_STAIR, MUSEUM_DOOR, MUSEUM_EXIT_POSE, MUSEUM_ROOF } from './cityOuter.js?v=1800000000196';
 import { updateSoccerBall, updateSoccerScoreTires } from './soccer.js?v=1800000000162';
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, updateMerryGoRound, POTHOLE,
@@ -68,7 +68,7 @@ import { tryClaim, makeClaimState, cancelClaims, claimStatePlayers, MAX_PLAYERS 
 import { splitViewports, SPLIT_FOV } from './modules/splitViewports.js?v=1791700000000';
 import { buildRampWorld, buildRampWorldProps, createClouds, createWheelOfDeath, buildRampWorldRamps, createVortex, rampWorldFeatures, wheelOfDeathDef, wheelOfDeathPaddles, buildHammers, createTrebuchet, createRollingBoulder } from './levels/rampworld/index.js?v=1800000000167';
 import { addHouse, HOUSE, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, ROOMS, ROOM_LABELS, FRONT_DOOR, MAP_ITEMS, FIREPLACE, setMirrorEnv } from './levels/house/index.js?v=1800000000165';
-import { buildMuseumWorld, MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM, RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY } from './levels/museum/index.js?v=1800000000191';
+import { buildMuseumWorld, MUSEUM_HALL, MUSEUM_START, MUSEUM_EXIT, MUSEUM_VESTIBULE, ATRIUM_EDGE, ATRIUM, RUNNER, RECEPTION, COAT, PORTAL, EXHIBIT, RAMP, BALCONY } from './levels/museum/index.js?v=1800000000193';
 import { houseSurfaceY, houseLandingY, bowlLaunchAt, containInBowl, surfaceAt } from './levels/house/surfaces.js?v=1800000000047';
 import { createTrackState, stepTrack, sampleTrack, poseOnTrack, nearestTrackS, trackStick, releaseYaw, launchRampStart, createLaunchFlight, stepLaunchFlight, TRACK_CAPTURE, TRACK_LIFT } from './levels/house/hotwheels.mjs?v=1800000000020';
 import { addCat } from './cat.js?v=1791479956919';
@@ -2484,11 +2484,8 @@ function endSplit() {
   // Back to the single-player shared keyboard+pad scheme.
   players[0].device = 'kb-both';
   players[0].padIndex = 0;
-  // Drop any joystick input so a player isn't still holding a stick.
-  joy.active = false; joy.x = 0; joy.y = 0;
-  joy2.active = false; joy2.x = 0; joy2.y = 0;
-  if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
-  if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
+  // Drop any pad input so a player isn't still holding an arrow.
+  releaseJoyPads();
   // beginSplit halved the main camera's aspect for the left viewport; give the
   // full-width single-player view its aspect back or the picture stays squashed.
   // If a shared cinematic is still running it owns `camera` — syncCameraAspect
@@ -2744,10 +2741,13 @@ function stepTwoPlayer(p, dt) {
     return;
   }
 
+  // Inside the museum every car runs at 1.5× its own pace — the same rule P1
+  // gets, so a split-screen pair still races level in there.
+  const speedMul2 = worldState === 'museum' ? 1.5 : 1;
   if (forward > 0) {
-    p.velocity.value = Math.min(p.velocity.value + accel2 * 2.2 * forward * boost, 14 * boost);
+    p.velocity.value = Math.min(p.velocity.value + accel2 * 2.2 * forward * boost * speedMul2, 14 * boost * speedMul2);
   } else if (reverse > 0) {
-    p.velocity.value = Math.max(p.velocity.value - accel2 * 1.5 * reverse * boost, -7 * boost);
+    p.velocity.value = Math.max(p.velocity.value - accel2 * 1.5 * reverse * boost * speedMul2, -7 * boost * speedMul2);
   } else {
     p.velocity.value *= 0.92;
   }
@@ -2778,7 +2778,12 @@ function stepTwoPlayer(p, dt) {
   // streets, walls and props.
   const p2elevated = (worldState === 'house' || worldState === 'museum')
     ? false
-    : (buildingTopAt(nextX, nextZ) > 0 && carTwo.position.y > 0.5);
+    : (buildingTopAt(nextX, nextZ) > 0 && carTwo.position.y > 0.5 &&
+      // On the museum's roof plaza the masses are real walls: the same rule P1
+      // gets, so the twin cannot sink into a shell up there either.
+      !(worldState === 'city' &&
+        nextX > MUSEUM_ROOF.x0 && nextX < MUSEUM_ROOF.x1 &&
+        nextZ > MUSEUM_ROOF.z0 && nextZ < MUSEUM_ROOF.z1));
   const p2CanMove =
     worldState === 'ramp' ||
     p2elevated ||
@@ -11176,8 +11181,8 @@ window.addEventListener('keydown', (event) => {
   }
   keys[event.code] = true;
   // Spacebar pauses / unpauses the game (for screenshots). Pausing hides the
-  // minimap and the touch joystick; they come back when you unpause. Ignored
-  // while the car-showroom screen is open (the game is already paused).
+  // minimap and the touch direction pad; they come back when you unpause.
+  // Ignored while the car-showroom screen is open (the game is already paused).
   if (event.code === 'Space' && !selectMode) {
     event.preventDefault();
     setPaused(!isPaused);
@@ -11226,79 +11231,121 @@ window.addEventListener('keyup', (event) => {
   keys[event.code] = false;
 });
 
-// ===== Virtual joystick (touch / pointer) =====
-// Two of these exist. In single-player (and a controller split) only the first
-// is shown. In a two-players-on-one-screen touch split, `joy` drives Player 1
+// ===== Touch direction pad (touch / pointer) =====
+// Two pads exist. In single-player (and a controller split) only the first is
+// shown. In a two-players-on-one-screen touch split, `joy` drives Player 1
 // (bottom-left) and `joy2` drives Player 2 (bottom-right).
+//
+// Each pad is an ARCH of five pressable arrows — turn left, forward-left,
+// straight ahead, forward-right, turn right — plus a reverse arrow sitting
+// inside the arch, centred under the forward one at the left / right arrows'
+// height. Every arrow folds into the same { active, x, y } the old drag stick
+// wrote, so the frame loop below is unchanged.
 const joy = { active: false, x: 0, y: 0 };
 const joy2 = { active: false, x: 0, y: 0 };
 const joyBase = document.getElementById('joystick');
-const joyKnob = document.getElementById('joy-knob');
-const joyHit = document.getElementById('joystick-hit');
 const joy2Base = document.getElementById('joystick2');
-const joy2Knob = document.getElementById('joy2-knob');
-const joy2Hit = document.getElementById('joystick2-hit');
-const joyMax = 36;   // knob travel radius in px
 
-// Wire one joystick: its base disc, its knob, its invisible hit target, and
-// the state object it writes { active, x, y } into.
-function setupJoystick(base, knob, hit, state) {
-  if (!base || !knob || !hit) return;
-  let origin = null;
-  let activePointer = null;
-  const apply = (clientX, clientY) => {
-    let dx = clientX - origin.x;
-    let dy = clientY - origin.y;
-    const d = Math.hypot(dx, dy);
-    if (d > joyMax) {
-      dx = (dx / d) * joyMax;
-      dy = (dy / d) * joyMax;
+// [direction, x, y] in the pad's own screen space (up = -y), in arch order
+// left to right. The matching slot angles live in .joy-arrow[data-dir] CSS.
+// `down` is the reverse arrow: it sits at the arch's pivot (see the CSS), so it
+// is listed last rather than in the left-to-right sweep.
+const JOY_ARROW_DIRS = [
+  ['left', -1, 0],
+  ['up-left', -Math.SQRT1_2, -Math.SQRT1_2],
+  ['up', 0, -1],
+  ['up-right', Math.SQRT1_2, -Math.SQRT1_2],
+  ['right', 1, 0],
+  ['down', 0, 1],
+];
+
+// One reset per wired pad, so a blur / pause / cinematic can let go of every
+// arrow that was still down (and clear its pressed look).
+const joyPadResets = [];
+
+function releaseJoyPads() {
+  for (const reset of joyPadResets) reset();
+}
+
+// Build the arch of arrows inside `base` and fold whichever are held into
+// `state`. Fingers are tracked per pointer, so two at once add together (up +
+// left is the same 45° combo as the forward-left arrow), and a finger that
+// slides onto a neighbouring arrow simply changes direction.
+function setupJoyPad(base, state) {
+  if (!base) return;
+  const pointers = new Map();   // pointerId -> direction that finger is on
+  const buttons = [];
+
+  const update = () => {
+    const held = new Set(pointers.values());
+    let x = 0;
+    let y = 0;
+    for (const [dir, dx, dy] of JOY_ARROW_DIRS) {
+      if (!held.has(dir)) continue;
+      x += dx;
+      y += dy;
     }
-    knob.style.transform = `translate(${dx}px, ${dy}px)`;
-    state.x = dx / joyMax;
-    state.y = dy / joyMax;
+    // Clamp to the unit disc so a two-finger diagonal is a proper 45° shove
+    // rather than a double-length one the steering ease would overshoot.
+    const len = Math.hypot(x, y);
+    if (len > 1) { x /= len; y /= len; }
+    state.active = held.size > 0;
+    state.x = x;
+    state.y = y;
+    for (const btn of buttons) btn.classList.toggle('is-down', held.has(btn.dataset.dir));
   };
-  const release = () => {
-    if (!state.active) return;
-    state.active = false;
-    state.x = 0;
-    state.y = 0;
-    knob.style.transform = 'translate(0px, 0px)';
+
+  const arrowAt = (clientX, clientY) => {
+    const el = document.elementFromPoint(clientX, clientY);
+    const btn = el && el.closest ? el.closest('.joy-arrow') : null;
+    return btn && base.contains(btn) ? btn.dataset.dir : null;
   };
-  hit.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    const r = base.getBoundingClientRect();
-    origin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    activePointer = event.pointerId;
-    state.active = true;
-    apply(event.clientX, event.clientY);
-    hit.setPointerCapture(event.pointerId);
-  });
-  hit.addEventListener('pointermove', (event) => {
-    if (!state.active) return;
-    event.preventDefault();
-    apply(event.clientX, event.clientY);
-  });
-  hit.addEventListener('pointerup', release);
-  hit.addEventListener('pointercancel', release);
-  // Even if pointer capture is lost (a cinematic overlay opening over the
-  // stick, the tab blurring, an OS gesture), the release still lands here.
-  // Without this the stick could stay "held" and carry a hard turn into the
-  // next world.
-  window.addEventListener('pointerup', (event) => {
-    if (event.pointerId === activePointer) { activePointer = null; release(); }
-  });
-  window.addEventListener('pointercancel', (event) => {
-    if (event.pointerId === activePointer) { activePointer = null; release(); }
+
+  for (const [dir] of JOY_ARROW_DIRS) {
+    const btn = document.createElement('div');
+    btn.className = 'joy-arrow';
+    btn.dataset.dir = dir;
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', `Drive ${dir.replace('-', ' ')}`);
+    btn.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pointers.set(event.pointerId, dir);
+      update();
+      // Capture so the release still lands here even if the finger slides off
+      // the pad (and so pointermove keeps retargeting along the arch).
+      try { btn.setPointerCapture(event.pointerId); } catch (e) {}
+    });
+    // Capture keeps the moves coming, so sliding along the arch retargets the
+    // finger; sliding off the pad just holds the last direction.
+    btn.addEventListener('pointermove', (event) => {
+      if (!pointers.has(event.pointerId)) return;
+      event.preventDefault();
+      const next = arrowAt(event.clientX, event.clientY);
+      if (next && next !== pointers.get(event.pointerId)) {
+        pointers.set(event.pointerId, next);
+        update();
+      }
+    });
+    const unpress = (event) => {
+      if (!pointers.delete(event.pointerId)) return;
+      update();
+    };
+    btn.addEventListener('pointerup', unpress);
+    btn.addEventListener('pointercancel', unpress);
+    btn.addEventListener('lostpointercapture', unpress);
+    base.appendChild(btn);
+    buttons.push(btn);
+  }
+
+  joyPadResets.push(() => {
+    if (pointers.size === 0) return;
+    pointers.clear();
+    update();
   });
 }
-setupJoystick(joyBase, joyKnob, joyHit, joy);
-setupJoystick(
-  document.getElementById('joystick2'),
-  document.getElementById('joy2-knob'),
-  document.getElementById('joystick2-hit'),
-  joy2
-);
+setupJoyPad(joyBase, joy);
+setupJoyPad(joy2Base, joy2);
 
 // Drop every held digital/analog touch control. Called when the window loses
 // focus and whenever a cinematic hands the car to a new world: a keyup or
@@ -11307,13 +11354,7 @@ setupJoystick(
 // it is polled live, and a stick that is genuinely held is real input.
 function clearHeldDriveInput() {
   for (const code in keys) keys[code] = false;
-  for (const state of [joy, joy2]) {
-    state.active = false;
-    state.x = 0;
-    state.y = 0;
-  }
-  if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
-  if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
+  releaseJoyPads();
   // The wheel itself must not keep the last frame's lock either.
   steering.value = 0;
   if (players[1]) players[1].steering.value = 0;
@@ -11654,20 +11695,11 @@ function setPaused(p) {
   isPaused = p;
   minimap.style.display = p ? 'none' : '';
   if (joyBase) joyBase.style.display = p ? 'none' : '';
-  if (joyHit) joyHit.style.display = p ? 'none' : '';
   if (joy2Base) joy2Base.style.display = p ? 'none' : '';
-  if (joy2Hit) joy2Hit.style.display = p ? 'none' : '';
   if (p) {
-    // Drop any in-progress joystick input so the car doesn't drive off the
-    // moment you unpause.
-    joy.active = false;
-    joy.x = 0;
-    joy.y = 0;
-    if (joyKnob) joyKnob.style.transform = 'translate(0px, 0px)';
-    joy2.active = false;
-    joy2.x = 0;
-    joy2.y = 0;
-    if (joy2Knob) joy2Knob.style.transform = 'translate(0px, 0px)';
+    // Drop any in-progress pad input so the car doesn't drive off the moment
+    // you unpause.
+    releaseJoyPads();
   } else {
     // Discard the time that elapsed while paused so physics don't jump on
     // resume (clock.elapsedTime stays frozen during the pause too).
@@ -16392,12 +16424,14 @@ function animate() {
   // acceleration AND top speed both double, in either direction.
   const boost = inp.boost ? 2 : 1;
 
-  // The Indy racer tops out 1.5× faster than every other car (both directions).
-  const speedMul = playerIndy ? 1.5 : 1;
+  // The Indy racer tops out 1.5× faster than every other car (both directions),
+  // and inside the museum every car runs at 1.5× its own pace: the hall is
+  // hundreds of units across, so the drive through it was mostly dead time.
+  const speedMul = (playerIndy ? 1.5 : 1) * (worldState === 'museum' ? 1.5 : 1);
   if (forward > 0) {
-    velocity.value = Math.min(velocity.value + accel * 2.2 * forward * boost, 14 * boost * speedMul);
+    velocity.value = Math.min(velocity.value + accel * 2.2 * forward * boost * speedMul, 14 * boost * speedMul);
   } else if (reverse > 0) {
-    velocity.value = Math.max(velocity.value - accel * 1.5 * reverse * boost, -7 * boost * speedMul);
+    velocity.value = Math.max(velocity.value - accel * 1.5 * reverse * boost * speedMul, -7 * boost * speedMul);
   } else {
     if (jumpState.trebuchetBoost && jumpState.trebuchetBoost > 0) {
       // During the trebuchet flight keep horizontal speed from decaying so
@@ -16410,11 +16444,12 @@ function animate() {
   }
 
   if (inp.joyActive) {
-    // Analog joystick: push right = turn right, push left = turn left
+    // Touch pad: the right arrow turns right, the left one turns left, and a
+    // diagonal holds a 45° turn (the value is the same -1..1 a stick gave).
     steering.value += (-inp.joyX * 0.9 - steering.value) * Math.min(1, 12 * delta);
   } else if (inp.steerPad) {
-    // Xbox left stick / D-pad steer the same way the touch joystick does —
-    // positive is right, and the same easing keeps it from snapping.
+    // Xbox left stick / D-pad steer the same way the touch pad does — positive
+    // is right, and the same easing keeps it from snapping.
     steering.value += (-inp.steerPad * 0.9 - steering.value) * Math.min(1, 12 * delta);
   } else {
     if (inp.wantLeft) {
@@ -16459,9 +16494,18 @@ function animate() {
   // a wall — but a cat swat sets a vertical impulse, and a 5-unit hop is easily
   // enough to clear a 3-thick wall, which would let a bumped car hop out through
   // the shell and land in the void. Inside, walls always block.
+  //
+  // The museum's ROOF PLAZA gets the same treatment (MUSEUM_ROOF): its gallery
+  // masses rise above the garden while their colliders all report the garden's
+  // own height, so the rooftop rule let a car drive off the garden straight into
+  // a mass's empty shell. Off the plaza — and whenever the car is airborne — the
+  // usual rooftop rule returns.
+  const onMuseumRoof = worldState === 'city' &&
+    car.position.x > MUSEUM_ROOF.x0 && car.position.x < MUSEUM_ROOF.x1 &&
+    car.position.z > MUSEUM_ROOF.z0 && car.position.z < MUSEUM_ROOF.z1;
   const elevated = (worldState === 'house' || worldState === 'museum' || worldState === 'cornfield')
     ? false
-    : (jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5));
+    : (jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5 && !onMuseumRoof));
   const canMove =
     !p1Levitating() && (
     worldState === 'ramp' ||

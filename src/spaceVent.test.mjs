@@ -698,8 +698,8 @@ test('held steering input cannot survive a focus loss or a space-world handoff',
     'losing window focus does not drop held keys/sticks');
   assert.match(mainSrc, /visibilitychange[\s\S]{0,120}clearHeldDriveInput/,
     'hiding the tab does not drop held keys/sticks');
-  assert.match(mainSrc, /window\.addEventListener\('pointerup'[\s\S]{0,180}release\(\)/,
-    'a pointerup outside the stick target cannot release the stick');
+  assert.match(mainSrc, /addEventListener\('pointerup', unpress\)[\s\S]{0,160}lostpointercapture[\s\S]{0,40}unpress/,
+    'a pointerup outside the pad (or a lost capture) cannot release the held arrow');
   assert.match(mainSrc, /function startSpaceDeparture\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,
     'the space departure does not clear held input');
   assert.match(mainSrc, /function returnCityFromSpace\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,
