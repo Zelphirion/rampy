@@ -68,12 +68,12 @@ test('the house camera is held inside the room the car is in', () => {
 });
 
 test('the space station is GPU-warmed during the launch, before the arrival fades in', () => {
-  assert.match(main, /function warmSpaceStation\(\)/,
+  assert.match(main, /function warmSpaceStation\(force = false\)/,
     'no space-station warm pass');
   // It renders the REAL scene into an offscreen target with culling disabled,
   // so every program/buffer the cinematic will need is already uploaded.
   assert.match(main, /renderer\.setRenderTarget\(_spaceWarmRT\)/);
-  assert.match(main, /if \(o\.isMesh && o\.frustumCulled\)/);
+  assert.match(main, /if \(\(o\.isMesh \|\| o\.isSprite \|\| o\.isPoints\) && o\.frustumCulled\)/);
   assert.match(main, /renderer\.render\(spaceScene, _spaceWarmCam\)/);
   // The launch ride is the window: it runs while the opening black is up.
   const ride = main.slice(main.indexOf('function updateRocketRide(delta)'));

@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { buildMap, updateHoveringRings, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1800000000095';
-import { MUSEUM_STAIR, MUSEUM_DOOR, MUSEUM_EXIT_POSE, MUSEUM_ROOF } from './cityOuter.js?v=1800000000196';
+import { buildMap, updateHoveringRings, updateCircus, CIRCUS, PORTAL_HILL, portalHillHeightAt } from './map.js?v=1800000000205';
+import { MUSEUM_STAIR, MUSEUM_DOOR, MUSEUM_EXIT_POSE, MUSEUM_ROOF } from './cityOuter.js?v=1800000000204';
 import { updateSoccerBall, updateSoccerScoreTires } from './soccer.js?v=1800000000162';
 import { clamBowlHeightAt, clamInsideShell } from './clam.js';
 import { addProps, updateFountains, updateMineGems, updateHydrantSprays, resetHydrantSprays, setStreetLights, updateMerryGoRound, POTHOLE,
@@ -17,12 +17,14 @@ import { rideStateAt, RIDE_CYCLE, RIDE_CAR_SCALE } from './rocketRidePhases.js?v
 import { buildSpaceWorld } from './levels/space/index.js?v=1800000000046';
 import { buildCornfieldWorld, makePortalTree, makeFarmallTractor } from './levels/cornfield/index.js?v=1800000000046';
 import { clampInsideFarm } from './levels/cornfield/layout.js?v=1800000000046';
+import { buildFairgroundWorld } from './levels/fairground/index.js?v=1800000000533';
+import { clampInsideFair } from './levels/fairground/layout.js?v=1800000000533';
 import { natureHillHeightAt } from './modules/cityHills.js?v=1793123233707';
 import { terrainPitchAt } from './modules/terrainTilt.js?v=1800000000075';
 import { createRingState, stepRing, ringPose, ringWrapS, RING_R, RING_CIRC, RING_LANE, RING_MAX, RING_REVERSE, RING_ACCEL, RING_TURN } from './spaceRing.js';
 import { addLizard } from './lizard.js?v=1800000000000';
 import { makeTarantula, addRampTarantula, updateTarantulaNpc, wakeTarantula } from './modules/tarantula.js?v=1791479956919';
-import { updateKnockables, knockAt, resetKnockables, snapKnockables, triggerKnockable } from './physics.js?v=1800000000006';
+import { updateKnockables, knockAt, knockAtPoints, resetKnockables, snapKnockables, triggerKnockable } from './physics.js?v=1793986751263';
 import { createFlatCarState, getFlatCarScaleY, stepFlatCarState } from './carFlatMode.mjs';
 import { createTaffyState, getTaffyScale, stepTaffyState } from './carTaffyMode.mjs';
 import { EXPRESS_TUBE, expressTubeLength, expressTubeNearest, expressTubePoint, expressTubeTangent, SLAB_BOUNDS } from './modules/expressTube.js?v=1791479956919';
@@ -81,7 +83,7 @@ import {
 } from './levels/beach/index.js?v=1800000000166';
 // The object catalogue: every level's categories and the small standalone
 // models the Objects browser spins on the showroom stage.
-import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1800000000096';
+import { LEVELS, categoriesForLevel, findObject } from './objects/catalog.js?v=1800000000330';
 
 // ===== Real loading progress =====
 // The loader (index.html) is driven by actual build progress. Heavy world
@@ -974,6 +976,14 @@ function cineBounds(out) {
     out.z0 = SLAB_BOUNDS.minZ; out.z1 = SLAB_BOUNDS.maxZ;
     return out;
   }
+  // The county fair is a wider rectangle than the overworld: keep the tripod
+  // inside the fairground's own fence rather than the city's footprint.
+  if (worldState === 'fairground') {
+    const b = fairgroundWorld.mapBounds;
+    out.x0 = b.x0; out.x1 = b.x1;
+    out.z0 = b.z0; out.z1 = b.z1;
+    return out;
+  }
   // City, ramp world and beach all share the wrapping world footprint.
   out.x0 = worldXLo; out.x1 = worldXHi;
   out.z0 = worldZLo; out.z1 = worldZHi;
@@ -1321,6 +1331,7 @@ function activeColliders() {
   if (worldState === 'house') return houseColliders;
   if (worldState === 'museum') return museumColliders;
   if (worldState === 'cornfield') return cornfieldWorld.colliders;
+  if (worldState === 'fairground') return fairgroundWorld.colliders;
   if (worldState === 'beach') return playerCrab ? beachCollidersNoCrabs : beachWorld.colliders;
   // Space has no wall colliders: the wheel's corridor is enforced by the ring
   // drive itself, so the ordinary block/unstick machinery never runs there.
@@ -1915,6 +1926,7 @@ const emptyPad = { steer: 0, throttle: 0, reverse: 0, boost: false };
 let pickKinds = ['classic', 'city']; // each player's chosen ride (car kind id)
 let pickReady = [false, false];      // each player has locked their pick in
 let pickWasPaused = false;           // game pause state before the pick screen froze it
+let claimWasPaused = false;          // game pause state when the whole pairing flow began
 const pickPadPrev = [];              // per-pad button edge state during the pick screen
 const pickPadSteer = [];             // per-pad last steer sign (edge-cycles on push)
 let car2 = null;                    // Player 2's car, built on beginSplit
@@ -1945,7 +1957,7 @@ function flattenGamepad(g) {
 // The scene the active world renders into — P2's car is reparented here
 // whenever a portal changes world so it never vanishes with its old scene.
 function activeWorldScene() {
-  return worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene;
+  return worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : worldState === 'fairground' ? fairgroundScene : scene;
 }
 
 // ===== The pairing screen (claim) =====
@@ -2004,7 +2016,15 @@ function claimFromInput(input) {
 // keyboard halves and every pad's buttons are live for pairing, then drop the
 // claim screen over the single viewport.
 function startClaimFlow() {
+  // A live split is replaced by this fresh session rather than layered under it:
+  // beginSplit would otherwise build a second Player 2 over a car that is still
+  // in the scene.
+  if (splitActive) endSplit();
+  // This flow owns the screen from here, so closing the settings modal must not
+  // bounce straight back to the split overlay it may have been opened from.
+  mpReturnFromShared = false;
   exitSelectMode(false);
+  claimWasPaused = isPaused;
   splitTouch = false;
   claimActive = true;
   claimPhase = 'claim';
@@ -2023,7 +2043,10 @@ function startClaimFlow() {
 // two-sided car picker with both players pre-assigned to an on-screen joystick
 // (P1 left, P2 right) and lock in with the on-screen buttons.
 function startTouchSplit() {
+  if (splitActive) endSplit();
+  mpReturnFromShared = false;
   exitSelectMode(false);
+  claimWasPaused = isPaused;
   splitTouch = true;
   // Two synthetic 'touch' claims so the picker hints, the lock-in flow and
   // beginSplit (which reads claimStatePlayers) all work unchanged.
@@ -2046,7 +2069,9 @@ function cancelClaimFlow() {
   clearPickStage();
   // Undo the pick screen's freeze so the settings modal remembers the real
   // pre-pick pause state (enterSelectMode captures selectWasPaused from it).
-  setPaused(pickWasPaused);
+  // Restore what the flow started from, not what the pick step left behind: a
+  // cancel during pairing never reached the pick step's own snapshot.
+  setPaused(claimWasPaused);
   document.body.classList.remove('claim-active', 'pick-active');
   enterSelectMode();
 }
@@ -2061,9 +2086,11 @@ function enterPickPhase() {
   claimActive = true;   // the picker still owns all input
   document.body.classList.remove('claim-active');
   document.body.classList.add('pick-active');
-  // Default each player to their current ride (P1) and a distinct starter (P2).
+  // Default each player to their current ride, so a fresh session starts where
+  // the last one left off for BOTH players (P2's column used to snap back to
+  // City Car every time, throwing away a ride picked in the split settings).
   pickKinds[0] = playerCarKind;
-  pickKinds[1] = 'city';
+  pickKinds[1] = playerTwoCarKind;
   pickReady[0] = false;
   pickReady[1] = false;
   pickPadPrev.length = 0;
@@ -2357,8 +2384,11 @@ function beginSplit() {
   // Never leave a picker layer behind: split must take over the WHOLE screen.
   // exitSelectMode early-returns when the settings modal is already closed, so
   // its body-class teardown is repeated here (defensively) or a claim/pick
-  // overlay could stay stuck over the running game.
-  document.body.classList.remove('select-mode', 'tab-levels', 'tab-objects', 'tab-controls', 'tab-camera', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open', 'claim-active', 'pick-active');
+  // overlay — or the split's own settings overlay — could stay stuck over the
+  // running game.
+  document.body.classList.remove('select-mode', 'tab-levels', 'tab-objects', 'tab-controls', 'tab-camera', 'tab-graphics', 'tab-multiplayer', 'tab-about', 'browser-mode', 'object-open', 'claim-active', 'pick-active', 'mp-settings-open');
+  mpSettingsOpen = false;
+  mpReturnFromShared = false;
   // Exit settings modal so the split view takes over the whole screen.
   exitSelectMode(false);
   const devs = claimStatePlayers(claimState);
@@ -2691,13 +2721,17 @@ function stepTwoPlayer(p, dt) {
       const tw = spaceTwinSpawn();
       p.ring = createRingState(tw.s, tw.w, spaceDrive.heading);
     }
-    const throttle2 = Math.max(-1, Math.min(1, forward - reverse));
+    // The lift owns whichever car pulled onto it. When the twin is boarding,
+    // freeze its drive and draw it to the deck centre exactly as P1's drive
+    // does, so the climb reads as a proper elevator ride.
+    const boarding2 = spaceDock.boarding && spaceDock.subject === 1;
+    const throttle2 = boarding2 ? 0 : Math.max(-1, Math.min(1, forward - reverse));
     // Same left-positive convention as everywhere else; stepRing wants right
     // positive, so it is negated on the way in (see updateSpaceDrive).
     let steer2 = (inp.wantLeft ? 1 : 0) - (inp.wantRight ? 1 : 0);
     if (inp.joyActive) steer2 -= inp.joyX;
     if (inp.steerPad) steer2 -= inp.steerPad;
-    if (spaceStun > 0) steer2 = 0;
+    if (spaceStun > 0 || boarding2) steer2 = 0;
     // Apply the same hazards to P2's ring (conveyors, geysers, plasma,
     // compactors, tugs, lifts, decon, barriers). Some effects (vents) are global
     // cinematics triggered by zone entry.
@@ -2716,6 +2750,15 @@ function stepTwoPlayer(p, dt) {
     if (nearDecon2) laneHi2 = Math.max(laneHi2, decon2.lane);
     if (nearLift2) laneHi2 = Math.max(laneHi2, lift2.w + lift2.halfW + 1.0);
     stepRing(p.ring, { throttle: throttle2, steer: -steer2 * 0.9, laneHi: laneHi2, grip: spaceSurfaceGrip(p.ring) }, dt);
+    if (boarding2) {
+      const lift = spaceWorld.roadLift;
+      if (lift) {
+        const k = Math.min(1, dt * 2.5);
+        p.ring.s = ringWrapS(p.ring.s + spaceWrapDelta(lift.s - p.ring.s) * k);
+        p.ring.w += (lift.w - p.ring.w) * k;
+      }
+      p.ring.speed = 0;
+    }
     const pr2 = ringPose(p.ring.s, p.ring.w, p.ring.heading, SPACE_CAR_LIFT + spaceLift);
     carTwo.position.set(pr2.px, pr2.py, pr2.pz);
     _spaceBasis.makeBasis(
@@ -2981,6 +3024,9 @@ function stepTwoPlayer(p, dt) {
         p.velocity.value *= Math.max(0, 1 - flow2.drag * dt);
       }
     }
+  } else if (worldState === 'fairground') {
+    // Flat gravel, exactly as P1's block has it.
+    groundY2 = fairgroundWorld.groundY;
   } else {
     // City: the launch ramps lift P2 just like P1, and out on the outer belt
     // the rolling hills are real ground — P2 rides them (cityGroundHeightAt
@@ -3083,6 +3129,8 @@ function stepTwoPlayer(p, dt) {
       if (pz2 > RAMP_ZHI || pz2 < RAMP_ZLO) carTwo.position.z = wrapTorusZ(pz2);
     } else if (worldState === 'cornfield') {
       confineToFarm(carTwo.position, p.knock);
+    } else if (worldState === 'fairground') {
+      confineToFair(carTwo.position, p.knock);
     } else {
       if (px2 > worldXHi || px2 < worldXLo) carTwo.position.x = wrapCoordX(px2);
       if (pz2 > worldZHi || pz2 < worldZLo) carTwo.position.z = wrapCoordZ(pz2);
@@ -3775,7 +3823,7 @@ function updateFlatCar2State(delta) {
 // A SECOND scene so the city stays intact in memory: while we're in the ramp
 // world we stop rendering the city and switch the car over to this scene. On
 // the way back we just switch it again.
-let worldState = 'city'; // 'city' | 'ramp' | 'underground' | 'house' | 'museum' | 'beach' | 'space' | 'cornfield'
+let worldState = 'city'; // 'city' | 'ramp' | 'underground' | 'house' | 'museum' | 'beach' | 'space' | 'cornfield' | 'fairground'
 // ===== World changes restore flat mode — for BOTH players =====
 // The pancake (boulder / monster truck / steamroller / steam press squash) is
 // debris from the world you were just in, so it never travels with you: every
@@ -3791,6 +3839,8 @@ function setWorldState(next) {
   flatCar2State = createFlatCarState(false);
   if (car) car.scale.setScalar(portalCarScale);
   if (car2) car2.scale.setScalar(1);
+  // Whatever world the portal dropped the car into, the train comes with it.
+  reparentTrainCars();
 }
 // Seconds to ignore portal triggers right after a teleport, so the car isn't
 // instantly re-caught by the portal it just emerged from.
@@ -3852,15 +3902,18 @@ const museumColliders = museumWorld.colliders;
 // station compiled, right in the middle of the shot the player is watching.
 //
 // So the station is warmed deliberately: one offscreen render of the REAL scene
-// (tiny target, no frustum culling, every temporarily-hidden part revealed) puts
-// its programs, geometry buffers and textures on the GPU. It runs while the
-// rocket is climbing away, hidden behind the launch's black, and the arrival's
-// fade-in is gated on `spaceWarmed` so the picture never fades up early.
+// (tiny target, no frustum culling, every temporarily-hidden part revealed —
+// including the Points/Sprite sky, whose canvas textures upload lazily too)
+// puts its programs, geometry buffers and textures on the GPU. It runs while
+// the rocket is climbing away, hidden behind the launch's black, and is run
+// AGAIN during the launch's fade-to-black beat so the fly-in into the station
+// and the eye-port shutting behind it never hitch on a late compile.
 let spaceWarmed = false;
+let _spaceFadeWarmed = false;   // the launch fade-to-black beat already rewarmed this ride
 let _spaceWarmRT = null;
 let _spaceWarmCam = null;
-function warmSpaceStation() {
-  if (spaceWarmed) return;
+function warmSpaceStation(force = false) {
+  if (spaceWarmed && !force) return;
   if (!spaceScene || !spaceWorld) return;
   if (!_spaceWarmRT) _spaceWarmRT = new THREE.WebGLRenderTarget(8, 8);
   if (!_spaceWarmCam) {
@@ -3878,7 +3931,13 @@ function warmSpaceStation() {
   });
   const unculled = [];
   spaceScene.traverse((o) => {
-    if (o.isMesh && o.frustumCulled) { unculled.push(o); o.frustumCulled = false; }
+    // The star field, nebula clouds and galaxy are Points/Sprite objects, not
+    // meshes: their canvas textures also upload lazily on first render, so they
+    // must be de-culled and warmed here too or the arrival fly-in hitches on
+    // the first sprite it reveals.
+    if ((o.isMesh || o.isSprite || o.isPoints) && o.frustumCulled) {
+      unculled.push(o); o.frustumCulled = false;
+    }
   });
   // The player's car moves into this scene at the arrival, and the station's
   // own light rig makes its materials compile as different programs from the
@@ -3924,6 +3983,14 @@ function warmSpaceStation() {
 const cornfieldScene = new THREE.Scene();
 const cornfieldWorld = buildCornfieldWorld(cornfieldScene);
 
+// ===== The County Fair =====
+// Its own scene, reached by driving into the circus big top out in the city's
+// south-east belt. Built once and parked off-camera like the farm: main.js owns
+// the scene move, the car's Y and both portal cuts; the level module owns the
+// midway, the rides, the colliders and its own update().
+const fairgroundScene = new THREE.Scene();
+const fairgroundWorld = buildFairgroundWorld(fairgroundScene);
+
 // The giant tree is planted against the city's outer brick wall, in the belt
 // west of the park. Its arch faces +X (east), so the car drives WEST into it
 // to travel; you can see the portal disc and sparkles through the trunk's
@@ -3955,6 +4022,40 @@ const treePortalCine = {
   camPos: new THREE.Vector3(),
   camQuat: new THREE.Quaternion(),
 };
+
+// ===== The circus big top cut (city -> the county fair) =====
+// The same no-cut shot as the tree, with a tent instead of a trunk: the live
+// chase camera freezes where the player is watching from, the car carries on
+// north through the open flap, is swallowed by the dark portal disc inside, the
+// empty doorway holds for half a second, then the picture cuts to the midway.
+//
+// The trigger box straddles the flap (the canvas mouth is at CIRCUS.z + radius),
+// so it fires the moment the car noses in. The car ends deep inside the black
+// drum, well past the portal disc, where nothing can see it.
+const CIRCUS_CINE_SPEED_MIN = 9;
+const CIRCUS_CINE_SPEED_MAX = 14;
+const CIRCUS_CINE_END_Z = CIRCUS.z + 1;     // deep inside, behind the portal disc
+const CIRCUS_CINE_HOLD = 0.55;              // empty-doorway beat
+const CIRCUS_CINE_FAIR_DRIVE = 0.9;         // the arrival roll up the midway
+const CIRCUS_PORTAL = {
+  x0: CIRCUS.x - 5.6, x1: CIRCUS.x + 5.6,
+  z0: CIRCUS.z + 4,   // -142, inside the flap
+  z1: CIRCUS.z + 15,  // -131, the canvas mouth
+};
+const circusPortalCine = {
+  active: false,
+  phase: 'city',      // 'city' | 'hold' | 'fair'
+  t: 0,
+  holdT: 0,
+  startX: 0,
+  startZ: 0,
+  speed: CIRCUS_CINE_SPEED_MIN,
+  camPos: new THREE.Vector3(),
+  camQuat: new THREE.Quaternion(),
+};
+// The flap may not re-arm until the shot has finished, so the car cannot be
+// swallowed twice by the same approach.
+const circusPortal = { armed: true };
 
 // ===== Museum entrance cut (city -> the atrium) =====
 // Bumping the pavilion's doors on the roof garden plays the same no-cut shot as
@@ -5114,6 +5215,7 @@ function emitAshFlakes(n) {
     : worldState === 'house' ? houseRoot
     : worldState === 'museum' ? museumScene
     : worldState === 'cornfield' ? cornfieldScene
+    : worldState === 'fairground' ? fairgroundScene
     : scene;
   if (wantRoot !== ashFlakeRootRef) {
     for (const f of ashFlakes) wantRoot.add(f.sprite);
@@ -6323,6 +6425,18 @@ function confineToFarm(pos, knock) {
   if (c.hitZ < 0 && knock.vz < 0) knock.vz = 0;
   if (c.hitZ > 0 && knock.vz > 0) knock.vz = 0;
 }
+// The fairground's twin of confineToFarm: same two-layer guarantee (a knocked
+// car can never be thrown past the fence), purely positional otherwise.
+function confineToFair(pos, knock) {
+  const c = clampInsideFair(pos.x, pos.z);
+  pos.x = c.x;
+  pos.z = c.z;
+  if (!knock) return;
+  if (c.hitX < 0 && knock.vx < 0) knock.vx = 0;
+  if (c.hitX > 0 && knock.vx > 0) knock.vx = 0;
+  if (c.hitZ < 0 && knock.vz < 0) knock.vz = 0;
+  if (c.hitZ > 0 && knock.vz > 0) knock.vz = 0;
+}
 // Player 2's twins of the farm knocks: identical forces and the same end-on
 // facing, but they land on the twin's own knock slot (knockPlayerTwoAway), so
 // a hit on the second car never moves Player 1. The apple hit carries no
@@ -6665,6 +6779,104 @@ function placeTreeCineChasePose() {
   );
   _lookTarget.set(car.position.x, ty, car.position.z);
   camera.lookAt(_lookTarget);
+}
+
+// The circus flap's cut. P1 gets the locked-off shot; a split-screen P2 is
+// swapped seamlessly because the cut is a single-car shot.
+function startCircusPortalCine(rider = 0) {
+  if (circusPortalCine.active) return;
+  if (rider === 1) { enterFairgroundWorldSeamless(1); return; }
+  circusPortalCine.active = true;
+  circusPortalCine.phase = 'city';
+  circusPortalCine.t = 0;
+  circusPortalCine.holdT = 0;
+  circusPortalCine.startX = car.position.x;
+  circusPortalCine.startZ = car.position.z;
+  circusPortalCine.speed = THREE.MathUtils.clamp(
+    Math.abs(velocity.value) || CIRCUS_CINE_SPEED_MIN,
+    CIRCUS_CINE_SPEED_MIN,
+    CIRCUS_CINE_SPEED_MAX,
+  );
+  freezeChasePose(circusPortalCine);
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  portalGrace = 60;
+  car.visible = true;
+}
+
+function updateCircusPortalCine(delta) {
+  if (!circusPortalCine.active) return;
+  circusPortalCine.t += delta;
+  // The script owns the car for the whole shot.
+  velocity.value = 0;
+  steering.value = 0;
+
+  if (circusPortalCine.phase === 'city') {
+    const dist = circusPortalCine.speed * circusPortalCine.t;
+    const sx = circusPortalCine.startX;
+    const sz = circusPortalCine.startZ;
+    const z = sz - dist;
+    // Ease onto the doorway's centreline over the first few metres so the car
+    // passes between the flaps instead of clipping a pole.
+    const p = Math.min(1, dist / 7);
+    const blend = p * p * (3 - 2 * p);
+    const x = sx + (CIRCUS.x - sx) * blend;
+    car.position.set(x, groundHeight, z);
+    car.rotation.set(0, Math.PI / 2, 0);
+    car.visible = true;
+    if (z <= CIRCUS_CINE_END_Z) {
+      // Fully behind the portal disc: hold on the empty doorway.
+      car.visible = false;
+      circusPortalCine.phase = 'hold';
+      circusPortalCine.holdT = 0;
+    }
+    return;
+  }
+
+  if (circusPortalCine.phase === 'hold') {
+    circusPortalCine.holdT += delta;
+    if (circusPortalCine.holdT >= CIRCUS_CINE_HOLD) {
+      enterFairgroundWorld();
+      const g = fairgroundWorld.returnPortal;
+      car.position.set(g.x, fairgroundWorld.groundY, g.z + 2);
+      car.rotation.set(0, Math.PI / 2, 0);
+      car.visible = true;
+      portalGrace = 30;
+      circusPortalCine.phase = 'fair';
+      circusPortalCine.t = 0;
+    }
+    return;
+  }
+
+  // Fair side: the car noses out of the gate and up the midway, then the chase
+  // cam takes over immediately so the drive is the player's.
+  const u = Math.min(1, circusPortalCine.t / CIRCUS_CINE_FAIR_DRIVE);
+  const g = fairgroundWorld.returnPortal;
+  const z0 = g.z + 2;
+  const z1 = g.z + 14;
+  car.position.set(g.x, fairgroundWorld.groundY, z0 + (z1 - z0) * u);
+  car.rotation.set(0, Math.PI / 2, 0);
+  car.visible = true;
+  if (u >= 1) {
+    circusPortalCine.active = false;
+    circusPortal.armed = true;
+    portalGrace = 1.2;
+    velocity.value = 0;
+    steering.value = 0;
+    placePlayerTwoNearP1();
+    _postCineCamPos.copy(camera.position);
+    _postCineLookPos.copy(_lookTarget);
+    _postCineTimer = 1.6;
+    camera.fov = 60;
+    camera.updateProjectionMatrix();
+  }
 }
 
 // Start the tree-portal cut on the city side. No camera cut: the live chase
@@ -7392,6 +7604,119 @@ function leaveCornfieldSeamless(rider) {
     respawnBumper();
     reparentChaseTrainConsist();
   }
+  placePlayerTwoNearP1();
+}
+
+// ===== The County Fair =====
+// Reached through the circus big top. The swap is the farm's: move the car into
+// the level's own scene, clear every cross-world bit of state, and drop it on
+// the spawn at the head of the midway.
+function enterFairgroundWorld() {
+  scene.remove(car);
+  fairgroundScene.add(car);
+  setWorldState('fairground');
+  resetKnockables();
+  resetHydrantSprays();
+  resetHouseAsh();
+  globalDarkness = false;
+  applyGlobalDarkness();
+  minePortal.active = false;
+  minePortal.timer = 0;
+  minePortal.rider = 0;
+  housePortal.watch.active = false;
+  housePortal.rider = 0;
+  shellPortal.armed = false;
+  shellPortal.rider = 0;
+  shellPortal.cine = false;
+  beachShellPortal.armed = false;
+  beachShellPortal.fadeTimer = -1;
+  portalCarScale = 1;
+  portalGrace = 1.6;
+  velocity.value = 0;
+  steering.value = 0;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  const s = fairgroundWorld.spawn;
+  car.position.set(s.x, fairgroundWorld.groundY, s.z);
+  car.rotation.set(0, s.yaw, 0);
+  car.visible = true;
+  shake.intensity = Math.max(shake.intensity, 0.35);
+  // The blue car never travels to the fair: park it back in town if it was left
+  // in the farm or the ramp world.
+  if (bumperInCorn) {
+    cornfieldScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInCorn = false;
+    respawnBumper();
+    reparentChaseTrainConsist();
+  }
+  if (bumperInRamp) {
+    rampScene.remove(bumperCar);
+    scene.add(bumperCar);
+    bumperInRamp = false;
+    reparentChaseTrainConsist();
+  }
+  placePlayerTwoNearP1();
+}
+
+function enterFairgroundWorldSeamless(rider) {
+  const vx = velocity.value;
+  scene.remove(car);
+  fairgroundScene.add(car);
+  setWorldState('fairground');
+  resetKnockables();
+  resetHydrantSprays();
+  resetHouseAsh();
+  globalDarkness = false;
+  applyGlobalDarkness();
+  portalGrace = 0.6;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  const g = fairgroundWorld.returnPortal;
+  car.position.set(g.x, fairgroundWorld.groundY, g.z + 6);
+  car.rotation.set(0, Math.PI / 2, 0);
+  velocity.value = vx;
+  steering.value = 0;
+  car.visible = true;
+  placePlayerTwoNearP1();
+}
+
+function leaveFairgroundSeamless(rider) {
+  const vx = velocity.value;
+  fairgroundScene.remove(car);
+  scene.add(car);
+  setWorldState('city');
+  resetKnockables();
+  resetHydrantSprays();
+  resetHouseAsh();
+  globalDarkness = false;
+  applyGlobalDarkness();
+  portalGrace = 1.2;
+  jumpState.inAir = false;
+  jumpState.yVelocity = 0;
+  wasOnRamp = null;
+  currentRamp = null;
+  playerKnock = null;
+  flatCarState = createFlatCarState(false);
+  taffyState = createTaffyState(false);
+  // Back out in front of the big top, facing north into town, and clear of the
+  // flap's trigger box so the car is not instantly swallowed again.
+  car.position.set(CIRCUS.x, groundHeight, CIRCUS.z + 22);
+  car.rotation.set(0, Math.PI / 2, 0);
+  velocity.value = vx;
+  steering.value = 0;
+  car.visible = true;
+  shake.intensity = Math.max(shake.intensity, 0.35);
   placePlayerTwoNearP1();
 }
 
@@ -8209,6 +8534,7 @@ function startRocketRide(rider = 0) {
   const b = spaceport.boarding;
   rocketRide.active = true;
   rocketRide.timer = 0;
+  _spaceFadeWarmed = false;
   rocketRide.armed = false;
   rocketRide.rider = rider === 1 ? 1 : 0;
   b.setActive(true);
@@ -8306,6 +8632,13 @@ function updateRocketRide(delta) {
     _fadeOverlay.style.opacity = '0';
   }
   const st = rideStateAt(rocketRide.timer);
+  // The launch ride fades to black right before the arrival cuts in: that black
+  // beat is the last chance to (re)warm the station offscreen, so the fly-in
+  // and the closing eye-port never hitch on lazily-compiled sky sprites.
+  if (st.phase === 'fade' && !_spaceFadeWarmed) {
+    _spaceFadeWarmed = true;
+    warmSpaceStation(true);
+  }
   const rideCar = rideCarFor(rocketRide.rider);
 
   // Fit the hand to the car the moment the ride starts: the palm stops on the
@@ -8662,6 +8995,7 @@ const SPACE_VENT_EXT_LOOK_OFF = new THREE.Vector3(12.0, -20.0, -1.05);
 // player was (the same no-cut trick as the tree portal).
 const spaceDock = {
   dwell: 0, rise: 0, boarding: false, entered: false,
+  subject: 0,        // which player's car is on the lift (0 = P1, 1 = the twin)
   cine: false,
   camPos: new THREE.Vector3(),
   camQuat: new THREE.Quaternion(),
@@ -8861,6 +9195,7 @@ function finishSpaceArrival() {
   spaceDock.dwell = 0;
   spaceDock.boarding = false;
   spaceDock.entered = false;
+  spaceDock.subject = 0;
   spaceDock.cine = false;
   if (spaceWorld.roadLift) spaceWorld.roadLift.deck.position.y = 0;
   rocketRide.rider = 0;   // the ride is over — next launch starts fresh
@@ -8925,9 +9260,10 @@ function updateSpaceDrive(delta) {
     : readInput(players[0], { keys, pad, joy });
   players[0].input = inp;
 
-  // While the lift owns the car the controls are dead, and the car is drawn to
-  // the centre of the deck so the climb reads as a proper elevator ride.
-  const boarding = spaceDock.boarding;
+  // While the lift owns THIS car the controls are dead, and the car is drawn to
+  // the centre of the deck so the climb reads as a proper elevator ride. When
+  // the twin is the one boarding, P1 keeps driving the ship and watching.
+  const boarding = spaceDock.boarding && spaceDock.subject === 0;
   const throttle = boarding ? 0 : Math.max(-1, Math.min(1, inp.forward - inp.reverse));
   // `steer` is left-positive, matching the steering.value convention everywhere
   // else. stepRing's own input is RIGHT-positive (see spaceRing.js), so it must
@@ -8969,7 +9305,7 @@ function updateSpaceDrive(delta) {
   // Check the lift before the bay hazards: the lift trigger is the outer side
   // bay and must win over the adjacent decon/vent zones if they overlap at all.
   spaceRoadLiftCollision();
-  if (spaceDock.boarding) {
+  if (boarding) {
     const lift = spaceWorld.roadLift;
     if (lift) {
       const k = Math.min(1, delta * 2.5);
@@ -8995,29 +9331,45 @@ function updateSpaceDrive(delta) {
   if (pivs) for (let i = 0; i < Math.min(2, pivs.length); i++) pivs[i].rotation.y = steering.value * 0.55;
 }
 
+// The car currently riding the side lift / the departure hold.
+function spaceLiftCar() {
+  return spaceDock.subject === 1 ? car2 : car;
+}
+
 // ===== Road-lift contact trigger =====
 // The shoulder departure lift is deliberately barrier-free: no posts, no fenced
 // ends, no head-on bounce. The whole side bay (deck plus apron) is one trigger
 // plate — the same area the LIFT marker points at on the minimap. Touch it from
-// any direction and the boarding sequence starts.
+// any direction and the boarding sequence starts. EITHER player can pull onto
+// it: P1's ring is checked first, then the split twin's.
 function spaceRoadLiftCollision() {
   const lift = spaceWorld.roadLift;
   if (!lift || spaceDock.entered) return;
   if (spaceArrival.active || spaceDeparture.active || spaceVent.active) return;
-  const st = spaceDrive;
-  const ds = Math.abs(spaceWrapDelta(st.s - lift.s));
-  const dw = Math.abs(st.w - lift.w);
-  if (ds > lift.triggerHalfS || dw > lift.triggerHalfW) return;
+
+  // Either player's ring may pull onto the deck: the same trigger plate covers
+  // the whole side bay, and P1 wins if both somehow overlap at once.
+  const hit = (st) => st
+    && Math.abs(spaceWrapDelta(st.s - lift.s)) <= lift.triggerHalfS
+    && Math.abs(st.w - lift.w) <= lift.triggerHalfW;
+  let subject = -1;
+  if (hit(spaceDrive)) subject = 0;
+  else if (splitActive && players[1] && players[1].ring && hit(players[1].ring)) subject = 1;
+  if (subject < 0) return;
 
   // Latch the ride and freeze the live camera where it is for the lift shot.
   clearHeldDriveInput();
   spaceDock.entered = true;
   spaceDock.boarding = true;
+  spaceDock.subject = subject;
   spaceDock.dwell = 0;
   spaceDock.rise = 0;
   spaceDock.cine = true;
   spaceDock.camPos.copy(camera.position);
   spaceDock.camQuat.copy(camera.quaternion);
+  // P1's frozen lift shot is a single-player nicety; when the TWIN boards, the
+  // live split chase cam already follows it up the deck, so leave P1's lens free.
+  if (subject === 1) spaceDock.cine = false;
 }
 
 // ===== Road-lift boarding =====
@@ -10029,15 +10381,27 @@ function startSpaceDeparture() {
   ship.rotation.set(0, spaceShipYawDep(0, SPACE_DEPART_EYE_PARK), 0);
   ship.updateWorldMatrix(true, false);
 
-  // The car rides the hold at the same miniature scale as the flight, hood to
-  // the nose, plainly visible through the roof glass as the ship sweeps by.
-  portalCarScale = RIDE_CAR_SCALE;
-  car.scale.setScalar(RIDE_CAR_SCALE);
-  car.visible = true;
+  // The rider's car (whoever pulled onto the lift) rides the hold at the same
+  // miniature scale as the flight, hood to the nose, plainly visible through
+  // the roof glass as the ship sweeps by. The passenger is shrunk out of shot
+  // for the flight and restored in the city.
+  const seatCar = spaceLiftCar();
+  if (seatCar === car) {
+    portalCarScale = RIDE_CAR_SCALE;
+    car.scale.setScalar(RIDE_CAR_SCALE);
+    car.visible = true;
+    if (car2) car2.scale.setScalar(0.0001);
+  } else {
+    portalCarScale = 0.0001;
+    car.scale.setScalar(0.0001);
+    car.visible = false;              // P1 is the passenger for this flight
+    seatCar.visible = true;
+    seatCar.scale.setScalar(RIDE_CAR_SCALE);
+  }
   spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
   spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
-  car.position.copy(_spaceSeatPos);
-  car.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
+  seatCar.position.copy(_spaceSeatPos);
+  seatCar.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
 
   velocity.value = 0;
   steering.value = 0;
@@ -10116,11 +10480,12 @@ function updateSpaceDeparture(delta) {
     pl.inner.material.opacity = 0.95 * plume;
   }
 
-  // The car rides the hold, hood to the nose, all the way out.
+  // The rider's car rides the hold, hood to the nose, all the way out.
+  const seatCar = spaceLiftCar();
   spaceWorld.arrivalSeat.getWorldPosition(_spaceSeatPos);
   spaceWorld.arrivalSeat.getWorldQuaternion(_spaceSeatQuat);
-  car.position.copy(_spaceSeatPos);
-  car.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
+  seatCar.position.copy(_spaceSeatPos);
+  seatCar.quaternion.copy(_spaceSeatQuat).multiply(_rideFlipY);
 
   if (t >= SPACE_DEPART_END) finishSpaceDeparture();
 }
@@ -10165,10 +10530,15 @@ function returnCityFromSpace() {
   car.rotation.set(0, Math.atan2(-(pad.z - car.position.z), (pad.x - car.position.x)), 0);
   rocketRide.armed = false;
   placePlayerTwoNearP1();
+  if (car2) {
+    car2.visible = true;   // may have been the hidden passenger during the flight
+    car2.scale.setScalar(1);
+  }
   spaceDock.dwell = 0;
   spaceDock.rise = 0;
   spaceDock.boarding = false;
   spaceDock.entered = false;
+  spaceDock.subject = 0;
   spaceDock.cine = false;
   if (spaceWorld.roadLift) spaceWorld.roadLift.deck.position.y = 0;
   _fadeOverlay.style.transition = 'opacity 1.0s';
@@ -10520,6 +10890,10 @@ function drawMinimap(mmCtxArg, opts) {
     // Grass-green wash behind the farm plan.
     ctx.fillStyle = 'rgba(74,116,54,0.28)';
     ctx.fillRect(0, 0, 160, 160);
+  } else if (worldState === 'fairground') {
+    // Deep night-violet wash behind the fair plan.
+    ctx.fillStyle = 'rgba(38,26,72,0.42)';
+    ctx.fillRect(0, 0, 160, 160);
   }
 
   // ===== Orientation: rotate 180° — north up, NON-mirrored =====
@@ -10583,11 +10957,16 @@ function drawMinimap(mmCtxArg, opts) {
   // The farm is a 244 x 230 rectangle around world (4, 11): bigger than the
   // small stunt worlds but nowhere near city size, so it gets its own scale and
   // centre (taken from the level's mapBounds) instead of spilling off-canvas.
+  // The farm and the fair are both big flat rectangles around a level-specific
+  // centre, so they share one "flat mode" projection taken from mapBounds.
   const cornMode = worldState === 'cornfield';
-  const cornScale = 0.58;
-  const cornBounds = cornMode ? (cornfieldWorld.mapBounds || { x0: -118, x1: 126, z0: -104, z1: 126 }) : null;
-  const cornCx = cornBounds ? (cornBounds.x0 + cornBounds.x1) / 2 : 0;
-  const cornCz = cornBounds ? (cornBounds.z0 + cornBounds.z1) / 2 : 0;
+  const fairMode = worldState === 'fairground';
+  const flatMode = cornMode || fairMode;
+  const flatWorld = fairMode ? fairgroundWorld : cornfieldWorld;
+  const flatScale = fairMode ? 0.42 : 0.58;
+  const flatBounds = flatMode ? (flatWorld.mapBounds || { x0: -118, x1: 126, z0: -104, z1: 126 }) : null;
+  const flatCx = flatBounds ? (flatBounds.x0 + flatBounds.x1) / 2 : 0;
+  const flatCz = flatBounds ? (flatBounds.z0 + flatBounds.z1) / 2 : 0;
   // The museum is the biggest interior — 428 x 1008 of hall plus the lobby wing —
   // so its map gets a scale derived from the footprint, and a centre offset that
   // fits the whole building on the canvas.
@@ -10597,17 +10976,17 @@ function drawMinimap(mmCtxArg, opts) {
   // Centre on the whole footprint including the glass vestibule, so the way out
   // stays on the map instead of clipping off the bottom edge.
   const museumCz = (MUSEUM_HALL.minZ + MUSEUM_VESTIBULE.z1) / 2;
-  const mScale = cityMode ? cityScale : cornMode ? cornScale : museumMode ? museumScale : mmScale;
-  const mCx = cityMode ? cityCx : cornMode ? cornCx : 0;
-  const mCz = cityMode ? cityCz : cornMode ? cornCz : museumMode ? museumCz : 0;
+  const mScale = cityMode ? cityScale : flatMode ? flatScale : museumMode ? museumScale : mmScale;
+  const mCx = cityMode ? cityCx : flatMode ? flatCx : 0;
+  const mCz = cityMode ? cityCz : flatMode ? flatCz : museumMode ? museumCz : 0;
   const mpx = (x) => mmCenter + (x - mCx) * mScale;
   const mpz = (z) => mmCenter + (z - mCz) * mScale;
 
   // ===== Debug coordinate grid =====
   // Faint lines on a world-space grid. The city now spans far more ground, so it
   // gets a coarser, wider grid than the small levels.
-  const gExtent = cityMode ? 160 : museumMode ? museumSpan / 2 + 40 : cornMode ? 140 : 80;
-  const gStep = cityMode ? 40 : cornMode ? 40 : museumMode ? 80 : 20;
+  const gExtent = cityMode ? 160 : museumMode ? museumSpan / 2 + 40 : flatMode ? 150 : 80;
+  const gStep = cityMode ? 40 : flatMode ? 40 : museumMode ? 80 : 20;
   ctx.strokeStyle = 'rgba(150,175,215,0.13)';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -10632,6 +11011,13 @@ function drawMinimap(mmCtxArg, opts) {
       const sz = mpz(c.z);
       ctx.fillRect(sx - c.halfW * mScale, sz - c.halfD * mScale, c.halfW * 2 * mScale, c.halfD * 2 * mScale);
     }
+    // The circus big top: a warm ring in the empty south-east corner. Its
+    // colliders are discs, so they draw nothing above on their own.
+    ctx.strokeStyle = 'rgba(226,188,120,0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(mpx(CIRCUS.x), mpz(CIRCUS.z), CIRCUS.radius * mScale, 0, Math.PI * 2);
+    ctx.stroke();
     // The mega launch ramp is intentionally NOT drawn on the minimap (it sits
     // at the north edge of the map, in the grass field that isn't shown either).
     if (!splitActive) {   // no chase car on the map during a split session
@@ -10749,15 +11135,17 @@ function drawMinimap(mmCtxArg, opts) {
     ctx.beginPath();
     ctx.arc(mmCenter + boulder.x * mmScale, mmCenter + boulder.z * mmScale, 2.4, 0, Math.PI * 2);
     ctx.fill();
-  } else if (worldState === 'underground' || worldState === 'cornfield') {
-    // Feature markers (idea #29): the cavern and the farm are too large to read
-    // from the car alone, so drop a marker at each landmark from the level's
-    // exported mapFeatures list — a HOLLOW shape per built feature (same faint
-    // outline style as the city-building footprints). The mountain keeps its
-    // round ring. Labels are drawn later, after the mirror is undone, so the
-    // text isn't flipped.
-    const farm = worldState === 'cornfield';
-    const feats = (farm ? cornfieldWorld.mapFeatures : undergroundWorld.mapFeatures) || [];
+  } else if (worldState === 'underground' || worldState === 'cornfield' || worldState === 'fairground') {
+    // Feature markers (idea #29): the cavern, the farm and the fair are too
+    // large to read from the car alone, so drop a marker at each landmark from
+    // the level's exported mapFeatures list — a HOLLOW shape per built feature
+    // (same faint outline style as the city-building footprints). The mountain
+    // keeps its round ring. Labels are drawn later, after the mirror is undone,
+    // so the text isn't flipped.
+    const farm = worldState !== 'underground';
+    const feats = (farm
+      ? (worldState === 'fairground' ? fairgroundWorld : cornfieldWorld).mapFeatures
+      : undergroundWorld.mapFeatures) || [];
     for (const f of feats) {
       const fx = farm ? mpx(f.x) : mmCenter + f.x * mmScale;
       const fz = farm ? mpz(f.z) : mmCenter + f.z * mmScale;
@@ -11005,9 +11393,11 @@ function drawMinimap(mmCtxArg, opts) {
   ctx.restore();
 
   // Feature labels (idea #29), drawn un-mirrored so the text reads normally.
-  if (worldState === 'underground' || worldState === 'cornfield') {
-    const farm = worldState === 'cornfield';
-    const feats = (farm ? cornfieldWorld.mapFeatures : undergroundWorld.mapFeatures) || [];
+  if (worldState === 'underground' || worldState === 'cornfield' || worldState === 'fairground') {
+    const farm = worldState !== 'underground';
+    const feats = (farm
+      ? (worldState === 'fairground' ? fairgroundWorld : cornfieldWorld).mapFeatures
+      : undergroundWorld.mapFeatures) || [];
     const fs = farm ? mScale : mmScale;
     ctx.font = '6px sans-serif';
     ctx.textAlign = 'center';
@@ -11182,8 +11572,10 @@ window.addEventListener('keydown', (event) => {
   keys[event.code] = true;
   // Spacebar pauses / unpauses the game (for screenshots). Pausing hides the
   // minimap and the touch direction pad; they come back when you unpause.
-  // Ignored while the car-showroom screen is open (the game is already paused).
-  if (event.code === 'Space' && !selectMode) {
+  // Ignored while the car-showroom screen or the split-screen settings overlay
+  // is open (both already hold the world still, and unpausing would start the
+  // world running behind the menu).
+  if (event.code === 'Space' && !selectMode && !mpSettingsOpen) {
     event.preventDefault();
     setPaused(!isPaused);
   }
@@ -11198,11 +11590,22 @@ window.addEventListener('keydown', (event) => {
     if (event.code === 'ArrowLeft') { event.preventDefault(); cycleCar(-1); }
     else if (event.code === 'ArrowRight') { event.preventDefault(); cycleCar(1); }
     else if (event.code === 'Enter') { event.preventDefault(); exitSelectMode(true); }
-    else if (event.code === 'Escape') { event.preventDefault(); exitSelectMode(false); }
+    else if (event.code === 'Escape') {
+      event.preventDefault();
+      // Back out one screen at a time: an object open on the disc closes back
+      // to its grid before the whole modal does.
+      if (objOpen) closeObject();
+      else exitSelectMode(false);
+    }
+    // Each branch above has had its say — never fall through to the split /
+    // overlay Esc handlers below. They used to fire on the same press and
+    // collapsed a live split (or closed the multiplayer overlay behind the
+    // panel you were reading) on the way out of the showroom.
+    return;
   }
   // Esc backs out of the split-screen settings overlay (resuming the split)
   // rather than quitting the whole split.
-  if (event.code === 'Escape' && mpSettingsOpen && !selectMode) {
+  if (event.code === 'Escape' && mpSettingsOpen) {
     event.preventDefault();
     closeMpSettings();
     return;
@@ -11210,7 +11613,7 @@ window.addEventListener('keydown', (event) => {
   // Esc leaves a running split-screen: both sides collapse and the Multiplayer
   // settings tab reopens, matching the on-screen Exit button. Handled here so it
   // works in both the controller and the touch split.
-  if (event.code === 'Escape' && splitActive && !selectMode) {
+  if (event.code === 'Escape' && splitActive) {
     event.preventDefault();
     exitSplitToSettings();
     return;
@@ -11426,7 +11829,8 @@ function padRebuildFocus() {
   // one — the panels are reused, so a stale outline would come back with them.
   for (const el of document.querySelectorAll('.pad-focus')) el.classList.remove('pad-focus');
   let scope = null;
-  if (document.body.classList.contains('object-open')) scope = document.getElementById('obj-view');
+  if (document.body.classList.contains('mp-settings-open')) scope = document.getElementById('mp-settings-screen');
+  else if (document.body.classList.contains('object-open')) scope = document.getElementById('obj-view');
   else if (document.body.classList.contains('tab-levels')) scope = document.getElementById('levels-panel');
   else if (document.body.classList.contains('tab-objects')) scope = document.getElementById('objects-panel');
   else if (document.body.classList.contains('tab-controls')) scope = document.getElementById('controls-panel');
@@ -11441,8 +11845,12 @@ function padRebuildFocus() {
     : [];
   // On the car tabs there is nothing to walk — A means "drive this car", the
   // same as Enter. Everywhere else the first control starts highlighted, so a
-  // pad player landing on Levels can press A straight away.
-  const carTab = pickerTab === 'player' || pickerTab === 'chase';
+  // pad player landing on Levels can press A straight away. The split overlay
+  // and the object card are button screens too, so they get a highlight even
+  // though the picker happens to be sitting on a car tab behind them.
+  const carTab = (pickerTab === 'player' || pickerTab === 'chase')
+    && !document.body.classList.contains('mp-settings-open')
+    && !document.body.classList.contains('object-open');
   pad.focus = (!carTab && padFocusEls.length) ? 0 : -1;
   padPaintFocus();
 }
@@ -11470,8 +11878,15 @@ function padMoveFocus(step) {
 // pad's equivalent of clicking along the tab row.
 function padStepTab(dir) {
   const tabs = ['player', 'chase', 'multiplayer', 'levels', 'controls', 'camera', 'graphics', 'about'];
-  const i = tabs.indexOf(pickerTab);
-  setPickerTab(tabs[(i + dir + tabs.length) % tabs.length]);
+  // Only the tabs actually on screen: a split-screen session hides Chase (the
+  // chaser is parked), and the pad must not land on a control nobody can see.
+  const shown = tabs.filter((t) => {
+    const el = document.getElementById('tab-' + t);
+    return el && el.offsetParent !== null;
+  });
+  if (!shown.length) return;
+  const i = shown.indexOf(pickerTab);
+  setPickerTab(shown[(i + dir + shown.length) % shown.length]);
 }
 
 // Car-pick step, controller side: each player reads their OWN claimed pad —
@@ -11490,12 +11905,17 @@ function pickFromPads(list) {
     const prevB = pickPadPrev[i] || [];
     const cur = [];
     let aEdge = false;
+    let bEdge = false;
     for (let j = 0; j < g.buttons.length; j++) {
       const down = !!(g.buttons[j] && g.buttons[j].pressed);
       cur[j] = down;
       if (j === 0 && down && !prevB[j]) aEdge = true;
+      if (j === 1 && down && !prevB[j]) bEdge = true;
     }
     pickPadPrev[i] = cur;
+    // B backs out of the picker, exactly like Esc and the on-screen Back button
+    // (the screen's own hint promises it).
+    if (bEdge) { cancelClaimFlow(); return; }
     if (owner < 0) continue;
     if (aEdge) confirmPick(owner);
     const s = pads[i] ? pads[i].steer : 0;
@@ -11617,12 +12037,30 @@ function pollGamepad(dt) {
     }
   }
 
+  // ---- Split-screen settings overlay ----
+  // While it is up it owns the pad: B / Start resume the split, A and the D-pad
+  // walk its own buttons, and nothing behind it (driving, pause, gear) fires.
+  if (mpSettingsOpen) {
+    if (padFocusDirty) { padRebuildFocus(); padFocusDirty = false; }
+    if (press(1) || press(9)) { closeMpSettings(); return; }
+    if (press(0)) {
+      const el = pad.focus >= 0 ? padFocusEls[pad.focus] : null;
+      if (el) el.click();
+      return;
+    }
+    if (pulse(b(13), 'mps-down')) padMoveFocus(1);
+    if (pulse(b(12), 'mps-up')) padMoveFocus(-1);
+    if (pulse(b(15), 'mps-right')) padMoveFocus(1);
+    if (pulse(b(14), 'mps-left')) padMoveFocus(-1);
+    return;
+  }
+
   // ---- Buttons that act on the game (mouse twins noted in the comments) ----
   if (press(9) && !selectMode) setPaused(!isPaused);   // Start = Space
   if (press(11)) bookmarkLocation();                   // R3 = B
   if (press(8)) {                                      // View = the gear button
-    if (selectMode) exitSelectMode(false);
-    else enterSelectMode();
+    openSettingsFromGear();
+    return;
   }
 
   if (selectMode) {
@@ -11634,7 +12072,13 @@ function pollGamepad(dt) {
     // the very frame the screen changed would fire a control nobody can see.
     if (press(4)) { padStepTab(-1); return; }
     if (press(5)) { padStepTab(1); return; }
-    if (press(1)) { exitSelectMode(false); return; }   // B = Esc
+    if (press(1)) {                                    // B = Esc
+      // One screen at a time, like Esc: an object on the disc closes back to
+      // its grid before the whole modal does.
+      if (objOpen) closeObject();
+      else exitSelectMode(false);
+      return;
+    }
     if (press(0)) {
       const el = pad.focus >= 0 ? padFocusEls[pad.focus] : null;
       if (el && el.type === 'range') { gfxNudgeRange(el, 1); return; }   // A steps the slider up
@@ -11700,6 +12144,14 @@ function setPaused(p) {
     // Drop any in-progress pad input so the car doesn't drive off the moment
     // you unpause.
     releaseJoyPads();
+    // The floating player tags belong to the split's two viewports (each half
+    // draws only the RIVAL's) and the paused split render re-decides them every
+    // frame; drop them now so no single-viewport paused frame (the pick stage,
+    // the showroom) can catch one mid-frame.
+    if (splitActive) {
+      if (players[0] && players[0].marker) players[0].marker.visible = false;
+      if (players[1] && players[1].marker) players[1].marker.visible = false;
+    }
   } else {
     // Discard the time that elapsed while paused so physics don't jump on
     // resume (clock.elapsedTime stays frozen during the pause too).
@@ -11912,6 +12364,10 @@ function updatePlayerTarantulaWalk(delta, speed) {
 // tankers, flatcars, autorack, well car, reefer, coil car, stock car,
 // caboose). They follow wherever you drive and never collide.
 let trainCars = [];
+// Set when a portal moved the consist into a new world's scene, so the chain is
+// laid out behind the locomotive again as soon as the cut is over — however
+// close the old spot happened to be to the arrival point.
+let consistNeedsResnap = false;
 let selectMode = false;
 let selectWasPaused = false;
 let selectPreview = CAR_KINDS[0].id;
@@ -11953,6 +12409,10 @@ function applyChaseCar(kind) {
   bumperCar.add(inner);
   bumperCar.scale.set(1, 1, 1);
   chaseCarKind = kind;
+  // A live change (the multi-player settings overlay, a ?car= deep link) has to
+  // drag the showroom's armed Chase preview with it, or the next visit to that
+  // tab would show — and commit — the body you already replaced.
+  chasePreview = kind;
   // A chase train must be the WHOLE train — the locomotive plus its trailing
   // freight consist. Any other chaser drops its own consist.
   if (kind === 'train') spawnChaseTrainConsist();
@@ -12005,6 +12465,12 @@ function swapPlayerCar(kind) {
   while (car.children.length > 0) car.remove(car.children[0]);
   car.add(inner);
   playerCarKind = kind;
+  // The same goes for the showroom's Player tab: committing there re-applies
+  // `playerPreview`, so a ride changed live (the split-screen settings overlay,
+  // the two-player pick step) must move the armed preview with it. Otherwise
+  // opening Settings showed the OLD car and pressing Enter quietly put you back
+  // in it.
+  playerPreview = kind;
   // Keep the player record's ride id in step (P2's twin does the same in
   // applyPlayerTwoCar): the split HUD and the twin's camera read it.
   if (players[0]) players[0].kind = kind;
@@ -12090,6 +12556,12 @@ function applyPlayerTwoCar(kind) {
   playerTwoSteamroller = entry.id === 'steamroller' || entry.id === 'monstertruck';
   playerTwoMonster = entry.id === 'monstertruck';
   playerTwoFiretruck = entry.id === 'firetruck';
+  // A mech, a skater or a crab is not a car: a pancake left over from the body
+  // just swapped out of would stay stamped onto it (P1's swap resets the same).
+  if (isRobot || entry.id === 'skateboarder' || entry.id === 'crab') {
+    flatCar2State = createFlatCarState(false);
+    car2.scale.set(1, 1, 1);
+  }
 }
 
 // ===== Drivable locomotive — trailing freight consist =====
@@ -12112,51 +12584,158 @@ function applyPlayerTwoCar(kind) {
 // locomotive does.
 function trainCarY(x, z, probeY, state) {
   if (state === 'ramp') return Math.max(terrainHeightAt(x, z) + groundHeight, rampRampSurfaceY(x, z));
-  if (state === 'underground') return car.position.y;   // hover beside the loco
+  // Underground and the space wheel have no flat floor to stand a consist on:
+  // the cars hover level with their locomotive.
+  if (state === 'underground' || state === 'space') return car.position.y;
+  // Every other world has its own idea of where the ground is. buildingTopAt
+  // answers 0 for "no roof over this spot", which would be a phantom floor
+  // ABOVE the beach's sand and the museum's sunken hall — only a real collider
+  // standing proud of that world's own ground may lift a car onto it.
+  const roof = buildingTopAt(x, z);
+  const onRoof = roof > 0 ? roof : -Infinity;
+  if (state === 'beach') return Math.max(groundHeight + beachGroundOffsetAt(x, z), onRoof);
+  if (state === 'cornfield') return Math.max(cornfieldWorld.groundY, onRoof);
+  if (state === 'fairground') return Math.max(fairgroundWorld.groundY, onRoof);
+  if (state === 'museum') return Math.max(museumWorld.surfaceAt(x, z, probeY), onRoof);
+  if (state === 'house') return Math.max(groundHeight, onRoof);
   return Math.max(rampSurfaceY(x, z, probeY), buildingTopAt(x, z));
+}
+
+// A freight car's bodywork, for the level objects that test a car against their
+// own props: the boxcar body is 2.4 x 4.9, plus a little for the roof lip.
+const CONSIST_HALF_LEN = 2.6;
+const CONSIST_HALF_WID = 1.35;
+// How far past a trailing car's centre a prop counts as touched (the player's
+// own body shoves props at playerKnockRadius).
+const CONSIST_KNOCK_R = 2.9;
+
+// One trailing freight car as the level worlds' generic "actor": position, the
+// speed it is really travelling at, and a footprint whose long axis is its own
+// nose. The freight models are long along +Z while every actor in the game uses
+// the car convention where the nose is -X, so the heading carries that quarter
+// turn — corn, bales and paint all read the nose this way.
+function pushConsistActor(out, mesh) {
+  out.push({
+    x: mesh.position.x, y: mesh.position.y, z: mesh.position.z,
+    heading: mesh.rotation.y + Math.PI / 2,
+    speed: mesh.userData.speed || 0,
+    halfLen: CONSIST_HALF_LEN, halfWid: CONSIST_HALF_WID,
+  });
+}
+
+// Every trailing car as an actor, for the level update that wants them (the
+// farm's corn/pumpkins/hay). Cars parked out of sight mid-portal are left out:
+// they are not on the ground yet and must not flatten anything.
+function consistActors(out = []) {
+  for (const mesh of trainCars) if (mesh.visible) pushConsistActor(out, mesh);
+  return out;
+}
+
+// Every trailing car as a car-sized disc, for the prop sweep. The disc only
+// needs a position, so the meshes' own vectors go straight in (see
+// knockAtPoints, which resolves each prop once for the whole chain).
+const _consistPoints = [];
+function consistKnockPoints() {
+  _consistPoints.length = 0;
+  for (const mesh of trainCars) {
+    if (!mesh.visible) continue;
+    _consistPoints.push(mesh.position);
+  }
+  return _consistPoints;
+}
+
+// The scene that owns a world state. Every portal moves the car into one of
+// these, so the freight consist has to be parented to the same scene it just
+// drove into — otherwise the cars stay parked in the level you left, where
+// nothing renders them.
+function worldSceneFor(state) {
+  switch (state) {
+    case 'ramp': return rampScene;
+    case 'underground': return undergroundScene;
+    case 'beach': return beachScene;
+    case 'cornfield': return cornfieldScene;
+    case 'fairground': return fairgroundScene;
+    case 'house': return houseScene;
+    case 'museum': return museumScene;
+    case 'space': return spaceScene;
+    default: return scene;
+  }
+}
+
+// Lay the whole consist out in a chain behind wherever the locomotive now
+// stands. Used when the car is built and again after a portal jump, where the
+// cars are still parked at the old world's coordinates.
+function snapConsist(cars, lead, state) {
+  const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(lead.quaternion);
+  fwd.y = 0;
+  if (fwd.lengthSq() < 1e-6) fwd.set(-1, 0, 0);
+  else fwd.normalize();
+  // The freight models are long along +Z, and the chain heads back toward
+  // the loco (dir = fwd), so point each car's +Z nose along `fwd`.
+  const yaw = Math.atan2(fwd.x, fwd.z);
+  let bx = lead.position.x;
+  let bz = lead.position.z;
+  for (const mesh of cars) {
+    bx -= fwd.x * SPACING;
+    bz -= fwd.z * SPACING;
+    mesh.position.set(bx, trainCarY(bx, bz, lead.position.y, state), bz);
+    mesh.rotation.y = yaw;
+    mesh.visible = true;
+    // A car that has just been teleported here has not travelled, so it must
+    // not arrive carrying a huge "speed" into the level objects' hit tests.
+    if (mesh.userData.moved) mesh.userData.moved.set(bx, 0, bz);
+    mesh.userData.speed = 0;
+    const w = mesh.userData.wobble;
+    if (w) {
+      w.t = Infinity;
+      w.fallVy = 0;
+      w.pitch = 0;
+      w.tiltQ.identity();
+      w.rig.quaternion.identity();
+    }
+  }
 }
 
 function spawnTrainCars() {
   if (trainCars.length) return;
-  const fwd = new THREE.Vector3(-1, 0, 0).applyQuaternion(car.quaternion);
-  fwd.y = 0;
-  fwd.normalize();
-  // The freight models are long along +Z, and the chain heads back toward
-  // the loco (dir = fwd), so point each car's +Z nose along `fwd`.
-  const yaw = Math.atan2(fwd.x, fwd.z);
-  let bx = car.position.x;
-  let bz = car.position.z;
-  const parent = worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene;
+  const parent = worldSceneFor(worldState);
   for (const mesh of buildFreightCars()) {
-    mesh.position.set(bx - fwd.x * SPACING, trainCarY(bx - fwd.x * SPACING, bz - fwd.z * SPACING, car.position.y, worldState), bz - fwd.z * SPACING);
-    mesh.rotation.y = yaw;
     const rig = new THREE.Group();
     mesh.add(rig);
     mesh.userData.wobble = { t: Infinity, axis: new THREE.Vector3(1, 0, 0), dir: new THREE.Vector3(1, 0, 0), rig, tiltQ: new THREE.Quaternion(), pitch: 0, fallVy: 0 };
+    mesh.userData.moved = new THREE.Vector3();
+    mesh.userData.speed = 0;
     parent.add(mesh);
     trainCars.push(mesh);
-    bx -= fwd.x * SPACING;
-    bz -= fwd.z * SPACING;
   }
+  snapConsist(trainCars, car, worldState);
+  consistNeedsResnap = false;
 }
 
 function removeTrainCars() {
   for (const mesh of trainCars) {
-    scene.remove(mesh);
-    rampScene.remove(mesh);
-    undergroundScene.remove(mesh);
+    if (mesh.parent) mesh.parent.remove(mesh);
   }
   trainCars = [];
+  consistNeedsResnap = false;
 }
 
 // When the player portals between worlds, move the trailing consist into the
-// scene the car just entered so it follows there.
+// scene the car just entered so it follows there. Landing the cars in a new
+// scene is also the signal that the whole chain has to be laid out again: it is
+// still standing at the old world's coordinates.
 function reparentTrainCars() {
   if (!trainCars.length) return;
-  const parent = worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : scene;
+  const parent = worldSceneFor(worldState);
   for (const mesh of trainCars) {
-    if (mesh.parent && mesh.parent !== parent) mesh.parent.remove(mesh);
-    if (mesh.parent !== parent) parent.add(mesh);
+    if (mesh.parent && mesh.parent !== parent) {
+      mesh.parent.remove(mesh);
+      parent.add(mesh);
+      consistNeedsResnap = true;
+    } else if (mesh.parent !== parent) {
+      parent.add(mesh);
+      consistNeedsResnap = true;
+    }
   }
 }
 
@@ -12182,9 +12761,12 @@ function stepConsist(cars, leadX, leadZ, leadY, delta) {
     if (step > 0) {
       dx /= d;
       dz /= d;
-      // Pull back toward the point ahead (`-dx/step` closes the gap).
-      mesh.position.x = wrapCoordX(mesh.position.x - dx * step);
-      mesh.position.z = wrapCoordZ(mesh.position.z - dz * step);
+      // Pull back toward the point ahead (`-dx/step` closes the gap). No
+      // clamping: the point being chased is always inside the level, while the
+      // city's bounds would pin the chain to the overworld edge in the wider
+      // worlds (the underground slab and the museum vestibule both run past it).
+      mesh.position.x -= dx * step;
+      mesh.position.z -= dz * step;
       // Point the car's +Z nose along the chain toward the point ahead
       // (-dx, -dz): R_y(yaw)·(0,0,1) = (sin yaw, cos yaw) must equal it.
       const targetYaw = Math.atan2(-dx, -dz);
@@ -12200,14 +12782,67 @@ function stepConsist(cars, leadX, leadZ, leadY, delta) {
   }
 }
 
+// A world jump puts the locomotive hundreds of units from the cars it was
+// towing (they are still standing at the old world's coordinates), which no
+// amount of ordinary chasing closes before the player sees a train with no
+// freight. Anything past this gap is a teleport, not driving.
+const CONSIST_RESNAP = 60;
+
 function updateTrainCars(delta) {
   if (!playerTrain || trainCars.length === 0) return;
+  const lead = trainCars[0];
+  const jx = car.position.x - lead.position.x;
+  const jz = car.position.z - lead.position.z;
+  if (consistNeedsResnap || jx * jx + jz * jz > CONSIST_RESNAP * CONSIST_RESNAP) {
+    // Keep the stranded cars out of sight while the portal cut is still
+    // playing, then lay the whole consist back out behind the loco.
+    if (portalGrace > 0) {
+      for (const mesh of trainCars) mesh.visible = false;
+      return;
+    }
+    snapConsist(trainCars, car, worldState);
+    consistNeedsResnap = false;
+  }
   stepConsist(trainCars, car.position.x, car.position.z, car.position.y, delta);
   // The player bumps the trailing cars into a wobble, just like on the tracks.
   bumpConsistWith(CONSIST_THREAT, trainCars);
   for (const mesh of trainCars) tickConsistWobble(mesh, delta);
   rideConsistSurfaces(trainCars, car.position.y, delta, worldState);
   tiltConsistCars(trainCars, car.position.y, worldState);
+  // How fast each coach is really moving. The level objects gate their hits on
+  // a car's speed, and a car down the chain only moves in bursts as it takes up
+  // slack, so this is measured from where it actually was last frame.
+  for (const mesh of trainCars) {
+    const prev = mesh.userData.moved;
+    mesh.userData.speed = delta > 0
+      ? Math.hypot(mesh.position.x - prev.x, mesh.position.z - prev.z) / delta
+      : 0;
+    prev.set(mesh.position.x, 0, mesh.position.z);
+  }
+  // City traffic is not in the collision list the consist belongs to, so a
+  // coach would otherwise drive clean through it.
+  if (worldState === 'city') shoveTrafficWithConsist();
+}
+
+// A freight car reaching a traffic car shoves it aside with the same discrete
+// knock the player's own hits produce (the coach itself is never deflected —
+// it is a train).
+function shoveTrafficWithConsist() {
+  for (const t of traffic) {
+    if (t.knock || t.isSteamroller) continue;
+    for (const mesh of trainCars) {
+      if (!mesh.visible) continue;
+      if (Math.abs(mesh.position.y - t.mesh.position.y) > 6) continue;
+      const dx = t.mesh.position.x - mesh.position.x;
+      const dz = t.mesh.position.z - mesh.position.z;
+      const min = trafficCarRadius + CONSIST_R;
+      if (dx * dx + dz * dz >= min * min) continue;
+      const d = Math.hypot(dx, dz) || 0.001;
+      const power = Math.min(20, 8 + Math.abs(mesh.userData.speed || 0));
+      t.knock = makeKnock(t.mesh, trafficHalfLen, trafficHalfWid, dx / d, dz / d, power, 3.2);
+      break;
+    }
+  }
 }
 
 // When the CHASE ride is the locomotive, it drags the identical 15-car freight
@@ -12613,15 +13248,17 @@ function exitSelectMode(apply) {
       playHorn();   // audibly confirm the new chaser
     }
   }
-  setPaused(selectWasPaused);
   // A shared-settings panel opened from the split overlay returns to that
-  // overlay rather than dropping straight back into the game.
-  if (mpReturnFromShared && splitActive) {
-    mpReturnFromShared = false;
-    openMpSettings();
-  } else {
-    mpReturnFromShared = false;
+  // overlay rather than dropping straight back into the game — and it keeps the
+  // pause state the overlay itself captured, because selectWasPaused is just
+  // "paused, since the overlay paused the world".
+  const backToSplitOverlay = mpReturnFromShared;
+  mpReturnFromShared = false;
+  if (backToSplitOverlay && splitActive) {
+    openMpSettings(true);   // re-pauses the world on its own
+    return;
   }
+  setPaused(backToSplitOverlay ? mpWasPaused : selectWasPaused);
 }
 
 function cycleCar(dir) {
@@ -12645,6 +13282,10 @@ function cycleCar(dir) {
 // from a level's own Objects button — but the body classes below still drive its
 // panel.
 function setPickerTab(tab) {
+  // Split-screen parks the chase car (hidden, AI stood down), so its tab would
+  // change a car neither player can see. Shared panels are reachable mid-split,
+  // so pin it back to the ride you can actually change.
+  if (tab === 'chase' && splitActive) tab = 'player';
   pickerTab = tab;
   const tabEl = (id) => document.getElementById(id);
   for (const [id, name] of [['tab-player', 'player'], ['tab-chase', 'chase'], ['tab-levels', 'levels'], ['tab-controls', 'controls'], ['tab-camera', 'camera'], ['tab-graphics', 'graphics'], ['tab-about', 'about'], ['tab-multiplayer', 'multiplayer']]) {
@@ -12849,8 +13490,17 @@ function updatePickStage() {
 
 buildSelectScene();
 buildPickScene();
+// The gear / back button. It always means "leave the screen I am on": out of
+// the showroom, or — during a live split — into that session's own settings
+// overlay (opening the single-player showroom on top of the split bar is how
+// the two menus ended up stacked on each other).
+function openSettingsFromGear() {
+  if (selectMode) exitSelectMode(false);
+  else if (splitActive) openMpSettings();
+  else enterSelectMode();
+}
 const gearBtn = document.getElementById('gear-btn');
-if (gearBtn) gearBtn.addEventListener('click', () => (selectMode ? exitSelectMode(false) : enterSelectMode()));
+if (gearBtn) gearBtn.addEventListener('click', openSettingsFromGear);
 const carHintEl = document.getElementById('car-hint');
 const carPrevBtn = document.getElementById('car-prev');
 if (carPrevBtn) carPrevBtn.addEventListener('click', () => cycleCar(-1));
@@ -12901,6 +13551,10 @@ if (mpExitBtn) mpExitBtn.addEventListener('click', () => exitSplitToSettings());
 // other setting is shared, so it just reuses the normal showroom panels.
 let mpSettingsOpen = false;
 let mpReturnFromShared = false;
+// The pause state to hand back on Resume. The overlay is a paused menu, so it
+// must remember whether the split was already paused before it opened rather
+// than always resuming the world.
+let mpWasPaused = false;
 function updateMpSettingsUI() {
   const p1 = CAR_KINDS.find((k) => k.id === playerCarKind) || CAR_KINDS[0];
   const p2 = CAR_KINDS.find((k) => k.id === playerTwoCarKind) || CAR_KINDS[0];
@@ -12929,10 +13583,15 @@ function mpCycleCar(pi, dir) {
   reattachSplitMarkers();
   updateMpSettingsUI();
 }
-function openMpSettings() {
+// `fromShared` marks the return leg from one of the shared panels (graphics /
+// controls / levels / about): the overlay is being put back, not opened fresh,
+// so it must not overwrite the pause state captured when it was first opened.
+function openMpSettings(fromShared) {
   if (!splitActive) return;
+  if (!fromShared && !mpSettingsOpen) mpWasPaused = isPaused;
   mpSettingsOpen = true;
   document.body.classList.add('mp-settings-open');
+  padFocusDirty = true;
   setPaused(true);
   updateMpSettingsUI();
 }
@@ -12940,7 +13599,8 @@ function closeMpSettings() {
   if (!mpSettingsOpen) return;
   mpSettingsOpen = false;
   document.body.classList.remove('mp-settings-open');
-  if (!selectMode) setPaused(false);
+  padFocusDirty = true;
+  if (!selectMode) setPaused(mpWasPaused);
 }
 // Shared settings: hand off to the showroom panels (graphics/controls/levels/
 // about). Those are global already, so nothing per-player leaks; on close,
@@ -12949,6 +13609,7 @@ function openMpShared(tab) {
   mpReturnFromShared = true;
   mpSettingsOpen = false;
   document.body.classList.remove('mp-settings-open');
+  padFocusDirty = true;
   enterSelectMode();
   setPickerTab(tab);
 }
@@ -13084,6 +13745,10 @@ function pushBrowserUrl() {
   p.set('level', objLevel);
   if (objCat) p.set('cat', objCat);
   if (objOpen) p.set('objects', objOpen);
+  // Closing an object has to take it OUT of the URL, or a refresh reopens the
+  // card you just dismissed (and the browser keeps describing a screen that is
+  // no longer up).
+  else p.delete('objects');
   const url = `${location.pathname}?${p.toString()}`;
   const state = { tab: pickerTab };
   if (objLevel === lastBrowserLevel && objCat === lastBrowserCat) {
@@ -13285,6 +13950,9 @@ function travelToLevel(levelId) {
     resetShellTripPhysics();
   } else if (levelId === 'cornfield') {
     enterCornfieldWorld();
+  } else if (levelId === 'fairground') {
+    // Same end state as driving in through the circus flap, minus the cut.
+    enterFairgroundWorld();
   }
   car.visible = true;
   velocity.value = 0;
@@ -13755,6 +14423,7 @@ function groundHeightForWorld(levelId, x, z) {
   // that height drops the car straight through the floor.
   if (levelId === 'underground') return groundHeight;
   if (levelId === 'cornfield') return cornfieldWorld.groundY;
+  if (levelId === 'fairground') return fairgroundWorld.groundY;
   return groundHeight;
 }
 
@@ -14438,6 +15107,23 @@ function museumPaintActors() {
       knock: false,
       yaw: bumperCar.rotation.y,
       kind: chaseCarKind || 'little',
+    });
+  }
+  // The driveable train's coaches lay their own paint and can topple the
+  // exhibit's ladders, exactly like any other car in the room. Each needs its
+  // own painter id, or the paint would draw one continuous stroke between
+  // coaches that are metres apart.
+  for (let i = 0; i < trainCars.length; i++) {
+    const mesh = trainCars[i];
+    if (!mesh.visible) continue;
+    _museumActors.push({
+      id: `consist${i}`,
+      pos: mesh.position,
+      speed: mesh.userData.speed || 0,
+      knock: true,
+      // Same quarter turn as everywhere else: the freight's nose is +Z.
+      yaw: mesh.rotation.y + Math.PI / 2,
+      kind: 'train',
     });
   }
   return _museumActors;
@@ -16330,6 +17016,45 @@ function carryOnTurntable(obj, delta) {
   return false;
 }
 
+// Two viewports, one scene, via scissor rects: P1 left, P2 right. Shadow maps
+// are updated once for the frame, not once per viewport.
+//
+// Used by the live frame AND by every paused frame that shows the world (the
+// split settings overlay, the shared Graphics / Camera panels, Space-pause): a
+// paused split used to render ONE full-screen P1 view, so opening the menu
+// looked like it dropped you back into single-player until you resumed.
+function renderSplitFrame() {
+  const activeScene = activeWorldScene();
+  const rects = splitViewports(window.innerWidth, window.innerHeight);
+  // Size/clamp the floating tags and drive the off-screen edge markers first:
+  // each half shows ONLY the other player's bubble while the rival is in
+  // view, and swaps it for an arrow at the border once they leave the half.
+  updateSplitMarkers(rects);
+  renderer.shadowMap.autoUpdate = false;
+  renderer.shadowMap.needsUpdate = true;
+  renderer.setScissorTest(true);
+  for (let i = 0; i < 2; i++) {
+    const vp = rects[i];
+    // Each half shows ONLY the other player's bubble, and only while that
+    // rival is actually on screen (off screen the edge marker takes over).
+    if (players[0].marker) players[0].marker.visible = (i !== 0) && splitTagOnScreen[0];
+    if (players[1].marker) players[1].marker.visible = (i === 0) && splitTagOnScreen[1];
+    renderer.setViewport(vp.x, vp.y, vp.width, vp.height);
+    renderer.setScissor(vp.x, vp.y, vp.width, vp.height);
+    renderer.render(activeScene, i === 0 ? camera : camB);
+  }
+  renderer.setScissorTest(false);
+  renderer.shadowMap.autoUpdate = true;
+  // Hand the renderer back to the FULL canvas. setViewport is sticky, so
+  // leaving it on the last half (P2's) meant the next NON-split frame — the
+  // picker, the settings showroom, or single-player — drew everything squashed
+  // into the right half. Resetting here keeps every non-split frame full-width.
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+  renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+  // The underwater tint is a single full-screen pass owned by the primary
+  // viewport; split mode skips it (see the plan's v1 caveats).
+}
+
 function animate() {
   requestAnimationFrame(animate);
   syncRendererSize();
@@ -16373,8 +17098,17 @@ function animate() {
     } else {
       updateCamera(1 / 60);
       clampBeachCamera();
-      renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene, camera);
-      renderUnderwaterTint();
+      // A split keeps BOTH halves on screen while the world is held still: the
+      // settings overlay and the shared Graphics / Camera panels float over the
+      // live two-player view, so the menu must not look like it dropped you back
+      // into one-player (P2's camera is eased exactly as the live frame does).
+      if (splitActive && camB) {
+        if (players[1] && !(spaceVent.active && spaceVent.subject === 1)) followCameraTwo(players[1], 1 / 60);
+        renderSplitFrame();
+      } else {
+        renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : worldState === 'fairground' ? fairgroundScene : scene, camera);
+        renderUnderwaterTint();
+      }
     }
     return;
   }
@@ -16400,7 +17134,7 @@ function animate() {
   // shot of the car rolling in on its own, so the player must not steer or
   // throttle it. Without this the arrows would fight the cut, and a held
   // accelerator would carry the car past the door before the fade lands.
-  if (worldState !== 'space' && !treePortalCine.active && !museumCine.active && !houseTrackState.active && !houseLoopCine.active && !robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active && !gullHasTheCar() && !claimActive && !rocketRide.active) {
+  if (worldState !== 'space' && !treePortalCine.active && !circusPortalCine.active && !museumCine.active && !houseTrackState.active && !houseLoopCine.active && !robot.playerCaptured && !spiralCine.active && !mineAscent.active && !tunnelAscentCine.active && !chamberCine.active && !expressState.active && !magnetHold && !housePortal.watch.active && !gullHasTheCar() && !claimActive && !rocketRide.active) {
 
   // Per-frame controls resolve through the (single) player record: its device
   // scheme picks the keys, and the pad / joystick fold in on top — the same
@@ -16503,7 +17237,7 @@ function animate() {
   const onMuseumRoof = worldState === 'city' &&
     car.position.x > MUSEUM_ROOF.x0 && car.position.x < MUSEUM_ROOF.x1 &&
     car.position.z > MUSEUM_ROOF.z0 && car.position.z < MUSEUM_ROOF.z1;
-  const elevated = (worldState === 'house' || worldState === 'museum' || worldState === 'cornfield')
+  const elevated = (worldState === 'house' || worldState === 'museum' || worldState === 'cornfield' || worldState === 'fairground')
     ? false
     : (jumpState.inAir || (buildingTopAt(car.position.x, car.position.z) > 0 && car.position.y > 0.5 && !onMuseumRoof));
   const canMove =
@@ -17049,6 +17783,26 @@ function animate() {
         velocity.value *= Math.max(0, 1 - flow.drag * delta);
         shake.intensity = Math.max(shake.intensity, 0.1);
       }
+    }
+  } else if (worldState === 'fairground') {
+    // The fair is flat gravel: no ramps, no heightfield, no slopes. The rides'
+    // boarding decks are ordinary colliders, so the car drives around them
+    // rather than onto them.
+    const gy = fairgroundWorld.groundY;
+    if (jumpState.inAir) {
+      jumpState.yVelocity -= gravity * delta;
+      car.position.y += jumpState.yVelocity * delta;
+      if (car.position.y <= gy) {
+        car.position.y = gy;
+        const impact = Math.abs(jumpState.yVelocity);
+        jumpState.yVelocity = 0;
+        jumpState.inAir = false;
+        shake.intensity = Math.min(0.3 + impact * 0.05, 0.75);
+      }
+    } else {
+      car.position.y = gy;
+      wasOnRamp = null;
+      currentRamp = null;
     }
   } else if (worldState === 'house') {
     // A house is mostly a flat floor and a ceiling. But a few things in it are
@@ -17601,6 +18355,8 @@ function animate() {
       if (pz > RAMP_ZHI || pz < RAMP_ZLO) car.position.z = wrapTorusZ(pz);
     } else if (worldState === 'cornfield') {
       confineToFarm(car.position, playerKnock);
+    } else if (worldState === 'fairground') {
+      confineToFair(car.position, playerKnock);
     } else {
       if (px > worldXHi || px < worldXLo) car.position.x = wrapCoordX(px);
       if (pz > worldZHi || pz < worldZLo) car.position.z = wrapCoordZ(pz);
@@ -17684,6 +18440,15 @@ function animate() {
   else if (worldState === 'underground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'house') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
   else if (worldState === 'beach') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
+  else if (worldState === 'fairground') knockAt(car.position, playerKnockRadius, 0, 0, velocity.value, vehicle);
+  // The coaches behind the locomotive take props out too — a lamp post, a
+  // bowling pin, a wardrobe: the train is one long object, so every car of it
+  // knocks. One pass over the props for the whole chain (see knockAtPoints).
+  // The farm owns its own props through cornfieldWorld.update (the consist
+  // rides along as its actors), and the wheel has nothing to hit.
+  if (trainCars.length && worldState !== 'cornfield' && worldState !== 'space') {
+    knockAtPoints(consistKnockPoints(), CONSIST_KNOCK_R, velocity.value, vehicle);
+  }
 
   // ===== Spaceport rocket-ride trigger =====
   // The whole painted hazard border (the yellow rectangle around the compound)
@@ -17740,6 +18505,7 @@ function animate() {
     else if (worldState === 'underground') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
     else if (worldState === 'house') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
     else if (worldState === 'beach') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
+    else if (worldState === 'fairground') knockAt(car2.position, playerKnockRadius, 0, 0, spd2, vehicle2);
   }
 
 // ===== 2026-09-23 factory-floor attraction physics =====
@@ -18169,6 +18935,10 @@ function animate() {
         heading: bumperCar.rotation.y, speed: bumperState.speed,
       });
     }
+    // Every trailing freight car is an actor too, so the whole train flattens
+    // the rows it drives through — corn, pumpkins, bales, hay and the fence —
+    // instead of the locomotive alone.
+    consistActors(cornActors);
 
     // ---- The parked farm truck takes a hit ----
     // Solid like a traffic car while it is parked: you can shove it — the same
@@ -18630,6 +19400,10 @@ function animate() {
   // The tree-portal cut owns the car's pose and the frame while it runs.
   updateTreePortalCine(delta);
 
+  // The circus big top cut, and the rides at the far end of it.
+  updateCircusPortalCine(delta);
+  if (worldState === 'fairground') fairgroundWorld.update(delta);
+
   // The museum entrance cut, and the pavilion doors that start it.
   updateMuseumCine(delta);
   updateMuseumOutCine(delta);
@@ -18686,6 +19460,9 @@ function animate() {
 
   // Blinking alarms and beacons on the new city landmarks
   updateCityBuildings(clock.elapsedTime);
+
+  // Circus big top: the bulbs chasing around the two giant arrows.
+  updateCircus(clock.elapsedTime);
 
   // The spacecraft company: run the fleet's dock/open/load/launch loop.
   spaceport.update(delta, clock.elapsedTime);
@@ -18747,6 +19524,9 @@ function animate() {
   // Animate knockable props in BOTH worlds — the city's props and the ramp
   // world's pins / dominoes / barrels / logs all run through this one system.
   updateKnockables(delta);
+  // The fair's stalls settle their debris after physics has written Y, so a big
+  // sculpture descends onto the gravel instead of burrowing and snapping up.
+  if (worldState === 'fairground') fairgroundWorld.settlePass();
 
   // The giant rolling rock can flatten the car; while flat, the car still
   // drives but settles lower to the ground and eventually rebounds taller.
@@ -19443,6 +20223,41 @@ function animate() {
       leaveCornfieldSeamless(p1Out ? 0 : 1);
     }
   }
+  // City ? County Fair: drive into the open flap of the circus big top. P1 gets
+  // the locked-off cut (camera on the tent, car swallowed by the dark portal,
+  // then the midway); a split-screen P2 takes the seamless swap.
+  if (portalGrace <= 0 && worldState === 'city' && circusPortal.armed) {
+    const t = CIRCUS_PORTAL;
+    const p1In = !jumpState.inAir && !circusPortalCine.active &&
+      car.position.x > t.x0 && car.position.x < t.x1 &&
+      car.position.z > t.z0 && car.position.z < t.z1;
+    const p2In = splitActive && car2 && players[1] && !circusPortalCine.active &&
+      !(players[1].jump && players[1].jump.inAir) &&
+      car2.position.x > t.x0 && car2.position.x < t.x1 &&
+      car2.position.z > t.z0 && car2.position.z < t.z1;
+    if (p1In) {
+      circusPortal.armed = false;
+      startCircusPortalCine(0);
+    } else if (p2In) {
+      circusPortal.armed = false;
+      startCircusPortalCine(1);
+    }
+  }
+  // County Fair ? City: drive back into the illuminated gate at the head of the
+  // midway. Seamless, exactly like the hollow tree on the farm.
+  if (portalGrace <= 0 && worldState === 'fairground' && !circusPortalCine.active) {
+    const rp = fairgroundWorld.returnPortal;
+    const inBox = (px, pz) =>
+      px > rp.x - rp.halfW && px < rp.x + rp.halfW &&
+      pz > rp.z - rp.halfD && pz < rp.z + rp.halfD;
+    const p1Out = inBox(car.position.x, car.position.z);
+    const p2Out = splitActive && car2 && players[1] &&
+      !(players[1].jump && players[1].jump.inAir) &&
+      inBox(car2.position.x, car2.position.z);
+    if (p1Out || p2Out) {
+      leaveFairgroundSeamless(p1Out ? 0 : 1);
+    }
+  }
 
   // Ramp-world vortex: spin the spiral arms, the shear rings, and the rising
   // funnel ribbons, and pulse the funnel. It only exists in the ramp world.
@@ -19499,39 +20314,9 @@ function animate() {
   }
 
   if (splitActive && camB) {
-    // Two viewports, one scene, via scissor rects: P1 left, P2 right. Shadow
-    // maps are updated once for the frame, not once per viewport.
-    const activeScene = activeWorldScene();
-    const rects = splitViewports(window.innerWidth, window.innerHeight);
-    // Size/clamp the floating tags and drive the off-screen edge markers first:
-    // each half shows ONLY the other player's bubble while the rival is in
-    // view, and swaps it for an arrow at the border once they leave the half.
-    updateSplitMarkers(rects);
-    renderer.shadowMap.autoUpdate = false;
-    renderer.shadowMap.needsUpdate = true;
-    renderer.setScissorTest(true);
-    for (let i = 0; i < 2; i++) {
-      const vp = rects[i];
-      // Each half shows ONLY the other player's bubble, and only while that
-      // rival is actually on screen (off screen the edge marker takes over).
-      if (players[0].marker) players[0].marker.visible = (i !== 0) && splitTagOnScreen[0];
-      if (players[1].marker) players[1].marker.visible = (i === 0) && splitTagOnScreen[1];
-      renderer.setViewport(vp.x, vp.y, vp.width, vp.height);
-      renderer.setScissor(vp.x, vp.y, vp.width, vp.height);
-      renderer.render(activeScene, i === 0 ? camera : camB);
-    }
-    renderer.setScissorTest(false);
-    renderer.shadowMap.autoUpdate = true;
-    // Hand the renderer back to the FULL canvas. setViewport is sticky, so
-    // leaving it on the last half (P2's) meant the next NON-split frame — the
-    // picker, the settings showroom, or single-player — drew everything squashed
-    // into the right half. Resetting here keeps every non-split frame full-width.
-    renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
-    renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
-    // The underwater tint is a single full-screen pass owned by the primary
-    // viewport; split mode skips it (see the plan's v1 caveats).
+    renderSplitFrame();
   } else {
-    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : scene, camera);
+    renderer.render(worldState === 'ramp' ? rampScene : worldState === 'underground' ? undergroundScene : worldState === 'house' ? houseScene : worldState === 'museum' ? museumScene : worldState === 'beach' ? beachScene : worldState === 'space' ? spaceScene : worldState === 'cornfield' ? cornfieldScene : worldState === 'fairground' ? fairgroundScene : scene, camera);
     renderUnderwaterTint();
   }
 }
@@ -19733,6 +20518,21 @@ if (location.search.includes('debug')) {
     // Gear menu: which car body the player is driving right now.
     carKind: () => ({ kind: playerCarKind, steamroller: playerSteamroller, monster: playerMonster, indy: playerIndy, train: playerTrain, robot: playerRobot, tarantula: playerTarantula }),
     setCar(kind) { swapPlayerCar(kind); },
+    // Trailing freight readout (?debug only): where each car of the driveable
+    // train's consist is and which world's scene is actually drawing it, so a
+    // portal can be checked for bringing the whole train along.
+    consist: () => trainCars.map((m) => ({
+      x: +m.position.x.toFixed(1), y: +m.position.y.toFixed(1), z: +m.position.z.toFixed(1),
+      visible: m.visible,
+      scene: m.parent === rampScene ? 'ramp'
+        : m.parent === undergroundScene ? 'underground'
+          : m.parent === beachScene ? 'beach'
+            : m.parent === cornfieldScene ? 'cornfield'
+              : m.parent === houseScene ? 'house'
+                : m.parent === museumScene ? 'museum'
+                  : m.parent === spaceScene ? 'space'
+                    : m.parent === scene ? 'city' : '(none)',
+    })),
     // The museum world, for inspecting the entrance doors and surface.
     museum: () => museumWorld,
     // The blue chase car in the museum (?debug only): where it is, which
@@ -19860,6 +20660,12 @@ if (location.search.includes('debug')) {
     toCornfield() {
       if (worldState === 'cornfield') return;
       enterCornfieldWorld();
+    },
+    // Force-enter the county fair (?debug only): skips the circus flap cut and
+    // lands the car on the midway, facing the rides.
+    toFairground() {
+      if (worldState === 'fairground') return;
+      enterFairgroundWorld();
     },
     // Force-enter the beach (?debug only): stages the car on the sand without
     // having to sit through the shell's closing animation. Puts you where

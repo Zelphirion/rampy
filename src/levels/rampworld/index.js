@@ -1,5 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable } from '../../physics.js?v=1800000000004';
+import { addKnockable } from '../../physics.js?v=1793986751263';
 import { tirePyramidSlots, tirePyramidSupports } from '../../modules/tireStack.js';
 import { makeTire, tireHalfHeight } from '../../modules/tireModel.js?v=1800000000060';
 

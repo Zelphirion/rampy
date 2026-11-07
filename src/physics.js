@@ -674,93 +674,124 @@ export function knockAt(point, radius, worldSizeX = 0, worldSizeZ = 0, speed = 0
   const speedFactor = THREE.MathUtils.clamp(Math.abs(speed) / 14, 0.15, 1);
   const _wp = new THREE.Vector3();   // reusable for world-position lookup
   for (const k of knockables) {
-    // Restrict smashing based on vehicle type if specified
-    if (k.smashOnlyBy && vehicle) {
-      if (!vehicle[k.smashOnlyBy]) continue;
-    } else if (k.smashOnlyBy && !vehicle) {
-      continue; // require heavy vehicle but none specified
-    }
-    // A prop that is already down (fallen or sliding) can still be hit ??? it
-    // gets shoved along the ground, exactly like knocking a traffic car.
-    // A dormant prop ignores proximity entirely: it is released on cue (see
-    // triggerKnockable) rather than by the car brushing it.
-    if (k.dormant) continue;
+    if (!propInPlay(k, vehicle)) continue;
     const lying = k.state === 'fallen' || k.state === 'sliding';
-    if (k.state !== 'standing' && !lying) continue;
-    // Measure from the prop's CURRENT WORLD spot (a shoved prop has moved
-    // away from its original base), so hits track where it actually lies.
     k.group.getWorldPosition(_wp);
-    let dx = _wp.x - point.x;
-    let dz = _wp.z - point.z;
-    if (k.hitTest) {
-      // The prop owns its own hit shape: the museum's ladders are frames with a
-      // wide gap between their legs, so a disc round the pivot would knock them
-      // over from yards away. It answers with the offset from the car to the
-      // part that was actually touched, or null for a clean miss.
-      const hit = k.hitTest(point, radius, k, _wp);
-      if (!hit) continue;
-      dx = hit.dx;
-      dz = hit.dz;
-    } else {
-      if (worldSizeX) {
-        const half = worldSizeX / 2;
-        dx = ((dx + half) % worldSizeX + worldSizeX) % worldSizeX - half;
-      }
-      if (worldSizeZ) {
-        const half = worldSizeZ / 2;
-        dz = ((dz + half) % worldSizeZ + worldSizeZ) % worldSizeZ - half;
-      }
-      // A long prop that is DOWN lies stretched out along the direction it fell,
-      // so measure to that lying axis rather than to the pivot at its foot. The
-      // body runs from the pivot out along `pushDir`, so the closest point on it
-      // is `pushDir` times how far the car is up that axis — clamped to the prop's
-      // own length. (Getting this sign wrong makes the far half of the prop a
-      // ghost you drive straight through.)
-      if (lying && k.lyingReach > 0.5) {
-        const along = -(dx * k.pushDir.x + dz * k.pushDir.z);   // (car - pivot) · pushDir
-        const t = Math.max(0, Math.min(k.lyingReach, along));
-        dx += k.pushDir.x * t;
-        dz += k.pushDir.z * t;
-      }
-      if (Math.hypot(dx, dz) > radius + k.radius) continue;
-    }
+    knockPropFrom(k, point, _wp, radius, worldSizeX, worldSizeZ, speedFactor, lying);
+  }
+}
 
-    let d = new THREE.Vector3(dx, 0, dz);
-    if (d.lengthSq() < 1e-4) d.set(1, 0, 0);
-    d.normalize();
-    // Convert the world-space push direction into the parent group's local
-    // space so the animation moves the child correctly.  Only applies to
-    // knockables inside the registered world group (e.g. the mine shaft).
-    // City props are direct children of the scene and must keep their
-    // world-space direction — applying the mine shaft's inverse world matrix
-    // (including translation) would inflate a unit vector into a 65-unit
-    // position vector, causing props to fly wildly off-course.
-    if (_worldGroup && k._inWorldGroup) {
-      _worldGroup.updateMatrixWorld(true);
-      const invRot = new THREE.Matrix3().setFromMatrix4(
-        new THREE.Matrix4().copy(_worldGroup.matrixWorld).invert()
-      );
-      d.applyMatrix3(invRot);
-    }
-    // Already down: shove it along the ground instead of tipping it over.
-    // A short cooldown stops the car from re-shoving a prop every frame and
-    // carrying it along in front of the bumper.
-    if (lying) {
-      if (k.shoveCd <= 0) {
-        k.shoveCd = 0.5;
-        startShove(k, d, speedFactor);
-      }
-      continue;
-    }
-    startFall(k, d, speedFactor);
-    // Anything linked (e.g. the fruit on a table) goes down together, so a
-    // whole stall collapses and its fruit scatter at the same moment.
-    if (k.linked) {
-      for (const lk of k.linked) {
-        if (lk.state === 'standing') startFall(lk, d, speedFactor);
-      }
+// The same test against ANY number of car-sized discs in a single pass over the
+// prop list. The driveable train's trailing consist is a fifteen-car line, so
+// one knockAt() per coach would resolve every prop's world position fifteen
+// times a frame; here each prop is resolved once and tested against every disc.
+export function knockAtPoints(points, radius, speed = 0, vehicle = null) {
+  if (!points || !points.length) return;
+  const speedFactor = THREE.MathUtils.clamp(Math.abs(speed) / 14, 0.15, 1);
+  const _wp = new THREE.Vector3();
+  for (const k of knockables) {
+    if (!propInPlay(k, vehicle)) continue;
+    const lying = k.state === 'fallen' || k.state === 'sliding';
+    k.group.getWorldPosition(_wp);
+    // One hit per prop is enough: knocking it again the same frame with the
+    // next car down the train would double the shove.
+    for (let i = 0; i < points.length; i++) {
+      if (knockPropFrom(k, points[i], _wp, radius, 0, 0, speedFactor, lying)) break;
     }
   }
+}
+
+// Is this prop in a state a car can hit at all — and is this car allowed to?
+function propInPlay(k, vehicle) {
+  // Restrict smashing based on vehicle type if specified
+  if (k.smashOnlyBy && vehicle) {
+    if (!vehicle[k.smashOnlyBy]) return false;
+  } else if (k.smashOnlyBy && !vehicle) {
+    return false; // require heavy vehicle but none specified
+  }
+  // A prop that is already down (fallen or sliding) can still be hit — it
+  // gets shoved along the ground, exactly like knocking a traffic car.
+  // A dormant prop ignores proximity entirely: it is released on cue (see
+  // triggerKnockable) rather than by the car brushing it.
+  if (k.dormant) return false;
+  if (k.state !== 'standing' && k.state !== 'fallen' && k.state !== 'sliding') return false;
+  return true;
+}
+
+// One car-sized disc against one prop, whose world position `wp` is already
+// resolved. Returns true when this point actually landed a hit.
+function knockPropFrom(k, point, wp, radius, worldSizeX, worldSizeZ, speedFactor, lying) {
+  let dx = wp.x - point.x;
+  let dz = wp.z - point.z;
+  if (k.hitTest) {
+    // The prop owns its own hit shape: the museum's ladders are frames with a
+    // wide gap between their legs, so a disc round the pivot would knock them
+    // over from yards away. It answers with the offset from the car to the
+    // part that was actually touched, or null for a clean miss.
+    const hit = k.hitTest(point, radius, k, wp);
+    if (!hit) return false;
+    dx = hit.dx;
+    dz = hit.dz;
+  } else {
+    if (worldSizeX) {
+      const half = worldSizeX / 2;
+      dx = ((dx + half) % worldSizeX + worldSizeX) % worldSizeX - half;
+    }
+    if (worldSizeZ) {
+      const half = worldSizeZ / 2;
+      dz = ((dz + half) % worldSizeZ + worldSizeZ) % worldSizeZ - half;
+    }
+    // A long prop that is DOWN lies stretched out along the direction it fell,
+    // so measure to that lying axis rather than to the pivot at its foot. The
+    // body runs from the pivot out along `pushDir`, so the closest point on it
+    // is `pushDir` times how far the car is up that axis — clamped to the prop's
+    // own length. (Getting this sign wrong makes the far half of the prop a
+    // ghost you drive straight through.)
+    if (lying && k.lyingReach > 0.5) {
+      const along = -(dx * k.pushDir.x + dz * k.pushDir.z);   // (car - pivot) · pushDir
+      const t = Math.max(0, Math.min(k.lyingReach, along));
+      dx += k.pushDir.x * t;
+      dz += k.pushDir.z * t;
+    }
+    if (Math.hypot(dx, dz) > radius + k.radius) return false;
+  }
+
+  let d = new THREE.Vector3(dx, 0, dz);
+  if (d.lengthSq() < 1e-4) d.set(1, 0, 0);
+  d.normalize();
+  // Convert the world-space push direction into the parent group's local
+  // space so the animation moves the child correctly.  Only applies to
+  // knockables inside the registered world group (e.g. the mine shaft).
+  // City props are direct children of the scene and must keep their
+  // world-space direction — applying the mine shaft's inverse world matrix
+  // (including translation) would inflate a unit vector into a 65-unit
+  // position vector, causing props to fly wildly off-course.
+  if (_worldGroup && k._inWorldGroup) {
+    _worldGroup.updateMatrixWorld(true);
+    const invRot = new THREE.Matrix3().setFromMatrix4(
+      new THREE.Matrix4().copy(_worldGroup.matrixWorld).invert()
+    );
+    d.applyMatrix3(invRot);
+  }
+  // Already down: shove it along the ground instead of tipping it over.
+  // A short cooldown stops the car from re-shoving a prop every frame and
+  // carrying it along in front of the bumper.
+  if (lying) {
+    if (k.shoveCd <= 0) {
+      k.shoveCd = 0.5;
+      startShove(k, d, speedFactor);
+    }
+    return true;
+  }
+  startFall(k, d, speedFactor);
+  // Anything linked (e.g. the fruit on a table) goes down together, so a
+  // whole stall collapses and its fruit scatter at the same moment.
+  if (k.linked) {
+    for (const lk of k.linked) {
+      if (lk.state === 'standing') startFall(lk, d, speedFactor);
+    }
+  }
+  return true;
 }
 
 // Debug/test snapshot: compact live state of every knockable, optionally

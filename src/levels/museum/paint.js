@@ -21,7 +21,7 @@
 // ============================================================================
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
-import { addKnockable, knockAt } from '../../physics.js?v=1800000000006';
+import { addKnockable, knockAt } from '../../physics.js?v=1793986751263';
 
 // Twelve vivid shades: one trip round the rainbow at full saturation, so the
 // paint reads from the far end of the hall.

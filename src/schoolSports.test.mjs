@@ -10,7 +10,7 @@ const THREE = await import('three');
 const { addCityBuildings } = await import('./cityBuildings.js');
 const { buildSoccerField, updateSoccerBall, updateSoccerScoreTires, makeScoreTire, SCORE_TIRE_RADIUS, SCORE_TIRE_HALF_WIDTH, SCORE_TIRE_GROUND } = await import('./soccer.js');
 const { SOCCER } = await import('./soccerPhysics.mjs');
-const { knockAt, updateKnockables } = await import('./physics.js?v=1800000000006');
+const { knockAt, updateKnockables } = await import('./physics.js?v=1793986751263');
 const { onRoad, railClearance } = await import('./cityRoads.js');
 
 test('the school hoops are flat rings with nets, not plates on the backboard', () => {

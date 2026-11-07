@@ -1,7 +1,7 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { nearestRoadDistance } from './cityRoads.js';
 import { outwardYaw } from './modules/heading.js';
-import { addKnockable } from './physics.js?v=1800000000006';
+import { addKnockable } from './physics.js?v=1793986751263';
 
 // ===== The City Buildings =====
 // The twelve landmark buildings that give the city its character, in place of

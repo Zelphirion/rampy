@@ -248,9 +248,85 @@ cars drivable by their hardcoded schemes.
       and the Esc key both call `endSplit()`; `endSplit()` now also restores the
       single-viewport camera aspect so the picture is not left squashed.
 
+## Milestone 9 — Settings screens + back button audit
+
+One press of Back (Esc / pad B / the gear-← button / an on-screen Back) undoes
+exactly ONE screen, and nothing may be left stacked behind it.
+
+- [x] 9.1 Esc in the showroom no longer falls through into the split-screen Esc
+      handlers below it. One press used to close the panel *and* the split
+      settings overlay behind it (or collapse the live split).
+      — `src/settingsBack.test.mjs` pins the early return.
+- [x] 9.2 Back out one screen at a time: an object open on the disc closes back
+      to its grid (Esc / pad B) before the whole modal does, and closing it
+      takes `?objects=` out of the URL instead of leaving a refresh to reopen
+      the card you dismissed.
+- [x] 9.3 The gear button (and pad View) during a live split opens that
+      session's own settings overlay rather than the single-player showroom, so
+      the split bar and the showroom's tab row are never drawn over each other.
+      The bar, the split divider and a rival's frozen edge marker all step aside
+      while the showroom is up (`body.select-mode`).
+- [x] 9.4 Starting a session from the shared Multiplayer tab ends the live split
+      first, drops the "return to the overlay" handoff, and `beginSplit()`
+      defensively clears every overlay class — it used to leave
+      `mp-settings-open` stuck over the running game.
+- [x] 9.5 Shared panels (Graphics / Controls / Levels / About) return to the
+      split overlay, not the game, and hand back the pause state captured when
+      the overlay was opened (not "paused because the overlay paused it").
+- [x] 9.6 Cancelling pairing restores the pause state from the start of the flow
+      (a cancel during pairing used to read the pick step's stale snapshot and
+      could leave the minimap and joysticks hidden).
+- [x] 9.7 The split settings overlay is pad-navigable: B / Start resumes, A and
+      the D-pad walk its buttons, and nothing behind it (driving, pause, gear,
+      bookmark) fires. Space no longer unpauses the world behind a menu.
+- [x] 9.8 Pad B cancels the two-player car picker, as that screen's own hint has
+      always promised.
+
+## Milestone 10 — Two-player settings audit (per-player rides)
+
+The split settings overlay changes each player's ride live, so every screen that
+shows a ride has to agree with it.
+
+- [x] 10.1 A ride changed live (split overlay, pick step, `?car=`) now drags the
+      showroom's armed Player/Chase preview with it. Previously the Player tab
+      still previewed the OLD body, and committing it (click / Enter) silently
+      put you back in it — the split's per-player pick appeared not to stick.
+- [x] 10.2 A new session starts BOTH players on the rides they last had. P2's
+      column used to be hard-coded back to City Car at every pick step while
+      P1's ride was remembered.
+- [x] 10.3 A P2 body swap onto a mech / skater / crab clears a leftover pancake
+      scale, exactly as P1's swap does.
+- [x] 10.4 Nothing from the live split ghosts through the overlay's translucent
+      panel: the split bar, the centre divider, a rival's frozen off-screen
+      marker and the gear / fps badges all hide while it is up. (Since 10.7 the
+      paused frame draws both viewports with the proper per-half tags, so the
+      frozen-marker problem is gone at the source too.)
+- [x] 10.5 The Chase tab is not offered while a split is live — the chaser is
+      parked and hidden, so the tab would change a car neither player can see.
+      `setPickerTab` pins it back to Player, and the pad's tab walk skips tabs
+      that are hidden on the current screen.
+- [x] 10.6 Verified end-to-end in the browser: overlay cycles either player's
+      ride (whole roster, no errors), the twin adopts the body / gait / tag, a
+      shared Levels jump moves both cars, and Resume returns a working split.
+- [x] 10.7 The menu keeps BOTH halves on screen. A paused frame used to fall
+      back to a single full-screen P1 render, so opening Split Settings looked
+      like it had dropped you into one-player until you resumed. The
+      two-viewport render is now one helper (`renderSplitFrame`) used by the live
+      frame and by every paused frame that shows the world (the overlay, the
+      shared Graphics / Camera panels, Space-pause), with P2's chase camera eased
+      on the same tick as P1's.
+
 ## Testing reference
 
 - Headless: `node --import ./src/objects/nodeShims.mjs --test "src/**/*.test.mjs"`
+- `src/settingsBack.test.mjs` pins the menu-stack rules above: the showroom's
+  Esc stops there, shared panels hand back to the split overlay, the overlay is
+  torn down before a split starts, and the split furniture never shows through
+  the settings screen.
+- `src/splitSettings.test.mjs` pins the per-player ride contract: cycling one
+  side leaves the other alone, a live swap drags the showroom preview with it,
+  both rides survive into the next session, and the split HUD stays out of the
+  overlay.
 - New suites to add: `src/splitscreenInput.test.mjs` (readInput + claim rules),
   `src/splitscreenCamera.test.mjs` (scissor/viewport math, layers).
   `src/splitTwinRides.test.mjs` now pins the twin's ride/camera parity (museum

@@ -12,7 +12,7 @@ register('../house/threeShim.mjs', import.meta.url);
 const { buildPaintExhibit, LADDER_SPOTS, RAINBOW_PAINTS, LADDER_FRAME, PAINT_SWAP_DIST } = await import('./paint.js');
 // The SAME module instance paint.js gets (its import carries the cache stamp),
 // or the test would step a second, empty knockables list.
-const { updateKnockables, triggerKnockable } = await import('../../physics.js?v=1800000000006');
+const { updateKnockables, triggerKnockable } = await import('../../physics.js?v=1793986751263');
 
 const FLOOR = -36;
 const BOUNDS = { x0: -167.5, x1: 167.5, z0: -265.5, z1: 69.5 };

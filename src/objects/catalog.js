@@ -46,6 +46,11 @@ import { createGulls } from '../levels/beach/seagulls.js?v=1800000000001';
 import { makeTower, makeCitadelSpire, makeOrchardPlaza, makeTableauShop, makeGhost } from '../glasscity.js?v=1791396329761';
 import { buildArrivalShip, buildSpaceConsoleBank, buildSpacePodBay, buildSpaceCore, buildSpaceRoadLift, buildSpaceHangarArm } from '../levels/space/index.js?v=1800000000046';
 import { BARN, SILO, WATER_TOWER, MILL, FARM_HOUSE } from '../levels/cornfield/layout.js?v=1800000000046';
+import { BOOTHS, FERRIS, PENDULUM, TILT, SWINGS, FAIR_RETURN } from '../levels/fairground/layout.js?v=1800000000533';
+import {
+  makeBooth, makePopcornTub, makeSodaCup, makePlush, makeMilkBottle,
+  buildFerrisWheel, buildPendulum, buildCoaster, buildTiltAWhirl, buildChairSwing, buildGate,
+} from '../levels/fairground/index.js?v=1800000000533';
 import {
   makeBarnModel, makeSiloModel, makePumpkinModel, makeCornStalkModel, makePortalTree,
   makeAppleTreeModel, makeBarrelModel, makeFarmallTractor, makeFarmTruckModel,
@@ -364,6 +369,7 @@ export const LEVELS = [
   { id: 'beach', label: 'Beach', blurb: 'The cove: the campfire, the palms, the reefs.' },
   { id: 'space', label: 'Space Station', blurb: 'The wheel: drive the inside of a rotating station.' },
   { id: 'cornfield', label: 'Farmland', blurb: 'The farm out west: flatten the corn, climb the silo, roll the pumpkins.' },
+  { id: 'fairground', label: 'County Fair', blurb: 'The night fair through the circus tent: booths, midways and five big rides.' },
 ];
 
 // ===== CITY =====
@@ -1112,6 +1118,63 @@ function cornfieldCategories() {
   ];
 }
 
+// ===== COUNTY FAIR =====
+// Two categories, because that is the shape of the place: the rides at the north
+// end and the midway that feeds them. Every `build` delegates to the level's own
+// factory, so a tile is the real geometry you drive past.
+function fairgroundCategories() {
+  return [
+    {
+      id: 'rides', name: 'The Rides', blurb: 'Five giant machines lit up over the crowd.',
+      objects: [
+        {
+          name: 'Ferris Wheel', x: FERRIS.x, z: FERRIS.z,
+          view: { x: FERRIS.x, z: FERRIS.z - FERRIS.r - 14, ry: Math.PI / 2 },
+          build: () => buildFerrisWheel().group,
+        },
+        {
+          name: 'Pendulum Swing', x: PENDULUM.x, z: PENDULUM.z,
+          view: { x: PENDULUM.x, z: PENDULUM.z - 30, ry: Math.PI / 2 },
+          build: () => buildPendulum().group,
+        },
+        {
+          name: 'Looping Coaster', x: 88, z: 20,
+          view: { x: 70, z: -6, ry: Math.PI / 2 },
+          build: () => buildCoaster().group,
+        },
+        {
+          name: 'Tilt-a-Whirl', x: TILT.x, z: TILT.z,
+          view: { x: TILT.x, z: TILT.z - TILT.r - 10, ry: Math.PI / 2 },
+          build: () => buildTiltAWhirl().group,
+        },
+        {
+          name: 'Chair Swing Tower', x: SWINGS.x, z: SWINGS.z,
+          view: { x: SWINGS.x, z: SWINGS.z - 26, ry: Math.PI / 2 },
+          build: () => buildChairSwing().group,
+        },
+      ],
+    },
+    {
+      id: 'midway', name: 'The Midway', blurb: 'The booths, the prizes and the litter on the gravel.',
+      objects: [
+        ...BOOTHS.map((b) => ({
+          name: b.label, x: b.x, z: b.z,
+          build: () => makeBooth(b.kind, { inert: true }).group,
+        })),
+        obj('Popcorn Tub', -12.5, -70, () => makePopcornTub()),
+        obj('Soda Cup', -11.8, -55, () => makeSodaCup()),
+        obj('Prize Plushie', -18, -30, () => makePlush(0xff6fae)),
+        obj('Milk Bottle', 13.5, -30.5, () => makeMilkBottle()),
+        {
+          name: 'Fair Gate', x: FAIR_RETURN.x, z: FAIR_RETURN.z,
+          view: { x: FAIR_RETURN.x, z: FAIR_RETURN.z + 14, ry: -Math.PI / 2 },
+          build: () => buildGate().group,
+        },
+      ],
+    },
+  ];
+}
+
 // ===== SPACE STATION =====
 // The categories ARE the four rim sectors plus the core/hull, because that is
 // exactly how the station is laid out - each arc of the wheel is one function of
@@ -1238,6 +1301,7 @@ const CATEGORY_BUILDERS = {
   beach: beachCategories,
   space: spaceCategories,
   cornfield: cornfieldCategories,
+  fairground: fairgroundCategories,
 };
 
 const categoryCache = new Map();

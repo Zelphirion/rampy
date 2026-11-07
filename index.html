@@ -1400,6 +1400,12 @@
          their own half. */
       #split-divider, #minimap-p2 { display: none; }
       body.split-on #split-divider { display: block; }
+      /* The divider and the rival's edge marker are live-split furniture, driven
+         by the split render loop. That loop is skipped while the settings
+         showroom is open, so the marker's last "show" would freeze on screen
+         over the menu — hide both outright while the modal is up. */
+      body.select-mode #split-divider { display: none; }
+      body.select-mode .split-off-indicator { display: none !important; }
       /* One map for both players, dead centre at the BOTTOM, replacing the old
          per-viewport pair. The two cars are labelled P1 / P2 on the map (see
          drawMinimap) so it is obvious which arrow is whose. Bottom-centre keeps
@@ -1456,8 +1462,23 @@
         gap: 10px;
       }
       body.split-on #mp-bar { display: flex; }
-      /* The bar steps aside while the settings overlay is up. */
+      /* The bar steps aside while the settings overlay is up — and while the
+         showroom is up. The overlay's shared panels open the showroom on top of
+         the running split, and the bar (top-centre) would otherwise sit over the
+         tab row it is meant to be layered under. */
       body.mp-settings-open #mp-bar { display: none; }
+      body.select-mode #mp-bar { display: none; }
+      /* Split-screen parks the chase car, so its tab would change something
+         nobody can see: hide it while two are playing. */
+      body.split-on #tab-chase { display: none; }
+      /* The overlay is a full-screen menu, so nothing from the live split's HUD
+         ghosts through its translucent panel: the gear + fps badges, the centre
+         divider and a rival's frozen off-screen marker all belong to the game
+         view underneath, not to the menu. */
+      body.mp-settings-open #gear-btn,
+      body.mp-settings-open #gear-fps,
+      body.mp-settings-open #split-divider,
+      body.mp-settings-open .split-off-indicator { display: none !important; }
       #mp-exit, #mp-settings {
         padding: 8px 16px;
         border-radius: 12px;
@@ -2161,6 +2182,6 @@
       });
     </script>
 
-    <script type="module" src="./src/main.js?v=1800000000196"></script>
+    <script type="module" src="./src/main.js?v=1800000000820"></script>
   </body>
 </html>

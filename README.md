@@ -4,70 +4,55 @@
 
 # Crankshaft and Rampy's Wreckless Ramble
 
-A 3D open-world driving toy (Three.js). Drive around a little city with traffic
-lights, ramps, a giant robot, a fire engine, a flame lizard, and a freight
-train that circles the town.
+A 3D open-world driving toy built with Three.js. Drive around a little city
+with traffic lights, ramps, a giant robot, a fire engine, a flame lizard and a
+freight train — then follow the portals to a stunt-ramp world, an underground
+mine course, a house, a museum, a beach, a cornfield, a space station and the
+county fair (through the flaps of the circus big top).
 
 > ⚠️ The game uses ES modules (`import` / `export`), which browsers block when
 > the page is opened directly from the file system (`file://`). **You must
-> serve the folder over HTTP** to play it.
+> serve the folder over HTTP** to play it. An internet connection is also
+> required — Three.js loads from a CDN.
 
-## Start the game from PowerShell
+## Play it
 
-Run these commands in PowerShell to start the game:
+Any static file server works, for example:
 
 ```powershell
-cd c:\xampp\htdocs\rampy
+cd C:\code\rampy
 python -m http.server 8090
 ```
 
-Then open `http://localhost:8090/` in your browser.
-
-To stop the server, press `Ctrl+C` in the PowerShell window.
+Then open `http://localhost:8090/` in your browser, and press `Ctrl+C` to stop
+the server.
 
 ## Controls
 
-- **W / ↑** — accelerate
-- **S / ↓** — reverse / brake
-- **A / ←, D / →** — steer
-- **Mouse drag** — orbit the camera
-- **Touch** — virtual joystick (bottom-left) on mobile
+| Input | Action |
+| --- | --- |
+| `W` / `↑` | Accelerate |
+| `S` / `↓` | Reverse / brake |
+| `A` `D` / `←` `→` | Steer |
+| `Shift` | Boost |
+| `Space` | Pause / unpause |
+| `C` | Cycle camera (chase → top-down → cinematic) |
+| `H` | Horn |
+| `B` | Bookmark the current spot (writes the position into the URL) |
+| Mouse drag | Orbit the camera |
+| Gear button (top-left) | Car showroom, controls and graphics settings |
 
-## Notes
+Gamepads work out of the box, and touch devices get an on-screen arrow pad.
+The showroom's **Multiplayer** tab sets up two-player split-screen (keyboard
+halves, two pads, or two touch pads).
 
-- The world is a torus: driving off any edge wraps you around to the opposite
-  side.
-- No build step is required — the code runs directly in the browser.
-- **The house is the most draw-call-heavy scene** (thousands of small meshes),
-  so three costs there are deliberately avoided and are easy to break by
-  accident: the sun's shadow map is a cached bake rather than a per-frame pass
-  (`houseSun.shadow.autoUpdate = false`, re-armed by `houseShadowTick`), the
-  cube-map mirror reflection is only re-baked when the car is at a mirror, and
-  `capShadowCasters(houseWorld.group)` strips sub-unit props from the shadow
-  pass. Note `__game.perf().calls` only ever reports the colour pass — three.js
-  resets `renderer.info` *after* the shadow pass, so shadow draws are invisible
-  to it; to see those, compare `renderer.info` with `info.autoReset = false`.
+## Development
 
-## Developing / testing tips
-
-- **Stale-module gotcha:** `index.html` loads `main.js` with a `?v=<timestamp>`
-  cache-buster, but the level modules it imports (`src/levels/**`, `src/modules/**`)
-  have none — after editing a submodule the browser will happily serve the old
-  copy. Hard-reload the changed modules before judging behavior, e.g. in the
-  console: `await fetch('/src/levels/underground/index.js', {cache:'reload'})`
-  for each changed file, then reload the page.
-- Append `?debug` to the URL for the `window.__game` test hooks (`.car()`,
-  `.teleport(x,z,heading)`, surface-aware `.tp2(x,z,heading)`, per-feature
-  probes like `.ugStairs()`, `.ugConveyor()`, `.perf()`, `.sceneStats()`).
-- Run the whole unit suite with
-  `node --test --test-reporter=tap "src/**/*.test.mjs"` — every test is
-  headless, no browser needed.
-- Tests and probes that import the game's *real* modules (which pull three.js
-  off the CDN and touch `document` at import time) need
-  `src/objects/nodeShims.mjs`: it installs the DOM globals and redirects the
-  CDN three import to the local npm copy. Test files import it themselves; a
-  hand-run script takes it as a flag:
+- Run the headless unit suite:
 
   ```powershell
-  node --import ./src/objects/nodeShims.mjs src/levels/beach/probe-beach.mjs
+  node --test --test-reporter=tap "src/**/*.test.mjs"
   ```
+
+- Append `?debug` to the URL to expose test hooks on `window.__game`
+  (`car()`, `teleport(x, z, heading)`, `tp2(x, z, heading)`, `perf()`, …).

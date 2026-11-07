@@ -1,6 +1,6 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { SOCCER, createBall, stepBall, separateBalls, BALL_SPLIT_COOLDOWN } from './soccerPhysics.mjs?v=1800000000054';
-import { addKnockable } from './physics.js?v=1800000000006';
+import { addKnockable } from './physics.js?v=1793986751263';
 import { makeTire } from './modules/tireModel.js?v=1800000000060';
 import { natureHillHeightAt } from './modules/cityHills.js?v=1793123233707';
 

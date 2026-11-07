@@ -12,7 +12,7 @@
 
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { HOUSE, ROOMS, ROOM_LABELS, HOUSE_START, HOUSE_EXIT, HOUSE_WALLS, CAT_SPOTS, FRONT_DOOR, BACK_DOOR, MAP_ITEMS, DRIVE, FIREPLACE, CAR_RADIUS } from './layout.js?v=1800000000001';
-import { addKnockable } from '../../physics.js?v=1800000000004';
+import { addKnockable } from '../../physics.js?v=1793986751263';
 import { pad, bowl, wedge } from './surfaces.js?v=1800000000047';
 import { makeGalley, HOUSE_KITCHEN } from '../../kitchen.js?v=1799900000000';
 import {

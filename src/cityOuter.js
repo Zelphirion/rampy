@@ -1,7 +1,10 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { onRoad } from './cityRoads.js';
-import { addKnockable } from './physics.js?v=1800000000006';
+import { addKnockable } from './physics.js?v=1793986751263';
 import { CITY_HILLS, hillProfileAt } from './modules/cityHills.js?v=1793123233707';
+// The circus big top's ground, so the pine scatter leaves it clear (the tent is
+// built from map.js, after this module has run its nature pass).
+import { CIRCUS_SITE } from './circus.js?v=1800000000302';
 
 // ============================================================================
 // The outer belt: boundary wall, scenery, parking lots and the nature area
@@ -48,6 +51,8 @@ export const RESERVED = [
   // The city portal tree stands against the west wall inside the strip of land
   // the ring road's inward move opened up — keep the pine scatter off it.
   { id: 'portal-tree', x0: -180, x1: -164, z0: 48, z1: 72 },
+  // The circus big top in the otherwise empty south-east field.
+  { id: 'circus', ...CIRCUS_SITE },
 ];
 
 // The museum's own plot: the massing, its roof garden, the forecourt of the

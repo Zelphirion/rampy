@@ -9,9 +9,15 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 // grey garage's, from before the roles were swapped, and that door is now shut.
 import { addCityBuildings, cityDoorTargets } from './cityBuildings.js?v=1800000000164';
 import { buildCityRoads, buildDriveways } from './cityRoads.js';
-import { addCityOuter, buildGehryMuseum } from './cityOuter.js?v=1800000000196';
+import { addCityOuter, buildGehryMuseum } from './cityOuter.js?v=1800000000204';
+import { buildCircus, updateCircus, CIRCUS } from './circus.js?v=1800000000302';
 import { T_SLAB_HOLE, clamFanOutline } from './clam.js';
 import { buildSoccerField } from './soccer.js?v=1800000000162';
+
+// Re-exported so main.js only ever holds one copy of circus.js (two different
+// import URLs would be two different module instances, and the module owns the
+// arrow state that the frame loop animates).
+export { updateCircus, CIRCUS };
 
 // ===== Shared map materials =====
 // The tarmac material now lives in cityRoads.js with the rest of the network.
@@ -469,10 +475,13 @@ export function buildMap(scene) {
   // The outer belt: the boundary wall (whose colliders join the shared list so
   // it physically stops the car), the empty parking lots and the nature area.
   addCityOuter(scene, buildingColliders);
+  // The circus big top in the empty south-east field; its canvas colliders join
+  // the shared list so the tent is solid and the doorway is drivable.
+  const circus = buildCircus(scene, buildingColliders);
   const museum = buildGehryMuseum(buildingColliders);
   scene.add(museum);
   // A ribbon of tarmac from every front door to the nearest street, so all
   // fourteen buildings are genuinely drivable-up-to.
   const { driveways } = buildDriveways(scene, cityDoorTargets());
-  return { buildingColliders, ramps, driveways, soccer, museum };
+  return { buildingColliders, ramps, driveways, soccer, museum, circus };
 }
