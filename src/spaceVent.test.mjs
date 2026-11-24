@@ -700,6 +700,17 @@ test('held steering input cannot survive a focus loss or a space-world handoff',
     'hiding the tab does not drop held keys/sticks');
   assert.match(mainSrc, /addEventListener\('pointerup', unpress\)[\s\S]{0,160}lostpointercapture[\s\S]{0,40}unpress/,
     'a pointerup outside the pad (or a lost capture) cannot release the held arrow');
+  // iPad multi-touch can deliver a release to another element instead of the
+  // arrow that took the pointerdown, so a window-level release must exist.
+  assert.match(mainSrc, /window\.addEventListener\('pointerup', onWindowPointerRelease, true\)/,
+    'a release that misses the arrow is not caught at the window');
+  assert.match(mainSrc, /window\.addEventListener\('pointercancel', onWindowPointerRelease, true\)/,
+    'a cancelled touch that misses the arrow is not caught at the window');
+  // And when every finger is off the glass nothing may stay held.
+  assert.match(mainSrc, /touches\.length === 0\) releaseJoyPads\(\)/,
+    'lifting every finger does not drop held arrows');
+  assert.match(mainSrc, /addEventListener\('touchend', onWindowTouchEnd, true\)[\s\S]{0,90}addEventListener\('touchcancel', onWindowTouchEnd, true\)/,
+    'a final touchend/touchcancel is not watched for');
   assert.match(mainSrc, /function startSpaceDeparture\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,
     'the space departure does not clear held input');
   assert.match(mainSrc, /function returnCityFromSpace\(\)[\s\S]{0,260}clearHeldDriveInput\(\)/,

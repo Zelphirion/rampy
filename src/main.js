@@ -11665,10 +11665,32 @@ const JOY_ARROW_DIRS = [
 // One reset per wired pad, so a blur / pause / cinematic can let go of every
 // arrow that was still down (and clear its pressed look).
 const joyPadResets = [];
+// One per-pointer release per wired pad: a lone finger can be released without
+// disturbing the other player's finger.
+const joyPadReleases = [];
 
 function releaseJoyPads() {
   for (const reset of joyPadResets) reset();
 }
+
+// iOS Safari does not always deliver the pointerup to the arrow that saw the
+// pointerdown — with a second finger already down (two players on one screen)
+// it can retarget the release to another element or drop the capture, leaving
+// the arrow held forever. Every pad therefore also watches for releases at the
+// window (capture phase, so it runs even when a child stops propagation). And
+// because "all fingers are up" is unambiguous, a touchend/touchcancel that
+// leaves no touch on the screen drops whatever is still marked down.
+function releaseJoyPointer(pointerId) {
+  for (const release of joyPadReleases) release(pointerId);
+}
+const onWindowPointerRelease = (event) => releaseJoyPointer(event.pointerId);
+window.addEventListener('pointerup', onWindowPointerRelease, true);
+window.addEventListener('pointercancel', onWindowPointerRelease, true);
+const onWindowTouchEnd = (event) => {
+  if (event.touches && event.touches.length === 0) releaseJoyPads();
+};
+window.addEventListener('touchend', onWindowTouchEnd, true);
+window.addEventListener('touchcancel', onWindowTouchEnd, true);
 
 // Build the arch of arrows inside `base` and fold whichever are held into
 // `state`. Fingers are tracked per pointer, so two at once add together (up +
@@ -11704,6 +11726,14 @@ function setupJoyPad(base, state) {
     return btn && base.contains(btn) ? btn.dataset.dir : null;
   };
 
+  // Release one finger, whichever arrow (if any) it was on. Idempotent, so the
+  // button listener and the window-level fallback can both run for one lift.
+  const releasePointer = (pointerId) => {
+    if (!pointers.delete(pointerId)) return;
+    update();
+  };
+  joyPadReleases.push(releasePointer);
+
   for (const [dir] of JOY_ARROW_DIRS) {
     const btn = document.createElement('div');
     btn.className = 'joy-arrow';
@@ -11730,10 +11760,7 @@ function setupJoyPad(base, state) {
         update();
       }
     });
-    const unpress = (event) => {
-      if (!pointers.delete(event.pointerId)) return;
-      update();
-    };
+    const unpress = (event) => releasePointer(event.pointerId);
     btn.addEventListener('pointerup', unpress);
     btn.addEventListener('pointercancel', unpress);
     btn.addEventListener('lostpointercapture', unpress);
